@@ -331,6 +331,25 @@ TEST(KVCacheConfigValidationTest, AcceptsSupportedIndexerCacheDtypes) {
   config.validate();
 }
 
+TEST(KVCacheConfigValidationTest, RejectsUnknownKvCacheDtype) {
+  EXPECT_DEATH(
+      {
+        KVCacheConfig config;
+        config.kv_cache_dtype("float8");
+        config.validate();
+      },
+      "Invalid kv_cache_dtype");
+}
+
+TEST(KVCacheConfigValidationTest, AcceptsKnownKvCacheFormats) {
+  for (const std::string dtype :
+       {"auto", "int8", "fp8", "fp8_e4m3", "fp8_e5m2", "int4"}) {
+    KVCacheConfig config;
+    config.kv_cache_dtype(dtype);
+    config.validate();
+  }
+}
+
 TEST(KVCacheConfigValidationTest, RejectsUnsupportedIndexerCacheDtypes) {
   EXPECT_DEATH(
       {

@@ -24,6 +24,7 @@ limitations under the License.
 #include "core/platform/platform.h"
 #include "framework/block/block_utils.h"
 #include "framework/kv_cache/deepseek_v4_cache_policy.h"
+#include "framework/kv_cache/kv_cache_dtype.h"
 #include "framework/model/model_args.h"
 #include "util/pretty_print.h"
 #include "util/tensor_helper.h"
@@ -37,22 +38,18 @@ constexpr int32_t kNzAlignment = 16;
 
 int64_t kv_cache_dtype_size(const std::string& kv_cache_dtype,
                             int64_t model_dtype_size) {
-  if (kv_cache_dtype == "auto") {
-    return model_dtype_size;
-  }
-  if (kv_cache_dtype == "int8") {
-    return 1;
-  }
-  if (kv_cache_dtype == "fp8_e4m3" || kv_cache_dtype == "fp8_e5m2") {
-    return 1;
-  }
-  return model_dtype_size;
+  return parse_kv_cache_dtype(kv_cache_dtype) == KVCacheDtype::AUTO
+             ? model_dtype_size
+             : 1;
 }
 
 int64_t kv_slot_size(const ModelArgs& model_args,
                      const KVCacheEstimateOptions& options,
                      int64_t cache_dtype_size) {
+  const KVCacheDtype dtype = parse_kv_cache_dtype(options.kv_cache_dtype);
   if (model_args.enable_mla()) {
+    CHECK(dtype != KVCacheDtype::INT4)
+        << "Packed INT4 KV cache does not support MLA.";
 #if defined(USE_NPU)
     if ((model_args.model_type() == "deepseek_v3" ||
          model_args.model_type() == "deepseek_v3_mtp") &&
@@ -68,7 +65,8 @@ int64_t kv_slot_size(const ModelArgs& model_args,
            (model_args.kv_lora_rank() + model_args.qk_rope_head_dim());
   }
 
-  return 2 * cache_dtype_size * model_args.head_dim() *
+  return 2 * cache_dtype_size *
+         kv_cache_storage_head_dim(dtype, model_args.head_dim()) *
          options.n_local_kv_heads;
 }
 

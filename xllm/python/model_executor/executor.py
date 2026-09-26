@@ -76,6 +76,28 @@ def _create_attention_backend(
 ) -> AttentionBackend:
     config = config or {}
     model_type = config.get("model_type", "")
+    cache_dtype = config.get("kv_cache_dtype", "auto")
+    if cache_dtype != "auto":
+        if not current_platform.is_cuda():
+            raise ValueError("Python quantized KV attention currently requires CUDA")
+        if _resolve_graph_backend(config) not in ("", "off", "none", "0") or config.get("enable_graph", False):
+            raise ValueError("Quantized reference attention requires Python eager execution")
+        if (
+            config.get("enable_mla", False)
+            or int(config.get("index_n_heads", 0)) > 0
+            or int(config.get("full_attention_interval", 1)) > 1
+            or int(config.get("cp_size", 1)) != 1
+            or int(config.get("kv_split_size", 0)) > 1
+            or int(config.get("layerwise_split_size", 1)) != 1
+            or config.get("enable_disagg_pd", False)
+            or int(config.get("num_speculative_tokens", 0)) > 0
+            or config.get("task_type", "generate") != "generate"
+            or first_attention.fia_use_attention_mask
+        ):
+            raise ValueError("Quantized reference attention supports ordinary MHA/GQA without CP, PD or speculation")
+        from xllm.python.attention.quantized import QuantizedPagedAttentionBackend
+
+        return QuantizedPagedAttentionBackend(cache_dtype, first_attention.head_dim, first_attention.num_kv_heads)
     if model_type == "deepseek_v4" and current_platform.is_npu():
         from xllm.python.attention.dsa_attention import DsaAttentionBackend
 

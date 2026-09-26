@@ -285,23 +285,39 @@ IndexedKVCacheTensors create_indexed_kv_cache_tensors(
 QuantizedKVCacheTensors create_quantized_kv_cache_tensors(
     const KVCacheShape& kv_cache_shape,
     const KVCacheCreateOptions& create_options) {
-#if !defined(USE_MLU)
-  CHECK(!create_options.enable_kv_cache_quant())
-      << "KV cache quantization is only supported on MLU backend.";
-#endif
-
   QuantizedKVCacheTensors tensors;
-  KVCacheCreateOptions quantized_options = create_options;
-  quantized_options.dtype(torch::kChar);
-  tensors.kv_cache_tensors =
-      create_kv_cache_tensors(kv_cache_shape, quantized_options);
+  const KVCacheDtype dtype = create_options.quantized_dtype();
+  CHECK(dtype != KVCacheDtype::AUTO);
+#if defined(USE_MLU)
+  CHECK(dtype == KVCacheDtype::INT8) << "MLU KV cache supports INT8 only.";
+#else
+  CHECK(create_options.device().is_cpu() || create_options.device().is_cuda())
+      << "Reference quantized KV cache requires CPU or CUDA storage.";
+#endif
+  // FP8 uses byte storage of the actual IEEE-like float8 encoding, not an
+  // integer conversion. This also makes block copies independent of float8
+  // indexing support in the installed PyTorch version.
+  const torch::ScalarType storage_dtype =
+      dtype == KVCacheDtype::INT8 ? torch::kChar : torch::kByte;
+  auto alloc_quantized = [&](KVCacheTensorRole role,
+                             std::vector<int64_t> shape) {
+    CHECK(!shape.empty());
+    shape.back() = kv_cache_storage_head_dim(dtype, shape.back());
+    return alloc_cache_tensor(role, shape, storage_dtype, create_options);
+  };
+  tensors.kv_cache_tensors.key_cache =
+      alloc_quantized(KVCacheTensorRole::KEY, kv_cache_shape.key_cache_shape());
+  if (kv_cache_shape.has_value_cache_shape()) {
+    tensors.kv_cache_tensors.value_cache = alloc_quantized(
+        KVCacheTensorRole::VALUE, kv_cache_shape.value_cache_shape());
+  }
 
   const std::vector<int64_t>& key_cache_shape =
       kv_cache_shape.key_cache_shape();
   std::vector<int64_t> key_scale_shape(key_cache_shape.begin(),
                                        key_cache_shape.end() - 1);
 
-  // float32 scale tensor for quantized KV cache (int8)
+  // One FP32 scale per token/head, independent of storage encoding.
   tensors.key_cache_scale = alloc_cache_tensor(KVCacheTensorRole::KEY_SCALE,
                                                key_scale_shape,
                                                torch::kFloat32,

@@ -527,6 +527,52 @@ TEST(KVCacheTest, IndexedKVCacheExposesQuantizedKvScaleTensors) {
             (std::vector<int64_t>{2, 4, 1}));
 }
 
+#if !defined(USE_MLU) && !defined(USE_NPU)
+TEST(KVCacheTest, QuantizedAllocationMatchesBudgetAndCopiesScales) {
+  for (const std::string dtype :
+       {"int8", "fp8", "fp8_e4m3", "fp8_e5m2", "int4"}) {
+    ModelArgs args;
+    args.n_layers(1).n_heads(4).n_kv_heads(2).head_dim(17);
+    KVCacheCapacity capacity;
+    capacity.n_blocks(3).block_size(4);
+    KVCacheShape shape(capacity, args, /*world_size=*/1);
+    KVCacheCreateOptions options;
+    options.device(torch::Device(torch::kCPU))
+        .num_layers(1)
+        .enable_kv_cache_quant(true)
+        .quantized_dtype(parse_kv_cache_dtype(dtype));
+    std::vector<KVCache> caches;
+    allocate_kv_caches(caches, shape, options);
+    ASSERT_EQ(caches.size(), 1U);
+    KVCache& cache = caches.front();
+    const int64_t storage_dim = dtype == "int4" ? 9 : 17;
+    EXPECT_EQ(shape_vec(cache.get_k_cache()),
+              (std::vector<int64_t>{3, 4, 2, storage_dim}));
+    EXPECT_EQ(cache.get_k_cache().scalar_type(),
+              dtype == "int8" ? torch::kChar : torch::kByte);
+    EXPECT_EQ(shape_vec(cache.get_k_cache_scale().value()),
+              (std::vector<int64_t>{3, 4, 2}));
+    int64_t bytes = 0;
+    for (const KVCacheTensor& tensor : cache.get_cache_tensors()) {
+      bytes += static_cast<int64_t>(tensor.tensor.nbytes());
+    }
+    EXPECT_EQ(bytes, 3 * 4 * 2 * 2 * (storage_dim + 4));
+    EXPECT_EQ(cache.get_block_type_tensors(BlockType::KV).size(), 4U);
+    for (const KVCacheTensor& tensor : cache.get_cache_tensors()) {
+      tensor.tensor[0].fill_(3);
+      tensor.tensor[1].fill_(5);
+    }
+    torch::Tensor sources = torch::tensor({0, 1}, torch::kLong);
+    torch::Tensor destinations = torch::tensor({1, 0}, torch::kLong);
+    cache.swap_blocks(sources, destinations);
+    for (const KVCacheTensor& tensor : cache.get_cache_tensors()) {
+      EXPECT_TRUE(tensor.tensor[0].eq(5).all().item<bool>());
+      EXPECT_TRUE(tensor.tensor[1].eq(3).all().item<bool>());
+    }
+  }
+}
+#endif
+
 #if defined(USE_MLU)
 TEST(KVCacheTest, DeepSeekV4UsesInjectedAllocatorForTransferableOwners) {
   KVCacheCapacity capacity;

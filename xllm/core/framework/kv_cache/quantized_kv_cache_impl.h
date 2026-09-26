@@ -27,12 +27,13 @@ class QuantizedKVCacheImpl final : public KVCacheImpl {
 
   std::optional<torch::Tensor> get_k_cache_scale() const override;
   std::optional<torch::Tensor> get_v_cache_scale() const override;
+  BlockTypeTensorMap get_block_type_tensors(BlockType type) const override;
 
   void swap_blocks(torch::Tensor& src_tensor,
                    torch::Tensor& dst_tensor) override;
 
  private:
-  // scale tensors for quantized KV cache (int8)
+  // FP32 per-token/head scales for quantized KV cache.
   torch::Tensor key_cache_scale_;
   torch::Tensor value_cache_scale_;
 };

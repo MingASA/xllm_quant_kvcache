@@ -45,6 +45,21 @@ std::optional<torch::Tensor> QuantizedKVCacheImpl::get_v_cache_scale() const {
   return value_cache_scale_;
 }
 
+BlockTypeTensorMap QuantizedKVCacheImpl::get_block_type_tensors(
+    BlockType type) const {
+  BlockTypeTensorMap tensors = KVCacheImpl::get_block_type_tensors(type);
+  if (type != BlockType::KV) {
+    return tensors;
+  }
+  if (get_k_cache_scale().has_value()) {
+    tensors.emplace(KVCacheTensorRole::KEY_SCALE, key_cache_scale_);
+  }
+  if (get_v_cache_scale().has_value()) {
+    tensors.emplace(KVCacheTensorRole::VALUE_SCALE, value_cache_scale_);
+  }
+  return tensors;
+}
+
 void QuantizedKVCacheImpl::swap_blocks(torch::Tensor& src_tensor,
                                        torch::Tensor& dst_tensor) {
   torch::Tensor selected_keys = torch::index_select(key_cache_, 0, src_tensor);

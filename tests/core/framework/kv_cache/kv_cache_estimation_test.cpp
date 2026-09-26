@@ -13,11 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "kv_cache_estimation.h"
+#include "framework/kv_cache/kv_cache_estimation.h"
 
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -59,6 +60,39 @@ TEST(KVCacheEstimationTest, EstimatesStandardAttentionBlocks) {
   EXPECT_EQ(capacity.num_full_attention_layers(), 4);
   EXPECT_EQ(capacity.num_linear_attention_layers(), 0);
   EXPECT_EQ(capacity.n_blocks(), 128);
+}
+
+TEST(KVCacheEstimationTest, CountsEightBitPayloadAndPerHeadScales) {
+  for (const std::string dtype : {"int8", "fp8", "fp8_e4m3", "fp8_e5m2"}) {
+    ModelArgs model_args = make_standard_args();
+    KVCacheEstimateOptions options = make_estimate_options();
+    options.kv_cache_dtype = dtype;
+    const KVCacheCapacity capacity =
+        estimate_kv_cache_capacity(model_args, options);
+    EXPECT_EQ(capacity.slot_size(), 64);
+    EXPECT_EQ(capacity.scale_slot_size(), 16);
+    EXPECT_EQ(capacity.n_blocks(), 204);
+  }
+}
+
+TEST(KVCacheEstimationTest, CountsPackedInt4PaddingAndScales) {
+  ModelArgs model_args = make_standard_args();
+  model_args.head_dim(17);
+  KVCacheEstimateOptions options = make_estimate_options();
+  options.kv_cache_dtype = "int4";
+  const KVCacheCapacity capacity =
+      estimate_kv_cache_capacity(model_args, options);
+  EXPECT_EQ(capacity.slot_size(), 36);
+  EXPECT_EQ(capacity.scale_slot_size(), 16);
+  EXPECT_EQ(capacity.n_blocks(), 315);
+}
+
+TEST(KVCacheEstimationTest, RejectsUnknownDtypeInsteadOfUsingModelBytes) {
+  ModelArgs model_args = make_standard_args();
+  KVCacheEstimateOptions options = make_estimate_options();
+  options.kv_cache_dtype = "float8";
+  EXPECT_DEATH(estimate_kv_cache_capacity(model_args, options),
+               "Invalid kv_cache_dtype");
 }
 
 TEST(KVCacheEstimationTest, IgnoresLinearStateSlotsWithoutLinearAttention) {

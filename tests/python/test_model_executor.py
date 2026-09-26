@@ -344,6 +344,45 @@ class TestCreateAttentionBackend:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("cache_dtype", ("int8", "fp8", "fp8_e4m3", "fp8_e5m2", "int4"))
+def test_cuda_quantized_backend_dispatch(cache_dtype: str) -> None:
+    from xllm.python.attention.quantized import QuantizedPagedAttentionBackend
+
+    with patch("xllm.python.model_executor.executor.current_platform.is_cuda", return_value=True):
+        backend = _create_attention_backend(
+            _make_attention_layer(), torch.device("cuda"), torch.bfloat16, {"kv_cache_dtype": cache_dtype}
+        )
+    assert isinstance(backend, QuantizedPagedAttentionBackend)
+
+
+@pytest.mark.parametrize(
+    "extra_config",
+    [
+        {"python_graph_backend": "cudagraphs"},
+        {"enable_graph": True},
+        {"enable_mla": True},
+        {"index_n_heads": 8},
+        {"full_attention_interval": 4},
+        {"cp_size": 2},
+        {"kv_split_size": 2},
+        {"enable_disagg_pd": True},
+        {"num_speculative_tokens": 1},
+        {"task_type": "embed"},
+    ],
+)
+def test_quantized_backend_rejects_unsupported_modes(extra_config: dict) -> None:
+    with (
+        patch("xllm.python.model_executor.executor.current_platform.is_cuda", return_value=True),
+        pytest.raises(ValueError),
+    ):
+        _create_attention_backend(
+            _make_attention_layer(),
+            torch.device("cuda"),
+            torch.bfloat16,
+            {"kv_cache_dtype": "int8", **extra_config},
+        )
+
+
 class TestModelExecutorConstruction:
     @patch(
         "xllm.python.model_executor.executor._create_attention_backend",

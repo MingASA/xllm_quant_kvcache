@@ -19,6 +19,7 @@ limitations under the License.
 
 #include "core/common/global_flags.h"
 #include "core/framework/config/config_utils.h"
+#include "core/framework/kv_cache/kv_cache_dtype.h"
 
 DEFINE_int32(block_size,
              128,
@@ -39,7 +40,9 @@ DEFINE_string(
     "auto",
     "KV cache data type for quantization. \"auto\" (default): KV "
     "cache dtype aligns with model dtype (no quantization). "
-    "\"int8\": Enables INT8 quantization. Only supported on MLU backend.");
+    "MLU supports int8. CUDA Python eager supports experimental int8, "
+    "fp8 (alias for fp8_e4m3), fp8_e4m3, fp8_e5m2 and packed int4. "
+    "Quantized CUDA attention uses a reference implementation.");
 
 DEFINE_string(indexer_cache_dtype,
               "auto",
@@ -146,6 +149,7 @@ void KVCacheConfig::initialize() {
 }
 
 void KVCacheConfig::validate() const {
+  parse_kv_cache_dtype(kv_cache_dtype_);
   if (indexer_cache_dtype_ != "auto" && indexer_cache_dtype_ != "int8") {
     LOG(FATAL) << "Invalid indexer_cache_dtype=\"" << indexer_cache_dtype_
                << "\". Supported values are exactly \"auto\" and \"int8\".";

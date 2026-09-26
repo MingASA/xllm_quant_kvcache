@@ -128,6 +128,7 @@ PyExecutorImpl::PyExecutorImpl(CausalLM* model,
   executor_config["num_speculative_tokens"] = options_.num_speculative_tokens();
   executor_config["speculative_algorithm"] = options_.speculative_algorithm();
   executor_config["is_draft_engine"] = options_.is_draft_engine();
+  executor_config["kv_cache_dtype"] = options_.kv_cache_dtype();
   py_executor_ = executor_module.attr("ModelExecutor")(
       py_causal_lm_->python_model(),
       executor_config,
@@ -183,8 +184,8 @@ ModelOutput PyExecutorImpl::run(const torch::Tensor& tokens,
     for (auto& kv : kv_caches) {
       // Slot order must match ``LayerCache`` on the Python side.
       // Keep this order synchronized with LayerCache/_LAYER_CACHE_SLOTS.
-      // Generic caches use the first five entries; DeepSeek-V4 uses the
-      // trailing six entries returned by KVCache's DSV4 getters.
+      // The first eleven slots preserve the legacy generic/DeepSeek-V4 ABI;
+      // the last two carry per-token/head K/V quantization scales.
       kv_caches_py.append(
           py::make_tuple(optional_tensor(kv.get_k_cache()),
                          optional_tensor(kv.get_v_cache()),
@@ -196,7 +197,9 @@ ModelOutput PyExecutorImpl::run(const torch::Tensor& tokens,
                          optional_tensor(kv.get_compress_score_state()),
                          optional_tensor(kv.get_compress_index_kv_state()),
                          optional_tensor(kv.get_compress_index_score_state()),
-                         optional_tensor(kv.get_indexer_cache_scale())));
+                         optional_tensor(kv.get_indexer_cache_scale()),
+                         optional_tensor(kv.get_k_cache_scale()),
+                         optional_tensor(kv.get_v_cache_scale())));
     }
     py_executor_.attr("bind_kv_caches")(kv_caches_py);
     kv_bound_ = true;

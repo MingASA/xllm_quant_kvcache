@@ -14,6 +14,7 @@ cc_library(
     kv_cache_estimation
   HDRS
     kv_cache_capacity.h
+    kv_cache_dtype.h
     kv_cache_estimation.h
   SRCS
     kv_cache_estimation.cpp

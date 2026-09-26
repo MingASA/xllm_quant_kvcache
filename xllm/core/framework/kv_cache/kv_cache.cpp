@@ -53,11 +53,6 @@ std::unique_ptr<KVCacheImpl> create_kv_cache_impl(
     int64_t layer_id) {
   CHECK_GE(layer_id, 0) << "KV cache layer_id must be non-negative.";
 
-#if !defined(USE_MLU)
-  CHECK(!create_options.enable_kv_cache_quant())
-      << "KV cache quantization is only supported on MLU backend.";
-#endif
-
   const bool is_linear_layer =
       create_options.enable_linear_attention() &&
       is_linear_attention_layer(layer_id,
@@ -335,6 +330,12 @@ void allocate_kv_caches(std::vector<KVCache>& kv_caches,
                         const KVCacheShape& kv_cache_shape,
                         const KVCacheCreateOptions& create_options) {
   CHECK(kv_caches.empty()) << "KV caches are already initialized.";
+  if (create_options.enable_kv_cache_quant()) {
+    CHECK(!create_options.enable_xtensor())
+        << "XTensor allocation does not carry quantization scales.";
+    CHECK(!util::is_deepseek_v4_model_type(create_options.model_type()))
+        << "DeepSeek V4 does not support the generic quantized KV layout.";
+  }
 
   const int64_t num_layers = create_options.num_layers();
   kv_caches.reserve(num_layers);

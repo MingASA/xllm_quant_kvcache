@@ -55,6 +55,7 @@ limitations under the License.
 #include "core/framework/config/kernel_config.h"
 #include "core/framework/config/kv_cache_config.h"
 #include "core/framework/config/load_config.h"
+#include "core/framework/config/model_config.h"
 #include "core/framework/config/profile_config.h"
 #include "core/framework/config/scheduler_config.h"
 #include "core/framework/config/speculative_config.h"
@@ -511,10 +512,9 @@ bool WorkerImpl::allocate_kv_cache_storage(
   std::vector<bool> indexer_cache_enabled_layers =
       resolve_indexer_cache_enabled_layers(args, num_layers);
 
-  // Check if KV cache quantization is enabled
-  // "auto" (default): cache dtype aligns with model dtype (no quantization)
-  // "int8": enables INT8 quantization
-  const bool enable_kv_cache_quant = options_.kv_cache_dtype() == "int8";
+  const KVCacheDtype kv_cache_dtype =
+      parse_kv_cache_dtype(options_.kv_cache_dtype());
+  const bool enable_kv_cache_quant = kv_cache_dtype != KVCacheDtype::AUTO;
 
   const bool enable_indexer_cache_quant =
       ::xllm::KVCacheConfig::get_instance().indexer_cache_dtype() == "int8";
@@ -525,10 +525,37 @@ bool WorkerImpl::allocate_kv_cache_storage(
   }
 
   if (enable_kv_cache_quant) {
-#if !defined(USE_MLU)
-    LOG(FATAL) << "KV Cache quantization is only supported on MLU backend. "
-               << "Current backend does not support this feature.";
+#if defined(USE_CUDA)
+    CHECK(ModelConfig::is_python_model_impl(
+        ModelConfig::get_instance().model_impl()))
+        << "CUDA quantized KV cache requires --model_impl=python.";
+    CHECK(!options_.enable_graph() &&
+          !options_.enable_prefill_piecewise_graph() &&
+          ExecutionConfig::get_instance().python_graph_backend() == "off")
+        << "Reference quantized attention requires eager execution: "
+           "--enable_graph=false --enable_prefill_piecewise_graph=false "
+           "--python_graph_backend=off.";
+    CHECK(!args.enable_mla() && !enable_linear_attention &&
+          !enable_lighting_indexer && !has_grouped_cache)
+        << "Reference quantized attention supports ordinary MHA/GQA only.";
+    CHECK_EQ(options_.cp_size(), 1);
+    CHECK_EQ(layerwise_split_size, 1);
+    CHECK_EQ(options_.num_speculative_tokens(), 0)
+        << "Reference quantized attention has not enabled speculative decode.";
+    CHECK_EQ(options_.task_type(), "generate");
+    LOG(WARNING) << "Using experimental quantized KV attention: bounded "
+                    "workspace, eager PyTorch operations, no fused kernel.";
+#elif defined(USE_MLU)
+    CHECK(kv_cache_dtype == KVCacheDtype::INT8)
+        << "MLU KV cache quantization supports int8 only.";
+#else
+    LOG(FATAL) << "KV cache quantization requires MLU or CUDA Python eager.";
 #endif
+    CHECK(!::xllm::KVCacheConfig::get_instance().enable_xtensor());
+    CHECK(!options_.enable_sleep_mode());
+    CHECK_LE(options_.host_blocks_factor(), 1.0)
+        << "Quantized KV host offload is not supported.";
+    CHECK(!options_.enable_kvcache_store());
     // Check for unsupported scenarios
     if (options_.backend() == "vlm") {
       LOG(FATAL) << "KV Cache quantization is not supported for VLM "
@@ -561,6 +588,7 @@ bool WorkerImpl::allocate_kv_cache_storage(
       .layer_cache_owned(std::move(layer_cache_owned))
       .indexer_cache_enabled_layers(std::move(indexer_cache_enabled_layers))
       .enable_kv_cache_quant(enable_kv_cache_quant)
+      .quantized_dtype(kv_cache_dtype)
       .enable_indexer_cache_quant(enable_indexer_cache_quant)
       .tensor_allocator(std::move(tensor_allocator))
       .block_size(options_.block_size())
@@ -1437,7 +1465,9 @@ void WorkerImpl::apply_kv_block_swaps(const ModelInputParams& input_params) {
 void WorkerImpl::refresh_cuda_block_copy_runtime_state() {
   cuda_block_copy_runtime_state_ = {};
   if (!::xllm::BeamSearchConfig::get_instance().enable_block_copy_kernel() ||
-      kv_caches_.empty()) {
+      kv_caches_.empty() || options_.kv_cache_dtype() != "auto") {
+    // QuantizedKVCacheImpl::swap_blocks also copies scales. The fused CUDA
+    // kernel only knows about K/V payloads and must not handle these caches.
     return;
   }
 

@@ -42,6 +42,7 @@ limitations under the License.
 
 #include "framework/block/block.h"
 #include "framework/kv_cache/kv_cache_capacity.h"
+#include "framework/kv_cache/kv_cache_dtype.h"
 #include "framework/kv_cache/kv_cache_tensor_allocator.h"
 #include "framework/kv_cache/kv_cache_tensor_role.h"
 #include "framework/kv_cache/logical_cache_layout.h"
@@ -82,6 +83,8 @@ struct KVCacheCreateOptions {
   // whether that layer owns indexer cache tensors.
   PROPERTY(std::vector<bool>, indexer_cache_enabled_layers);
   PROPERTY(bool, enable_kv_cache_quant) = false;
+  // Keep INT8 as the default for existing callers of enable_kv_cache_quant.
+  PROPERTY(KVCacheDtype, quantized_dtype) = KVCacheDtype::INT8;
   PROPERTY(std::shared_ptr<KVCacheTensorAllocator>, tensor_allocator);
 #if defined(USE_NPU)
   PROPERTY(bool, enable_kv_cache_huge_page_allocator) = false;

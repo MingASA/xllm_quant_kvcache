@@ -53,6 +53,8 @@ class LayerCache:
     compress_index_kv_state: torch.Tensor | None = None
     compress_index_score_state: torch.Tensor | None = None
     indexer_scale: torch.Tensor | None = None
+    key_scale: torch.Tensor | None = None
+    value_scale: torch.Tensor | None = None
 
     @property
     def index_scale(self) -> torch.Tensor | None:
@@ -73,6 +75,8 @@ _LAYER_CACHE_SLOTS = (
     "compress_index_kv_state",
     "compress_index_score_state",
     "indexer_scale",
+    "key_scale",
+    "value_scale",
 )
 
 LayerCacheInput = LayerCache | tuple[torch.Tensor | None, ...]
