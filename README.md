@@ -12,114 +12,39 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License. -->
 
-[English](./README.md) | [中文](./README_zh.md)
+# xLLM KV Cache 量化实验
 
-<div align="center">
-<img src="assets/logo_with_llm.png" alt="xLLM" style="width:50%; height:auto;">
-    
-[![Document](https://img.shields.io/badge/Document-black?logo=html5&labelColor=grey&color=red)](https://docs.xllm-ai.com/) [![Docker](https://img.shields.io/badge/Docker-black?logo=docker&labelColor=grey&color=%231E90FF)](https://quay.io/repository/jd_xllm/xllm-ai?tab=tags) [![License](https://img.shields.io/badge/license-Apache%202.0-brightgreen?labelColor=grey)](https://opensource.org/licenses/Apache-2.0) [![report](https://img.shields.io/badge/Technical%20Report-red?logo=arxiv&logoColor=%23B31B1B&labelColor=%23F0EBEB&color=%23D42626)](https://arxiv.org/abs/2510.14686) [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/xLLM-AI/xllm)
-    
-</div>
+基于 xLLM 的实验分支：INT8、FP8 E4M3/E5M2、packed INT4。**仅完成 CPU 验证；RTX 5060 Ti 16GB 尚未实测。**
 
----------------------
+## 当前结果
 
+2026-09-26，提交 `189beb35`，PyTorch 2.7.1+cpu，单线程；单层 GQA：B=1、T=129、Q=1、Hq/Hkv=32/8、D=128、page=128。随机输入，seed=2026；预热 1 次、采样 3 次，延迟仅作冒烟记录。
 
-### 📢 News
-<!-- only keep the latest 3 news, others should be folded -->
-- 2026-08-27: 🎉  We day-0 support the [GLM-5.3-Flash](https://modelscope.cn/models/ZhipuAI/GLM-5.3-Flash) model, please refer to the [Deployment  Document](https://github.com/xLLM-AI/xllm/blob/preview/glm-5.3-flash/testspace/run_glm_53_flash.sh) for deployment.
-- 2026-07-06: 🎉 xLLM is officially donated to the OpenAtom Foundation!
-- 2026-06-13: 🎉 We day-0 support the [MiniMax-M3](https://huggingface.co/MiniMaxAI/MiniMax-M3) model, please refer to the [Deployment Document](https://github.com/xLLM-AI/xllm/blob/preview/minimax-m3/testspace/run_minimax_m3.sh) for deployment.
+| 格式 | 实际 cache（KiB） | 输出相对 L2 误差 | CPU p50（ms） |
+|---|---:|---:|---:|
+| BF16 连续 SDPA | 516 | 0.166% | 9.907 |
+| INT8 | 528 | 0.873% | 2.549 |
+| FP8 E4M3 | 528 | 3.452% | 5.925 |
+| FP8 E5M2 | 528 | 7.217% | 3.158 |
+| INT4 | 272 | 16.119% | 9.276 |
 
-<details>
-<summary>More News</summary>
+- 量化 cache 含 FP32 scales，分配 256 个槽位；BF16 对照仅存 129 token。**同为 256 槽位时 BF16 为 1024 KiB**，INT8/FP8 节省 **48.44%**，INT4 节省 **73.44%**。尾页未填满时不能直接套用压缩率。
+- 误差相对未量化 FP32 attention 输出，不是模型准确率。当前 INT4 误差较大，尚不能证明真实模型质量可接受。
+- BF16 计时仅 attention；量化计时为 execute（含写入）。实现不同、样本少，**不能据此报告加速倍数，更不能外推 GPU 性能**。
+- 原有量化测试 **58 passed**；五格式 CPU benchmark 完成；无 CUDA 时明确失败，不静默回退。
 
-- 2026-04-24: 🎉  We day-0 support the [DeepSeek-V4](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash) model, please refer to the [Deployment Document](https://github.com/xLLM-AI/xllm/blob/preview/deepseek-v4-mlu/testspace/run_deepseek_v4.sh) for deployment.
-- 2026-02-12: 🎉 We day-0 support high-performance inference for the [GLM-5](https://github.com/zai-org/GLM-5) model, please refer to the [Deployment Document](https://github.com/zai-org/GLM-5/blob/main/example/ascend.md) for deployment.
-- 2025-12-21: 🎉 We day-0 support high-performance inference for the [GLM-4.7](https://github.com/zai-org) model.
-- 2025-12-08: 🎉 We day-0 support high-performance inference for the [GLM-4.6V](https://github.com/zai-org/GLM-V) model.
-- 2025-12-05: 🎉 We now support high-performance inference for the [GLM-4.5/GLM-4.6](https://github.com/zai-org/GLM-4.5/blob/main/README_zh.md) series models.
-- 2025-12-05: 🎉 We now support high-performance inference for the [VLM-R1](https://github.com/om-ai-lab/VLM-R1) model.
-- 2025-12-05: 🎉 We build hybrid KV cache management based on [Mooncake](https://github.com/kvcache-ai/Mooncake), supporting global KV cache management with intelligent offloading and prefetching.
-- 2025-10-16: 🎉 We recently have released our [xLLM Technical Report](https://arxiv.org/abs/2510.14686) on arXiv, providing comprehensive technical blueprints and implementation insights.
+[原始样本](docs/benchmark_results/cpu_smoke_20260926.jsonl) · [CSV](docs/benchmark_results/cpu_smoke_20260926.csv) · [运行说明与限制](docs/kv_cache_benchmark_zh.md)
 
-</details>
+## 运行
 
-## Overview
+已有 PyTorch 环境下：
 
-**xLLM** is an **efficient LLM inference framework**, specifically optimized for **Chinese AI accelerators**, enabling enterprise-grade deployment with enhanced efficiency and reduced cost.
-<div align="center">
-<img src="assets/xllm_arch.png" alt="xllm_arch" style="width:90%; height:auto;">
-</div>
-
-## Highlights
-
-* **Top-tier Performance**: Delivers high-throughput, low-latency inference through many advanced features.
-* **Mainstream Hardware Support**: Purpose-built and deeply optimized for Chinese AI accelerators.
-* **Service-Engine Decoupled Architecture**: Service layer handles scheduling and availability; engine layer handles computation.
-* **Enterprise-grade Deployment**: Battle-tested at scale across JD.com's core retail business.
-
-## Hardware Support
-
-| Hardware           | Abbreviation | Example | Remark              |
-| ------------------ | ------------ | ------- | ------------------- |
-| Ascend NPU         | NPU          | A2, A3  | HDK Driver 25.2.0 + |
-| Cambricon MLU      | MLU          | MLU     |                     |
-| Moore Threads GPU  | MUSA         | S5000   |                     |
-| Hygon DCU          | DCU          | BW1000  |                     |
-| MetaX MACA         | MACA         | MXC500  |                     |
-| Iluvatar CoreX GPU | ILU          | BI150   |                     |
-
-
-## Getting Started
-
-* [Quick Start](https://docs.xllm-ai.com/en/getting_started/quick_start/)
-* [Launch xLLM](https://docs.xllm-ai.com/en/getting_started/launch_xllm/)
-* [Online Service](https://docs.xllm-ai.com/en/getting_started/online_service/)
-* [Offline Inference](https://docs.xllm-ai.com/en/getting_started/offline_service/)
-* [Supported Models](https://docs.xllm-ai.com/en/supported_models/)
-
-## Community & Support
-
-<div align="center">
-  <img src="assets/wechat_qrcode.png" alt="qrcode3" width="50%" />
-</div>
-
-## Acknowledgment
-
-This project was made possible thanks to the following open-source projects:  
-- [ScaleLLM](https://github.com/vectorch-ai/ScaleLLM) - xLLM draws inspiration from ScaleLLM's graph construction method and references its runtime execution. 
-- [Mooncake](https://github.com/kvcache-ai/Mooncake) - Build xLLM hybrid KV cache management based on Mooncake.
-- [brpc](https://github.com/apache/brpc) - Build high-performance http service based on brpc.
-- [tokenizers-cpp](https://github.com/mlc-ai/tokenizers-cpp) - Build C++ tokenizer based on tokenizers-cpp.
-- [safetensors](https://github.com/huggingface/safetensors) - xLLM relies on the C binding safetensors capability.
-- [Partial JSON Parser](https://github.com/promplate/partial-json-parser) - Implement xLLM's C++ JSON parser with insights from Python and Go implementations.
-- [concurrentqueue](https://github.com/cameron314/concurrentqueue) - A fast multi-producer, multi-consumer lock-free concurrent queue for C++11.
-
-
-Thanks to the following collaborating university laboratories:
-
-- [THU-MIG](https://ise.thss.tsinghua.edu.cn/mig/projects.html) (School of Software, BNRist, Tsinghua University)
-- USTC-Cloudlab (Cloud Computing Lab, University of Science and Technology of China)
-- [Beihang-HiPO](https://github.com/buaa-hipo) (Beihang HiPO research group)
-- PKU-DS-LAB (Data Structure Laboratory, Peking University)
-- PKU-NetSys-LAB (NetSys Lab, Peking University)
-- [TJU-TANKLab](https://flashserve.org/) (TANK Lab, Tianjin University)
-
-Thanks to all the following [developers](https://github.com/xLLM-AI/xllm/graphs/contributors) who have contributed to xLLM.
-
-<a href="https://github.com/xLLM-AI/xllm/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=xLLM-AI/xllm" />
-</a>
-
-
-## Citation
-
-If you think this repository is helpful to you, welcome to cite us:
+```bash
+python tools/benchmark_kv_cache.py --device cpu --contexts 129 --warmup 1 --iterations 3 --output-dir results
+# GPU 就绪后（需要支持 Blackwell 的 PyTorch/CUDA 与驱动）
+python tools/benchmark_kv_cache.py --device cuda --contexts 1024 4096 --warmup 10 --iterations 100 --output-dir results
 ```
-@article{liu2025xllm,
-  title={xLLM Technical Report},
-  author={xLLM team},
-  journal={arXiv preprint arXiv:2510.14686},
-  year={2025}
-}
-```
+
+自动输出环境/源码哈希、JSONL 原始样本及 CSV。当前为 Python eager 分页 reference，非融合 kernel；C++/整服务、真实模型质量及 GPU 性能未验证。
+
+[量化审计](docs/kv_cache_audit_zh.md) · [原项目中文说明](README_zh.md) · [上游 xLLM](https://github.com/xLLM-AI/xllm)
