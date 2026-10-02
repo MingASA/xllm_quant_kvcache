@@ -1,0 +1,476 @@
+{
+  "sample_count": 4,
+  "samples": [
+    {
+      "causal_mask_audit": {
+        "future_token_invariance_max_abs": 0.0,
+        "native_eager_vs_registered_wrapper_max_abs": 0.0,
+        "prefill_callbacks_with_verified_future_mask": 336,
+        "verified_future_mask_examples": [
+          {
+            "future_masked": true,
+            "key_length": 815,
+            "mask_dtype": "torch.bfloat16",
+            "mask_shape": [
+              1,
+              1,
+              815,
+              815
+            ],
+            "query_length": 815
+          },
+          {
+            "future_masked": true,
+            "key_length": 815,
+            "mask_dtype": "torch.bfloat16",
+            "mask_shape": [
+              1,
+              1,
+              815,
+              815
+            ],
+            "query_length": 815
+          }
+        ]
+      },
+      "greedy_max_tokens": 32,
+      "greedy_modes": {
+        "bf16_eager": {
+          "decoded_text": "Janet's ducks lay 16 eggs per day. She eats 3 for breakfast, so she has 16 - 3 = <<16",
+          "token_count": 32,
+          "token_ids": [
+            18315,
+            295,
+            594,
+            77778,
+            10962,
+            220,
+            16,
+            21,
+            18805,
+            817,
+            1899,
+            13,
+            2932,
+            49677,
+            220,
+            18,
+            369,
+            17496,
+            11,
+            773,
+            1340,
+            702,
+            220,
+            16,
+            21,
+            481,
+            220,
+            18,
+            284,
+            1115,
+            16,
+            21
+          ]
+        },
+        "int4_dense": {
+          "decoded_text": " for\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
+          "token_count": 32,
+          "token_ids": [
+            369,
+            271,
+            271,
+            271,
+            271,
+            271,
+            271,
+            271,
+            271,
+            271,
+            271,
+            271,
+            271,
+            271,
+            271,
+            271,
+            271,
+            271,
+            271,
+            271,
+            271,
+            271,
+            271,
+            271,
+            271,
+            271,
+            271,
+            271,
+            271,
+            271,
+            271,
+            271
+          ]
+        },
+        "int4_rotation_dense": {
+          "decoded_text": "for. for  for for for or for for for to to to for for for for for to for for and for and the the  for for to to",
+          "token_count": 32,
+          "token_ids": [
+            1958,
+            13,
+            369,
+            220,
+            369,
+            369,
+            369,
+            476,
+            369,
+            369,
+            369,
+            311,
+            311,
+            311,
+            369,
+            369,
+            369,
+            369,
+            369,
+            311,
+            369,
+            369,
+            323,
+            369,
+            323,
+            279,
+            279,
+            220,
+            369,
+            369,
+            311,
+            311
+          ]
+        }
+      },
+      "mode_protocol": "post-RoPE K/V quantize-dequantize, FP32 dense attention, output rounded to query BF16",
+      "prompt_tokens": 755,
+      "sample_index": 0,
+      "teacher_forced_answer_tokens": 60,
+      "teacher_forced_modes": {
+        "bf16_eager": {
+          "all_finite": true,
+          "mean_kl_reference_to_mode": 0.0,
+          "teacher_token_cross_entropy": 0.5422784090042114,
+          "top1_agreement_with_bf16": 1.0
+        },
+        "bf16_fp32_dense": {
+          "all_finite": true,
+          "mean_kl_reference_to_mode": 0.015521793626248837,
+          "teacher_token_cross_entropy": 0.5937034487724304,
+          "top1_agreement_with_bf16": 0.98333340883255
+        },
+        "int4_dense": {
+          "all_finite": true,
+          "mean_kl_reference_to_mode": 9.510258674621582,
+          "teacher_token_cross_entropy": 9.887720108032227,
+          "top1_agreement_with_bf16": 0.0
+        },
+        "int4_lab_g32_rotation_dense": {
+          "all_finite": true,
+          "mean_kl_reference_to_mode": 7.1346845626831055,
+          "teacher_token_cross_entropy": 7.373878479003906,
+          "top1_agreement_with_bf16": 0.0
+        },
+        "int4_rotation_dense": {
+          "all_finite": true,
+          "mean_kl_reference_to_mode": 7.886520862579346,
+          "teacher_token_cross_entropy": 8.082465171813965,
+          "top1_agreement_with_bf16": 0.03333333507180214
+        },
+        "int8_dense": {
+          "all_finite": true,
+          "mean_kl_reference_to_mode": 0.014645007438957691,
+          "teacher_token_cross_entropy": 0.5937777161598206,
+          "top1_agreement_with_bf16": 0.98333340883255
+        },
+        "k_only_int4": {
+          "all_finite": true,
+          "mean_kl_reference_to_mode": 8.9845552444458,
+          "teacher_token_cross_entropy": 9.414650917053223,
+          "top1_agreement_with_bf16": 0.0
+        },
+        "v_only_int4": {
+          "all_finite": true,
+          "mean_kl_reference_to_mode": 0.03130160644650459,
+          "teacher_token_cross_entropy": 0.5914822816848755,
+          "top1_agreement_with_bf16": 0.9666666984558105
+        }
+      }
+    },
+    {
+      "causal_mask_audit": {
+        "future_token_invariance_max_abs": 0.0,
+        "native_eager_vs_registered_wrapper_max_abs": 0.0,
+        "prefill_callbacks_with_verified_future_mask": 252,
+        "verified_future_mask_examples": [
+          {
+            "future_masked": true,
+            "key_length": 764,
+            "mask_dtype": "torch.bfloat16",
+            "mask_shape": [
+              1,
+              1,
+              764,
+              764
+            ],
+            "query_length": 764
+          },
+          {
+            "future_masked": true,
+            "key_length": 764,
+            "mask_dtype": "torch.bfloat16",
+            "mask_shape": [
+              1,
+              1,
+              764,
+              764
+            ],
+            "query_length": 764
+          }
+        ]
+      },
+      "greedy_max_tokens": 32,
+      "greedy_modes": {},
+      "mode_protocol": "post-RoPE K/V quantize-dequantize, FP32 dense attention, output rounded to query BF16",
+      "prompt_tokens": 717,
+      "sample_index": 1,
+      "teacher_forced_answer_tokens": 47,
+      "teacher_forced_modes": {
+        "bf16_eager": {
+          "all_finite": true,
+          "mean_kl_reference_to_mode": 0.0,
+          "teacher_token_cross_entropy": 0.6447709798812866,
+          "top1_agreement_with_bf16": 0.9999999403953552
+        },
+        "bf16_fp32_dense": {
+          "all_finite": true,
+          "mean_kl_reference_to_mode": 0.009271210059523582,
+          "teacher_token_cross_entropy": 0.677460789680481,
+          "top1_agreement_with_bf16": 0.9574467539787292
+        },
+        "int4_dense": {
+          "all_finite": true,
+          "mean_kl_reference_to_mode": 7.74195671081543,
+          "teacher_token_cross_entropy": 8.29619312286377,
+          "top1_agreement_with_bf16": 0.021276595070958138
+        },
+        "int4_lab_g32_rotation_dense": {
+          "all_finite": true,
+          "mean_kl_reference_to_mode": 7.74605131149292,
+          "teacher_token_cross_entropy": 8.127649307250977,
+          "top1_agreement_with_bf16": 0.0
+        },
+        "int4_rotation_dense": {
+          "all_finite": true,
+          "mean_kl_reference_to_mode": 8.823235511779785,
+          "teacher_token_cross_entropy": 8.8653564453125,
+          "top1_agreement_with_bf16": 0.021276595070958138
+        },
+        "int8_dense": {
+          "all_finite": true,
+          "mean_kl_reference_to_mode": 0.010312295518815517,
+          "teacher_token_cross_entropy": 0.6976017355918884,
+          "top1_agreement_with_bf16": 0.9361701607704163
+        },
+        "k_only_int4": {
+          "all_finite": true,
+          "mean_kl_reference_to_mode": 8.056266784667969,
+          "teacher_token_cross_entropy": 8.43017864227295,
+          "top1_agreement_with_bf16": 0.021276595070958138
+        },
+        "v_only_int4": {
+          "all_finite": true,
+          "mean_kl_reference_to_mode": 0.013920080848038197,
+          "teacher_token_cross_entropy": 0.599894106388092,
+          "top1_agreement_with_bf16": 0.9574467539787292
+        }
+      }
+    },
+    {
+      "causal_mask_audit": {
+        "future_token_invariance_max_abs": 0.0,
+        "native_eager_vs_registered_wrapper_max_abs": 0.0,
+        "prefill_callbacks_with_verified_future_mask": 252,
+        "verified_future_mask_examples": [
+          {
+            "future_masked": true,
+            "key_length": 812,
+            "mask_dtype": "torch.bfloat16",
+            "mask_shape": [
+              1,
+              1,
+              812,
+              812
+            ],
+            "query_length": 812
+          },
+          {
+            "future_masked": true,
+            "key_length": 812,
+            "mask_dtype": "torch.bfloat16",
+            "mask_shape": [
+              1,
+              1,
+              812,
+              812
+            ],
+            "query_length": 812
+          }
+        ]
+      },
+      "greedy_max_tokens": 32,
+      "greedy_modes": {},
+      "mode_protocol": "post-RoPE K/V quantize-dequantize, FP32 dense attention, output rounded to query BF16",
+      "prompt_tokens": 748,
+      "sample_index": 2,
+      "teacher_forced_answer_tokens": 64,
+      "teacher_forced_modes": {
+        "bf16_eager": {
+          "all_finite": true,
+          "mean_kl_reference_to_mode": 0.0,
+          "teacher_token_cross_entropy": 0.7728532552719116,
+          "top1_agreement_with_bf16": 1.0
+        },
+        "bf16_fp32_dense": {
+          "all_finite": true,
+          "mean_kl_reference_to_mode": 0.029925266280770302,
+          "teacher_token_cross_entropy": 0.766712486743927,
+          "top1_agreement_with_bf16": 0.96875
+        },
+        "int4_dense": {
+          "all_finite": true,
+          "mean_kl_reference_to_mode": 9.144730567932129,
+          "teacher_token_cross_entropy": 9.553478240966797,
+          "top1_agreement_with_bf16": 0.015625
+        },
+        "int4_lab_g32_rotation_dense": {
+          "all_finite": true,
+          "mean_kl_reference_to_mode": 6.643949031829834,
+          "teacher_token_cross_entropy": 7.186892986297607,
+          "top1_agreement_with_bf16": 0.015625
+        },
+        "int4_rotation_dense": {
+          "all_finite": true,
+          "mean_kl_reference_to_mode": 6.392908573150635,
+          "teacher_token_cross_entropy": 6.867667198181152,
+          "top1_agreement_with_bf16": 0.078125
+        },
+        "int8_dense": {
+          "all_finite": true,
+          "mean_kl_reference_to_mode": 0.03229915723204613,
+          "teacher_token_cross_entropy": 0.7347075939178467,
+          "top1_agreement_with_bf16": 0.96875
+        },
+        "k_only_int4": {
+          "all_finite": true,
+          "mean_kl_reference_to_mode": 8.606029510498047,
+          "teacher_token_cross_entropy": 9.059148788452148,
+          "top1_agreement_with_bf16": 0.0
+        },
+        "v_only_int4": {
+          "all_finite": true,
+          "mean_kl_reference_to_mode": 0.028016971424221992,
+          "teacher_token_cross_entropy": 0.7318414449691772,
+          "top1_agreement_with_bf16": 0.953125
+        }
+      }
+    },
+    {
+      "causal_mask_audit": {
+        "future_token_invariance_max_abs": 0.0,
+        "native_eager_vs_registered_wrapper_max_abs": 0.0,
+        "prefill_callbacks_with_verified_future_mask": 252,
+        "verified_future_mask_examples": [
+          {
+            "future_masked": true,
+            "key_length": 773,
+            "mask_dtype": "torch.bfloat16",
+            "mask_shape": [
+              1,
+              1,
+              773,
+              773
+            ],
+            "query_length": 773
+          },
+          {
+            "future_masked": true,
+            "key_length": 773,
+            "mask_dtype": "torch.bfloat16",
+            "mask_shape": [
+              1,
+              1,
+              773,
+              773
+            ],
+            "query_length": 773
+          }
+        ]
+      },
+      "greedy_max_tokens": 32,
+      "greedy_modes": {},
+      "mode_protocol": "post-RoPE K/V quantize-dequantize, FP32 dense attention, output rounded to query BF16",
+      "prompt_tokens": 726,
+      "sample_index": 3,
+      "teacher_forced_answer_tokens": 47,
+      "teacher_forced_modes": {
+        "bf16_eager": {
+          "all_finite": true,
+          "mean_kl_reference_to_mode": 0.0,
+          "teacher_token_cross_entropy": 0.43708276748657227,
+          "top1_agreement_with_bf16": 0.9999999403953552
+        },
+        "bf16_fp32_dense": {
+          "all_finite": true,
+          "mean_kl_reference_to_mode": 0.023288646712899208,
+          "teacher_token_cross_entropy": 0.39134275913238525,
+          "top1_agreement_with_bf16": 0.9999999403953552
+        },
+        "int4_dense": {
+          "all_finite": true,
+          "mean_kl_reference_to_mode": 9.483782768249512,
+          "teacher_token_cross_entropy": 9.54375171661377,
+          "top1_agreement_with_bf16": 0.0
+        },
+        "int4_lab_g32_rotation_dense": {
+          "all_finite": true,
+          "mean_kl_reference_to_mode": 7.59321403503418,
+          "teacher_token_cross_entropy": 7.715893745422363,
+          "top1_agreement_with_bf16": 0.0
+        },
+        "int4_rotation_dense": {
+          "all_finite": true,
+          "mean_kl_reference_to_mode": 8.228544235229492,
+          "teacher_token_cross_entropy": 8.461440086364746,
+          "top1_agreement_with_bf16": 0.0
+        },
+        "int8_dense": {
+          "all_finite": true,
+          "mean_kl_reference_to_mode": 0.020201342180371284,
+          "teacher_token_cross_entropy": 0.4208773374557495,
+          "top1_agreement_with_bf16": 0.9787233471870422
+        },
+        "k_only_int4": {
+          "all_finite": true,
+          "mean_kl_reference_to_mode": 9.160884857177734,
+          "teacher_token_cross_entropy": 9.158748626708984,
+          "top1_agreement_with_bf16": 0.0
+        },
+        "v_only_int4": {
+          "all_finite": true,
+          "mean_kl_reference_to_mode": 0.023218920454382896,
+          "teacher_token_cross_entropy": 0.364104300737381,
+          "top1_agreement_with_bf16": 0.9999999403953552
+        }
+      }
+    }
+  ]
+}

@@ -473,10 +473,15 @@ def main() -> None:
     parser.add_argument("--tokenizer", type=Path, help="Local checkpoint path used for context-length preflight.")
     parser.add_argument("--server-manifest", type=Path, help="Auditable JSON for the selected server configuration.")
     parser.add_argument("--model", help="Identical served model id for both API endpoints.")
-    parser.add_argument("--arm", choices=("auto", "int8", "native-bf16"), help="Run one endpoint then stop its server.")
+    parser.add_argument(
+        "--arm",
+        choices=("auto", "int8", "int4", "native-bf16"),
+        help="Run one endpoint then stop its server.",
+    )
     parser.add_argument("--url", help="The selected arm's local xLLM API base URL, ending in /v1.")
     parser.add_argument("--auto-results", type=Path, help="Saved auto JSONL for offline paired scoring.")
     parser.add_argument("--int8-results", type=Path, help="Saved INT8 JSONL for offline paired scoring.")
+    parser.add_argument("--int4-results", type=Path, help="Saved INT4 JSONL for offline paired scoring.")
     parser.add_argument(
         "--output", type=Path, help="Output directory; defaults to $HF_HOME/xllm-kv-quality/<UTC timestamp>."
     )
@@ -502,7 +507,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    scoring_only = args.auto_results is not None or args.int8_results is not None
+    scoring_only = any((args.auto_results, args.int8_results, args.int4_results))
     if scoring_only and args.resume:
         parser.error("--resume is only valid in API run mode")
     if args.resume and args.output is None:
@@ -516,8 +521,10 @@ def main() -> None:
         parser.error("--gsm8k-shots is required for GSM8K")
 
     if scoring_only:
-        if args.auto_results is None or args.int8_results is None or args.output is None:
-            parser.error("offline scoring requires --auto-results, --int8-results, and --output")
+        candidates = [("int8", args.int8_results), ("int4", args.int4_results)]
+        candidates = [(name, path) for name, path in candidates if path is not None]
+        if args.auto_results is None or len(candidates) != 1 or args.output is None:
+            parser.error("offline scoring requires --auto-results, exactly one candidate result, and --output")
         _score_saved(args, repo_assets[2] if repo_assets is not None else None)
         return
     if (
@@ -589,7 +596,7 @@ def main() -> None:
         "model": args.model,
         "arm": arm,
         "endpoint": args.url,
-        "model_impl": "python" if arm in {"auto", "int8"} else "native",
+        "model_impl": "python" if arm in {"auto", "int8", "int4"} else "native",
         "tokenizer": str(args.tokenizer.resolve()),
         "sampling": {"temperature": 0, "top_p": 1, "seed": args.seed},
         "generation": {
@@ -695,10 +702,13 @@ def main() -> None:
 
 
 def _score_saved(args: argparse.Namespace, longbench_metrics: Any) -> None:
+    int4_results = getattr(args, "int4_results", None)
+    candidate = "int4" if int4_results is not None else "int8"
+    candidate_path = int4_results if candidate == "int4" else args.int8_results
     auto_rows = _jsonl(args.auto_results)
-    int8_rows = _jsonl(args.int8_results)
+    candidate_rows = _jsonl(candidate_path)
     auto_config = json.loads(args.auto_results.with_name("auto.config.json").read_text(encoding="utf-8"))
-    int8_config = json.loads(args.int8_results.with_name("int8.config.json").read_text(encoding="utf-8"))
+    candidate_config = json.loads(candidate_path.with_name(f"{candidate}.config.json").read_text(encoding="utf-8"))
     comparable_keys = (
         "task",
         "data",
@@ -716,47 +726,51 @@ def _score_saved(args: argparse.Namespace, longbench_metrics: Any) -> None:
         "model_impl",
     )
     for key in comparable_keys:
-        if auto_config.get(key) != int8_config.get(key):
-            raise ValueError(f"auto and int8 run configs differ for {key}")
+        if auto_config.get(key) != candidate_config.get(key):
+            raise ValueError(f"auto and {candidate} run configs differ for {key}")
     auto_protocol = auto_config.get("execution_protocol", {})
-    int8_protocol = int8_config.get("execution_protocol", {})
-    protocol_keys = set(auto_protocol) | set(int8_protocol)
+    candidate_protocol = candidate_config.get("execution_protocol", {})
+    protocol_keys = set(auto_protocol) | set(candidate_protocol)
     allowed_protocol_differences = {"request_concurrency", "max_seqs_per_batch"}
     for key in protocol_keys - allowed_protocol_differences:
-        if auto_protocol.get(key) != int8_protocol.get(key):
-            raise ValueError(f"auto and int8 run configs differ for execution_protocol.{key}")
-    if auto_config.get("arm") != "auto" or int8_config.get("arm") != "int8":
-        raise ValueError("paired scoring requires auto and int8 run configs")
+        if auto_protocol.get(key) != candidate_protocol.get(key):
+            raise ValueError(f"auto and {candidate} run configs differ for execution_protocol.{key}")
+    if auto_config.get("arm") != "auto" or candidate_config.get("arm") != candidate:
+        raise ValueError(f"paired scoring requires auto and {candidate} run configs")
     auto_manifest = auto_config["server_manifest"]
-    int8_manifest = int8_config["server_manifest"]
+    candidate_manifest = candidate_config["server_manifest"]
     for key in ("checkpoint_path", "checkpoint_sha256", "model_config_sha256", "chat_template_sha256", "model"):
-        if auto_manifest.get(key) != int8_manifest.get(key):
-            raise ValueError(f"auto and int8 server manifests differ for {key}")
-    if len(auto_rows) != len(int8_rows):
+        if auto_manifest.get(key) != candidate_manifest.get(key):
+            raise ValueError(f"auto and {candidate} server manifests differ for {key}")
+    if len(auto_rows) != len(candidate_rows):
         raise ValueError("paired result files have different row counts")
     expected_examples = auto_config.get("examples")
-    if not isinstance(expected_examples, int) or len(auto_rows) != expected_examples:
-        raise ValueError(f"paired results are incomplete: expected {expected_examples} rows, found {len(auto_rows)}")
-    for arm_rows in (auto_rows, int8_rows):
+    if not isinstance(expected_examples, int) or len(auto_rows) != expected_examples or len(candidate_rows) != expected_examples:
+        raise ValueError(
+            f"paired results are incomplete: expected {expected_examples} rows, "
+            f"found auto={len(auto_rows)}, {candidate}={len(candidate_rows)}"
+        )
+    for arm_rows in (auto_rows, candidate_rows):
         indices = [row.get("_eval_index") for row in arm_rows]
         if sorted(indices) != list(range(expected_examples)):
             raise ValueError("paired results contain missing or duplicate evaluation indices")
         arm_rows.sort(key=lambda row: row["_eval_index"])
     token_comparisons = []
-    for index, (auto_row, int8_row) in enumerate(zip(auto_rows, int8_rows)):
+    for index, (auto_row, candidate_row) in enumerate(zip(auto_rows, candidate_rows)):
         for key in ("_id", "id", "_prompt_sha256", "_record_sha256"):
-            if auto_row.get(key) != int8_row.get(key):
+            if auto_row.get(key) != candidate_row.get(key):
                 raise ValueError(f"paired result mismatch at row {index}: {key}")
         auto_tokens = auto_row.get("usage", {}).get("prompt_tokens")
-        int8_tokens = int8_row.get("usage", {}).get("prompt_tokens")
-        if auto_tokens is None or int8_tokens is None:
+        candidate_tokens = candidate_row.get("usage", {}).get("prompt_tokens")
+        if auto_tokens is None or candidate_tokens is None:
             message = f"API prompt token count unavailable for paired row {index}"
             if args.strict_token_count:
                 raise ValueError(message)
             logger.warning(message)
-        elif auto_tokens != int8_tokens:
+        elif auto_tokens != candidate_tokens:
             message = (
-                f"API prompt token counts differ between arms at row {index}: auto={auto_tokens}, int8={int8_tokens}"
+                f"API prompt token counts differ between arms at row {index}: "
+                f"auto={auto_tokens}, {candidate}={candidate_tokens}"
             )
             if args.strict_token_count:
                 raise ValueError(message)
@@ -764,9 +778,9 @@ def _score_saved(args: argparse.Namespace, longbench_metrics: Any) -> None:
         token_comparisons.append(
             {
                 "auto_api_prompt_tokens": auto_tokens,
-                "int8_api_prompt_tokens": int8_tokens,
+                f"{candidate}_api_prompt_tokens": candidate_tokens,
                 "auto_local_prompt_tokens": auto_row.get("usage", {}).get("local_prompt_tokens"),
-                "int8_local_prompt_tokens": int8_row.get("usage", {}).get("local_prompt_tokens"),
+                f"{candidate}_local_prompt_tokens": candidate_row.get("usage", {}).get("local_prompt_tokens"),
             }
         )
     records = [
@@ -777,7 +791,10 @@ def _score_saved(args: argparse.Namespace, longbench_metrics: Any) -> None:
         }
         for row in auto_rows
     ]
-    predictions = {"auto": [row["prediction"] for row in auto_rows], "int8": [row["prediction"] for row in int8_rows]}
+    predictions = {
+        "auto": [row["prediction"] for row in auto_rows],
+        candidate: [row["prediction"] for row in candidate_rows],
+    }
     summary, item_rows = _score_pair(args.task, records, predictions, longbench_metrics)
     for item, token_data in zip(item_rows, token_comparisons):
         item["prompt_token_counts"] = token_data

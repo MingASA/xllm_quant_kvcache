@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import tempfile
 import threading
@@ -85,6 +86,35 @@ def _fixture_rows() -> tuple[list[dict[str, Any]], list[str], list[int], list[di
 
 
 class ResumeTests(unittest.TestCase):
+    def test_int4_manifest_is_python_eager_and_int4(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            model = Path(temporary_dir)
+            config_bytes = b'{"model_type":"fixture"}\n'
+            tokenizer_data = {"chat_template": "fixture template"}
+            (model / "config.json").write_bytes(config_bytes)
+            (model / "tokenizer_config.json").write_text(json.dumps(tokenizer_data), encoding="utf-8")
+            chat_template_hash = hashlib.sha256(
+                json.dumps(tokenizer_data["chat_template"], ensure_ascii=False, sort_keys=True).encode("utf-8")
+            ).hexdigest()
+            manifest = {
+                "server_started": True,
+                "server_attestation": "int4 test fixture",
+                "model_impl": "python",
+                "graph_mode": "off",
+                "kv_cache_mode": "int4",
+                "checkpoint_path": str(model),
+                "checkpoint_sha256": "a" * 64,
+                "model_config_sha256": hashlib.sha256(config_bytes).hexdigest(),
+                "chat_template_sha256": chat_template_hash,
+                "model": "fixture",
+                "runtime_configuration": {"max_seqs_per_batch": 64},
+            }
+            manifest_path = model / "manifest.json"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            loaded = evaluator._load_server_manifest(manifest_path, "int4", "fixture", model)
+            self.assertEqual(loaded["kv_cache_mode"], "int4")
+            self.assertEqual(loaded["model_impl"], "python")
+
     def test_resume_prefix_and_complete_run_issue_no_requests(self) -> None:
         rows, prompts, local_tokens, records = _fixture_rows()
         with tempfile.TemporaryDirectory() as temporary_dir:

@@ -1,0 +1,1501 @@
+{
+  "capture_layers": [
+    0,
+    7,
+    14,
+    21,
+    27
+  ],
+  "capture_limit_tokens": 512,
+  "device": "NVIDIA GeForce RTX 5060 Ti",
+  "diagnostic": "single real GSM8K prompt; no generation; post-RoPE HF Q/K/V capture",
+  "layers": {
+    "0": {
+      "attention_vs_fp32_dense_oracle": {
+        "gpu_written_cache_dense": {
+          "all_finite": true,
+          "max_abs": 8.0625,
+          "relative_l2": 1.276653528213501,
+          "rmse": 0.3842425048351288
+        },
+        "int4_dense": {
+          "all_finite": true,
+          "max_abs": 8.0625,
+          "relative_l2": 1.3095862865447998,
+          "rmse": 0.39415448904037476
+        },
+        "int4_triton": {
+          "all_finite": true,
+          "max_abs": 8.0625,
+          "relative_l2": 1.276653528213501,
+          "rmse": 0.3842424750328064
+        },
+        "int8_dense": {
+          "all_finite": true,
+          "max_abs": 3.419921875,
+          "relative_l2": 0.19386643171310425,
+          "rmse": 0.058349207043647766
+        },
+        "k_only_int4_dense": {
+          "all_finite": true,
+          "max_abs": 7.78125,
+          "relative_l2": 1.2649933099746704,
+          "rmse": 0.38073301315307617
+        },
+        "lab_g32_rotation_dense": {
+          "all_finite": true,
+          "max_abs": 7.75,
+          "relative_l2": 1.0396229028701782,
+          "rmse": 0.31290188431739807
+        },
+        "rotation_only_dense": {
+          "all_finite": true,
+          "max_abs": 4.9375,
+          "relative_l2": 1.0736185312271118,
+          "rmse": 0.3231337368488312
+        },
+        "v_only_int4_dense": {
+          "all_finite": true,
+          "max_abs": 0.31056225299835205,
+          "relative_l2": 0.22135378420352936,
+          "rmse": 0.06662224978208542
+        }
+      },
+      "bf16_fp32_dense_oracle": {
+        "all_finite": true
+      },
+      "captured_qkv_dtype": "torch.bfloat16",
+      "codec": {
+        "axis": "per-token/per-head",
+        "bound": 7,
+        "group_size": 128,
+        "rounding": "torch.round ties-to-even",
+        "scale_dtype": "float32"
+      },
+      "decode_tail_poison": {
+        "nan_tail_all_finite": false,
+        "nan_tail_vs_zero_tail": {
+          "all_finite": false,
+          "max_abs": NaN,
+          "relative_l2": NaN,
+          "rmse": NaN
+        },
+        "page_size": 128,
+        "scale_tail_nan": true,
+        "sequence_length": 145,
+        "split_count_expected": 8,
+        "zero_tail_all_finite": true
+      },
+      "diagnostic_context_tokens": 145,
+      "diagnostic_query_tokens": 64,
+      "div_rn_int4_writer_compare": {
+        "attention_vs_fp32_dense_oracle": {
+          "all_finite": true,
+          "max_abs": 8.0625,
+          "relative_l2": 1.3095862865447998,
+          "rmse": 0.39415448904037476
+        },
+        "dense_attention_vs_torch_codec": {
+          "all_finite": true,
+          "max_abs": 0.0,
+          "relative_l2": 0.0,
+          "rmse": 0.0
+        },
+        "key_payload_mismatched_bytes": 0,
+        "key_scale_max_abs_delta": 0.0,
+        "payload_exact_match": true,
+        "triton_attention_vs_dense_from_gpu_written_cache": {
+          "all_finite": true,
+          "max_abs": 0.001953125,
+          "relative_l2": 5.83425207878463e-05,
+          "rmse": 1.9807092030532658e-05
+        },
+        "value_payload_mismatched_bytes": 0,
+        "value_scale_max_abs_delta": 0.0
+      },
+      "gpu_writer_compare": {
+        "key_mismatch_examples": [
+          {
+            "channel": 60,
+            "distance_to_half_integer": 1.6794263890673733e-07,
+            "gpu_code": -4,
+            "head": 0,
+            "scale": 45.42857360839844,
+            "token": 27,
+            "torch_code": -3,
+            "torch_normalized": -3.499999832057361,
+            "value": -159.0
+          },
+          {
+            "channel": 61,
+            "distance_to_half_integer": 0.16037766268855336,
+            "gpu_code": 6,
+            "head": 0,
+            "scale": 45.42857360839844,
+            "token": 27,
+            "torch_code": 6,
+            "torch_normalized": 6.339622337311447,
+            "value": 288.0
+          },
+          {
+            "channel": 60,
+            "distance_to_half_integer": 1.6794263890673733e-07,
+            "gpu_code": -4,
+            "head": 0,
+            "scale": 45.42857360839844,
+            "token": 38,
+            "torch_code": -3,
+            "torch_normalized": -3.499999832057361,
+            "value": -159.0
+          },
+          {
+            "channel": 61,
+            "distance_to_half_integer": 0.16037766268855336,
+            "gpu_code": 6,
+            "head": 0,
+            "scale": 45.42857360839844,
+            "token": 38,
+            "torch_code": 6,
+            "torch_normalized": 6.339622337311447,
+            "value": 288.0
+          },
+          {
+            "channel": 60,
+            "distance_to_half_integer": 1.6794263890673733e-07,
+            "gpu_code": -4,
+            "head": 0,
+            "scale": 45.42857360839844,
+            "token": 49,
+            "torch_code": -3,
+            "torch_normalized": -3.499999832057361,
+            "value": -159.0
+          }
+        ],
+        "key_payload_mismatched_bytes": 15,
+        "key_scale_max_abs_delta": 0.0,
+        "key_scale_max_relative_delta": 0.0,
+        "payload_exact_match": false,
+        "scales_exact_match": true,
+        "value_mismatch_examples": [
+          {
+            "channel": 90,
+            "distance_to_half_integer": 0.0842392055602943,
+            "gpu_code": -2,
+            "head": 1,
+            "scale": 0.1026785746216774,
+            "token": 1,
+            "torch_code": -2,
+            "torch_normalized": -2.4157607944397057,
+            "value": -0.248046875
+          },
+          {
+            "channel": 91,
+            "distance_to_half_integer": 1.0884326107074571e-07,
+            "gpu_code": 3,
+            "head": 1,
+            "scale": 0.1026785746216774,
+            "token": 1,
+            "torch_code": 3,
+            "torch_normalized": 3.499999891156739,
+            "value": 0.359375
+          },
+          {
+            "channel": 92,
+            "distance_to_half_integer": 0.33744847058430505,
+            "gpu_code": -3,
+            "head": 1,
+            "scale": 0.1356026828289032,
+            "token": 24,
+            "torch_code": -3,
+            "torch_normalized": -2.837448470584305,
+            "value": -0.384765625
+          },
+          {
+            "channel": 93,
+            "distance_to_half_integer": 1.0988839527215077e-07,
+            "gpu_code": -3,
+            "head": 1,
+            "scale": 0.1356026828289032,
+            "token": 24,
+            "torch_code": -3,
+            "torch_normalized": -3.4999998901116047,
+            "value": -0.474609375
+          },
+          {
+            "channel": 24,
+            "distance_to_half_integer": 0.06487340862944702,
+            "gpu_code": 1,
+            "head": 1,
+            "scale": 0.1322544664144516,
+            "token": 36,
+            "torch_code": 1,
+            "torch_normalized": 0.564873408629447,
+            "value": 0.07470703125
+          }
+        ],
+        "value_payload_mismatched_bytes": 13,
+        "value_scale_max_abs_delta": 0.0,
+        "value_scale_max_relative_delta": 0.0
+      },
+      "int4_key_reconstruction": {
+        "all_finite": true,
+        "max_abs": 22.714279174804688,
+        "relative_l2": 0.07260528206825256,
+        "rmse": 5.005765914916992
+      },
+      "int4_value_reconstruction": {
+        "all_finite": true,
+        "max_abs": 0.313058078289032,
+        "relative_l2": 0.25740763545036316,
+        "rmse": 0.09824641048908234
+      },
+      "int8_key_reconstruction": {
+        "all_finite": true,
+        "max_abs": 1.2578125,
+        "relative_l2": 0.009205250069499016,
+        "rmse": 0.6346552968025208
+      },
+      "int8_value_reconstruction": {
+        "all_finite": true,
+        "max_abs": 0.0173320472240448,
+        "relative_l2": 0.014608969911932945,
+        "rmse": 0.005575897637754679
+      },
+      "lab_g32_gpu_vs_cpu_codec_key": {
+        "all_finite": true,
+        "max_abs": 7.62939453125e-05,
+        "relative_l2": 1.1421577994497056e-07,
+        "rmse": 7.980451300682034e-06
+      },
+      "lab_g32_gpu_vs_cpu_codec_value": {
+        "all_finite": true,
+        "max_abs": 5.21540641784668e-07,
+        "relative_l2": 1.0745951328772207e-07,
+        "rmse": 4.120920849004506e-08
+      },
+      "layer": 0,
+      "shape": {
+        "k": [
+          512,
+          2,
+          128
+        ],
+        "q": [
+          512,
+          12,
+          128
+        ],
+        "v": [
+          512,
+          2,
+          128
+        ]
+      },
+      "single_token_decode_triton_vs_dense_int4": {
+        "all_finite": true,
+        "max_abs": 2.05859375,
+        "relative_l2": 0.37743547558784485,
+        "rmse": 0.09742854535579681
+      },
+      "triton_vs_dense_int4": {
+        "all_finite": true,
+        "max_abs": 4.21484375,
+        "relative_l2": 0.2614383399486542,
+        "rmse": 0.08875744789838791
+      },
+      "triton_vs_gpu_written_cache_dense": {
+        "all_finite": true,
+        "max_abs": 0.001953125,
+        "relative_l2": 8.023174450499937e-05,
+        "rmse": 2.652150760695804e-05
+      }
+    },
+    "14": {
+      "attention_vs_fp32_dense_oracle": {
+        "gpu_written_cache_dense": {
+          "all_finite": true,
+          "max_abs": 1.390625,
+          "relative_l2": 0.27681082487106323,
+          "rmse": 0.10872642695903778
+        },
+        "int4_dense": {
+          "all_finite": true,
+          "max_abs": 1.40625,
+          "relative_l2": 0.2779027223587036,
+          "rmse": 0.1091553121805191
+        },
+        "int4_triton": {
+          "all_finite": true,
+          "max_abs": 1.390625,
+          "relative_l2": 0.27681076526641846,
+          "rmse": 0.10872641205787659
+        },
+        "int8_dense": {
+          "all_finite": true,
+          "max_abs": 0.0859375,
+          "relative_l2": 0.015900101512670517,
+          "rmse": 0.006245281081646681
+        },
+        "k_only_int4_dense": {
+          "all_finite": true,
+          "max_abs": 1.453125,
+          "relative_l2": 0.2382369041442871,
+          "rmse": 0.09357527643442154
+        },
+        "lab_g32_rotation_dense": {
+          "all_finite": true,
+          "max_abs": 0.740234375,
+          "relative_l2": 0.13677260279655457,
+          "rmse": 0.05372187867760658
+        },
+        "rotation_only_dense": {
+          "all_finite": true,
+          "max_abs": 1.203125,
+          "relative_l2": 0.16183367371559143,
+          "rmse": 0.06356542557477951
+        },
+        "v_only_int4_dense": {
+          "all_finite": true,
+          "max_abs": 0.3408203125,
+          "relative_l2": 0.13724108040332794,
+          "rmse": 0.05390588566660881
+        }
+      },
+      "bf16_fp32_dense_oracle": {
+        "all_finite": true
+      },
+      "captured_qkv_dtype": "torch.bfloat16",
+      "codec": {
+        "axis": "per-token/per-head",
+        "bound": 7,
+        "group_size": 128,
+        "rounding": "torch.round ties-to-even",
+        "scale_dtype": "float32"
+      },
+      "decode_tail_poison": {
+        "nan_tail_all_finite": false,
+        "nan_tail_vs_zero_tail": {
+          "all_finite": false,
+          "max_abs": NaN,
+          "relative_l2": NaN,
+          "rmse": NaN
+        },
+        "page_size": 128,
+        "scale_tail_nan": true,
+        "sequence_length": 145,
+        "split_count_expected": 8,
+        "zero_tail_all_finite": true
+      },
+      "diagnostic_context_tokens": 145,
+      "diagnostic_query_tokens": 64,
+      "div_rn_int4_writer_compare": {
+        "attention_vs_fp32_dense_oracle": {
+          "all_finite": true,
+          "max_abs": 1.40625,
+          "relative_l2": 0.2779027223587036,
+          "rmse": 0.1091553121805191
+        },
+        "dense_attention_vs_torch_codec": {
+          "all_finite": true,
+          "max_abs": 0.0,
+          "relative_l2": 0.0,
+          "rmse": 0.0
+        },
+        "key_payload_mismatched_bytes": 0,
+        "key_scale_max_abs_delta": 0.0,
+        "payload_exact_match": true,
+        "triton_attention_vs_dense_from_gpu_written_cache": {
+          "all_finite": true,
+          "max_abs": 0.001953125,
+          "relative_l2": 2.831393067026511e-05,
+          "rmse": 1.1564529813767876e-05
+        },
+        "value_payload_mismatched_bytes": 0,
+        "value_scale_max_abs_delta": 0.0
+      },
+      "gpu_writer_compare": {
+        "key_mismatch_examples": [
+          {
+            "channel": 84,
+            "distance_to_half_integer": 1.871697157262986e-07,
+            "gpu_code": -4,
+            "head": 1,
+            "scale": 0.9553571939468384,
+            "token": 53,
+            "torch_code": -3,
+            "torch_normalized": -3.4999998128302843,
+            "value": -3.34375
+          },
+          {
+            "channel": 85,
+            "distance_to_half_integer": 0.029789744771632376,
+            "gpu_code": 0,
+            "head": 1,
+            "scale": 0.9553571939468384,
+            "token": 53,
+            "torch_code": 0,
+            "torch_normalized": 0.4702102552283676,
+            "value": 0.44921875
+          },
+          {
+            "channel": 50,
+            "distance_to_half_integer": 1.427961486832885e-07,
+            "gpu_code": 4,
+            "head": 0,
+            "scale": 0.8348214626312256,
+            "token": 57,
+            "torch_code": 3,
+            "torch_normalized": 3.4999998572038513,
+            "value": 2.921875
+          },
+          {
+            "channel": 51,
+            "distance_to_half_integer": 0.2540107868210577,
+            "gpu_code": -2,
+            "head": 0,
+            "scale": 0.8348214626312256,
+            "token": 57,
+            "torch_code": -2,
+            "torch_normalized": -2.2459892131789423,
+            "value": -1.875
+          },
+          {
+            "channel": 84,
+            "distance_to_half_integer": 2.002715948634659e-07,
+            "gpu_code": -4,
+            "head": 1,
+            "scale": 0.8928571939468384,
+            "token": 57,
+            "torch_code": -3,
+            "torch_normalized": -3.499999799728405,
+            "value": -3.125
+          }
+        ],
+        "key_payload_mismatched_bytes": 8,
+        "key_scale_max_abs_delta": 0.0,
+        "key_scale_max_relative_delta": 0.0,
+        "payload_exact_match": false,
+        "scales_exact_match": true,
+        "value_mismatch_examples": [
+          {
+            "channel": 120,
+            "distance_to_half_integer": 0.3276209783479642,
+            "gpu_code": 0,
+            "head": 1,
+            "scale": 0.4843750298023224,
+            "token": 43,
+            "torch_code": 0,
+            "torch_normalized": -0.17237902165203575,
+            "value": -0.08349609375
+          },
+          {
+            "channel": 121,
+            "distance_to_half_integer": 2.1534580030291295e-07,
+            "gpu_code": 4,
+            "head": 1,
+            "scale": 0.4843750298023224,
+            "token": 43,
+            "torch_code": 3,
+            "torch_normalized": 3.4999997846541997,
+            "value": 1.6953125
+          },
+          {
+            "channel": 16,
+            "distance_to_half_integer": 2.1534580030291295e-07,
+            "gpu_code": 4,
+            "head": 0,
+            "scale": 0.4843750298023224,
+            "token": 45,
+            "torch_code": 3,
+            "torch_normalized": 3.4999997846541997,
+            "value": 1.6953125
+          },
+          {
+            "channel": 17,
+            "distance_to_half_integer": 0.4959678037109496,
+            "gpu_code": 1,
+            "head": 0,
+            "scale": 0.4843750298023224,
+            "token": 45,
+            "torch_code": 1,
+            "torch_normalized": 1.0040321962890504,
+            "value": 0.486328125
+          },
+          {
+            "channel": 94,
+            "distance_to_half_integer": 0.0138192094337648,
+            "gpu_code": 1,
+            "head": 1,
+            "scale": 0.4441964626312256,
+            "token": 73,
+            "torch_code": 1,
+            "torch_normalized": 1.4861807905662352,
+            "value": 0.66015625
+          }
+        ],
+        "value_payload_mismatched_bytes": 10,
+        "value_scale_max_abs_delta": 0.0,
+        "value_scale_max_relative_delta": 0.0
+      },
+      "int4_key_reconstruction": {
+        "all_finite": true,
+        "max_abs": 1.0625,
+        "relative_l2": 0.18149733543395996,
+        "rmse": 0.30325931310653687
+      },
+      "int4_value_reconstruction": {
+        "all_finite": true,
+        "max_abs": 0.4422433376312256,
+        "relative_l2": 0.16245649755001068,
+        "rmse": 0.14038705825805664
+      },
+      "int8_key_reconstruction": {
+        "all_finite": true,
+        "max_abs": 0.05893230438232422,
+        "relative_l2": 0.009952500462532043,
+        "rmse": 0.016629381105303764
+      },
+      "int8_value_reconstruction": {
+        "all_finite": true,
+        "max_abs": 0.024678386747837067,
+        "relative_l2": 0.009067501872777939,
+        "rmse": 0.007835696451365948
+      },
+      "lab_g32_gpu_vs_cpu_codec_key": {
+        "all_finite": true,
+        "max_abs": 1.9073486328125e-06,
+        "relative_l2": 1.0789348436901491e-07,
+        "rmse": 1.810883247799211e-07
+      },
+      "lab_g32_gpu_vs_cpu_codec_value": {
+        "all_finite": true,
+        "max_abs": 9.5367431640625e-07,
+        "relative_l2": 1.0976101094684054e-07,
+        "rmse": 9.535389011716688e-08
+      },
+      "layer": 14,
+      "shape": {
+        "k": [
+          512,
+          2,
+          128
+        ],
+        "q": [
+          512,
+          12,
+          128
+        ],
+        "v": [
+          512,
+          2,
+          128
+        ]
+      },
+      "single_token_decode_triton_vs_dense_int4": {
+        "all_finite": true,
+        "max_abs": 0.04296875,
+        "relative_l2": 0.006526209879666567,
+        "rmse": 0.0018236290197819471
+      },
+      "triton_vs_dense_int4": {
+        "all_finite": true,
+        "max_abs": 0.265625,
+        "relative_l2": 0.015267853625118732,
+        "rmse": 0.006235995329916477
+      },
+      "triton_vs_gpu_written_cache_dense": {
+        "all_finite": true,
+        "max_abs": 0.00390625,
+        "relative_l2": 4.0425518818665296e-05,
+        "rmse": 1.6495359886903316e-05
+      }
+    },
+    "21": {
+      "attention_vs_fp32_dense_oracle": {
+        "gpu_written_cache_dense": {
+          "all_finite": true,
+          "max_abs": 1.1875,
+          "relative_l2": 0.24524742364883423,
+          "rmse": 0.11683110892772675
+        },
+        "int4_dense": {
+          "all_finite": true,
+          "max_abs": 1.1875,
+          "relative_l2": 0.24609555304050446,
+          "rmse": 0.11723513901233673
+        },
+        "int4_triton": {
+          "all_finite": true,
+          "max_abs": 1.1875,
+          "relative_l2": 0.24524731934070587,
+          "rmse": 0.11683105677366257
+        },
+        "int8_dense": {
+          "all_finite": true,
+          "max_abs": 0.0625,
+          "relative_l2": 0.015483866445720196,
+          "rmse": 0.007376212626695633
+        },
+        "k_only_int4_dense": {
+          "all_finite": true,
+          "max_abs": 1.119140625,
+          "relative_l2": 0.21801652014255524,
+          "rmse": 0.1038588359951973
+        },
+        "lab_g32_rotation_dense": {
+          "all_finite": true,
+          "max_abs": 0.8359375,
+          "relative_l2": 0.13602162897586823,
+          "rmse": 0.06479805707931519
+        },
+        "rotation_only_dense": {
+          "all_finite": true,
+          "max_abs": 0.8828125,
+          "relative_l2": 0.1433451622724533,
+          "rmse": 0.06828685104846954
+        },
+        "v_only_int4_dense": {
+          "all_finite": true,
+          "max_abs": 0.310546875,
+          "relative_l2": 0.10871101170778275,
+          "rmse": 0.05178781598806381
+        }
+      },
+      "bf16_fp32_dense_oracle": {
+        "all_finite": true
+      },
+      "captured_qkv_dtype": "torch.bfloat16",
+      "codec": {
+        "axis": "per-token/per-head",
+        "bound": 7,
+        "group_size": 128,
+        "rounding": "torch.round ties-to-even",
+        "scale_dtype": "float32"
+      },
+      "decode_tail_poison": {
+        "nan_tail_all_finite": false,
+        "nan_tail_vs_zero_tail": {
+          "all_finite": false,
+          "max_abs": NaN,
+          "relative_l2": NaN,
+          "rmse": NaN
+        },
+        "page_size": 128,
+        "scale_tail_nan": true,
+        "sequence_length": 145,
+        "split_count_expected": 8,
+        "zero_tail_all_finite": true
+      },
+      "diagnostic_context_tokens": 145,
+      "diagnostic_query_tokens": 64,
+      "div_rn_int4_writer_compare": {
+        "attention_vs_fp32_dense_oracle": {
+          "all_finite": true,
+          "max_abs": 1.1875,
+          "relative_l2": 0.24609555304050446,
+          "rmse": 0.11723513901233673
+        },
+        "dense_attention_vs_torch_codec": {
+          "all_finite": true,
+          "max_abs": 0.0,
+          "relative_l2": 0.0,
+          "rmse": 0.0
+        },
+        "key_payload_mismatched_bytes": 0,
+        "key_scale_max_abs_delta": 0.0,
+        "payload_exact_match": true,
+        "triton_attention_vs_dense_from_gpu_written_cache": {
+          "all_finite": true,
+          "max_abs": 0.001953125,
+          "relative_l2": 1.3060510354989674e-05,
+          "rmse": 6.323448360490147e-06
+        },
+        "value_payload_mismatched_bytes": 0,
+        "value_scale_max_abs_delta": 0.0
+      },
+      "gpu_writer_compare": {
+        "key_mismatch_examples": [
+          {
+            "channel": 100,
+            "distance_to_half_integer": 0.4261364381175343,
+            "gpu_code": 1,
+            "head": 0,
+            "scale": 0.9821429252624512,
+            "token": 4,
+            "torch_code": 1,
+            "torch_normalized": 1.0738635618824657,
+            "value": 1.0546875
+          },
+          {
+            "channel": 101,
+            "distance_to_half_integer": 2.4275344534530063e-07,
+            "gpu_code": 4,
+            "head": 0,
+            "scale": 0.9821429252624512,
+            "token": 4,
+            "torch_code": 3,
+            "torch_normalized": 3.4999997572465547,
+            "value": 3.4375
+          },
+          {
+            "channel": 52,
+            "distance_to_half_integer": 0.4964954342443466,
+            "gpu_code": 2,
+            "head": 0,
+            "scale": 0.9553571939468384,
+            "token": 8,
+            "torch_code": 2,
+            "torch_normalized": 2.0035045657556534,
+            "value": 1.9140625
+          },
+          {
+            "channel": 53,
+            "distance_to_half_integer": 1.871697157262986e-07,
+            "gpu_code": -4,
+            "head": 0,
+            "scale": 0.9553571939468384,
+            "token": 8,
+            "torch_code": -3,
+            "torch_normalized": -3.4999998128302843,
+            "value": -3.34375
+          },
+          {
+            "channel": 60,
+            "distance_to_half_integer": 1.131477964655403e-07,
+            "gpu_code": -3,
+            "head": 1,
+            "scale": 0.7901785969734192,
+            "token": 30,
+            "torch_code": -3,
+            "torch_normalized": -3.4999998868522035,
+            "value": -2.765625
+          }
+        ],
+        "key_payload_mismatched_bytes": 7,
+        "key_scale_max_abs_delta": 0.0,
+        "key_scale_max_relative_delta": 0.0,
+        "payload_exact_match": false,
+        "scales_exact_match": true,
+        "value_mismatch_examples": [
+          {
+            "channel": 6,
+            "distance_to_half_integer": 0.013117253744028057,
+            "gpu_code": -1,
+            "head": 0,
+            "scale": 0.723214328289032,
+            "token": 5,
+            "torch_code": -1,
+            "torch_normalized": -0.5131172537440281,
+            "value": -0.37109375
+          },
+          {
+            "channel": 7,
+            "distance_to_half_integer": 2.0604073514007837e-07,
+            "gpu_code": -4,
+            "head": 0,
+            "scale": 0.723214328289032,
+            "token": 5,
+            "torch_code": -3,
+            "torch_normalized": -3.499999793959265,
+            "value": -2.53125
+          },
+          {
+            "channel": 116,
+            "distance_to_half_integer": 0.261792512243858,
+            "gpu_code": 1,
+            "head": 0,
+            "scale": 0.3549107313156128,
+            "token": 39,
+            "torch_code": 1,
+            "torch_normalized": 1.238207487756142,
+            "value": 0.439453125
+          },
+          {
+            "channel": 117,
+            "distance_to_half_integer": 1.6794263890673733e-07,
+            "gpu_code": -4,
+            "head": 0,
+            "scale": 0.3549107313156128,
+            "token": 39,
+            "torch_code": -3,
+            "torch_normalized": -3.499999832057361,
+            "value": -1.2421875
+          },
+          {
+            "channel": 30,
+            "distance_to_half_integer": 0.06589672153213577,
+            "gpu_code": 1,
+            "head": 0,
+            "scale": 0.4107142984867096,
+            "token": 42,
+            "torch_code": 1,
+            "torch_normalized": 0.5658967215321358,
+            "value": 0.232421875
+          }
+        ],
+        "value_payload_mismatched_bytes": 17,
+        "value_scale_max_abs_delta": 0.0,
+        "value_scale_max_relative_delta": 0.0
+      },
+      "int4_key_reconstruction": {
+        "all_finite": true,
+        "max_abs": 0.98828125,
+        "relative_l2": 0.20538219809532166,
+        "rmse": 0.33365383744239807
+      },
+      "int4_value_reconstruction": {
+        "all_finite": true,
+        "max_abs": 0.516741156578064,
+        "relative_l2": 0.14807848632335663,
+        "rmse": 0.15575304627418518
+      },
+      "int8_key_reconstruction": {
+        "all_finite": true,
+        "max_abs": 0.05591773986816406,
+        "relative_l2": 0.011344065889716148,
+        "rmse": 0.018429014831781387
+      },
+      "int8_value_reconstruction": {
+        "all_finite": true,
+        "max_abs": 0.028420209884643555,
+        "relative_l2": 0.008188323117792606,
+        "rmse": 0.00861270446330309
+      },
+      "lab_g32_gpu_vs_cpu_codec_key": {
+        "all_finite": true,
+        "max_abs": 1.9073486328125e-06,
+        "relative_l2": 1.094926318501166e-07,
+        "rmse": 1.7878379310332093e-07
+      },
+      "lab_g32_gpu_vs_cpu_codec_value": {
+        "all_finite": true,
+        "max_abs": 9.5367431640625e-07,
+        "relative_l2": 1.0886627421768935e-07,
+        "rmse": 1.1521269982495141e-07
+      },
+      "layer": 21,
+      "shape": {
+        "k": [
+          512,
+          2,
+          128
+        ],
+        "q": [
+          512,
+          12,
+          128
+        ],
+        "v": [
+          512,
+          2,
+          128
+        ]
+      },
+      "single_token_decode_triton_vs_dense_int4": {
+        "all_finite": true,
+        "max_abs": 0.03125,
+        "relative_l2": 0.0037028295919299126,
+        "rmse": 0.0016233603237196803
+      },
+      "triton_vs_dense_int4": {
+        "all_finite": true,
+        "max_abs": 0.3203125,
+        "relative_l2": 0.012700654566287994,
+        "rmse": 0.006149218417704105
+      },
+      "triton_vs_gpu_written_cache_dense": {
+        "all_finite": true,
+        "max_abs": 0.00390625,
+        "relative_l2": 4.212193744024262e-05,
+        "rmse": 2.0392242731759325e-05
+      }
+    },
+    "27": {
+      "attention_vs_fp32_dense_oracle": {
+        "gpu_written_cache_dense": {
+          "all_finite": true,
+          "max_abs": 4.0625,
+          "relative_l2": 0.24916937947273254,
+          "rmse": 0.2550671398639679
+        },
+        "int4_dense": {
+          "all_finite": true,
+          "max_abs": 4.0625,
+          "relative_l2": 0.2498566210269928,
+          "rmse": 0.25577065348625183
+        },
+        "int4_triton": {
+          "all_finite": true,
+          "max_abs": 4.0625,
+          "relative_l2": 0.24916954338550568,
+          "rmse": 0.2550673186779022
+        },
+        "int8_dense": {
+          "all_finite": true,
+          "max_abs": 0.1875,
+          "relative_l2": 0.013180849142372608,
+          "rmse": 0.013492835685610771
+        },
+        "k_only_int4_dense": {
+          "all_finite": true,
+          "max_abs": 3.96875,
+          "relative_l2": 0.22494308650493622,
+          "rmse": 0.23026740550994873
+        },
+        "lab_g32_rotation_dense": {
+          "all_finite": true,
+          "max_abs": 2.0,
+          "relative_l2": 0.1174190491437912,
+          "rmse": 0.1201983243227005
+        },
+        "rotation_only_dense": {
+          "all_finite": true,
+          "max_abs": 3.1796875,
+          "relative_l2": 0.13490238785743713,
+          "rmse": 0.13809549808502197
+        },
+        "v_only_int4_dense": {
+          "all_finite": true,
+          "max_abs": 1.0631103515625,
+          "relative_l2": 0.10344073176383972,
+          "rmse": 0.10588914901018143
+        }
+      },
+      "bf16_fp32_dense_oracle": {
+        "all_finite": true
+      },
+      "captured_qkv_dtype": "torch.bfloat16",
+      "codec": {
+        "axis": "per-token/per-head",
+        "bound": 7,
+        "group_size": 128,
+        "rounding": "torch.round ties-to-even",
+        "scale_dtype": "float32"
+      },
+      "decode_tail_poison": {
+        "nan_tail_all_finite": false,
+        "nan_tail_vs_zero_tail": {
+          "all_finite": false,
+          "max_abs": NaN,
+          "relative_l2": NaN,
+          "rmse": NaN
+        },
+        "page_size": 128,
+        "scale_tail_nan": true,
+        "sequence_length": 145,
+        "split_count_expected": 8,
+        "zero_tail_all_finite": true
+      },
+      "diagnostic_context_tokens": 145,
+      "diagnostic_query_tokens": 64,
+      "div_rn_int4_writer_compare": {
+        "attention_vs_fp32_dense_oracle": {
+          "all_finite": true,
+          "max_abs": 4.0625,
+          "relative_l2": 0.2498566210269928,
+          "rmse": 0.25577065348625183
+        },
+        "dense_attention_vs_torch_codec": {
+          "all_finite": true,
+          "max_abs": 0.0,
+          "relative_l2": 0.0,
+          "rmse": 0.0
+        },
+        "key_payload_mismatched_bytes": 0,
+        "key_scale_max_abs_delta": 0.0,
+        "payload_exact_match": true,
+        "triton_attention_vs_dense_from_gpu_written_cache": {
+          "all_finite": true,
+          "max_abs": 0.0078125,
+          "relative_l2": 3.338048918521963e-05,
+          "rmse": 3.485758861643262e-05
+        },
+        "value_payload_mismatched_bytes": 0,
+        "value_scale_max_abs_delta": 0.0
+      },
+      "gpu_writer_compare": {
+        "key_mismatch_examples": [
+          {
+            "channel": 120,
+            "distance_to_half_integer": 0.11567680367998145,
+            "gpu_code": 0,
+            "head": 0,
+            "scale": 0.8080357313156128,
+            "token": 7,
+            "torch_code": 0,
+            "torch_normalized": 0.38432319632001855,
+            "value": 0.310546875
+          },
+          {
+            "channel": 121,
+            "distance_to_half_integer": 7.376486266252869e-08,
+            "gpu_code": -3,
+            "head": 0,
+            "scale": 0.8080357313156128,
+            "token": 7,
+            "torch_code": -3,
+            "torch_normalized": -3.4999999262351373,
+            "value": -2.828125
+          },
+          {
+            "channel": 62,
+            "distance_to_half_integer": 0.149456596404554,
+            "gpu_code": 1,
+            "head": 0,
+            "scale": 0.6160714626312256,
+            "token": 10,
+            "torch_code": 1,
+            "torch_normalized": 1.350543403595446,
+            "value": 0.83203125
+          },
+          {
+            "channel": 63,
+            "distance_to_half_integer": 1.9349912605548525e-07,
+            "gpu_code": -4,
+            "head": 0,
+            "scale": 0.6160714626312256,
+            "token": 10,
+            "torch_code": -3,
+            "torch_normalized": -3.499999806500874,
+            "value": -2.15625
+          },
+          {
+            "channel": 116,
+            "distance_to_half_integer": 7.673241464445368e-08,
+            "gpu_code": -3,
+            "head": 1,
+            "scale": 0.7767857313156128,
+            "token": 13,
+            "torch_code": -3,
+            "torch_normalized": -3.4999999232675854,
+            "value": -2.71875
+          }
+        ],
+        "key_payload_mismatched_bytes": 8,
+        "key_scale_max_abs_delta": 0.0,
+        "key_scale_max_relative_delta": 0.0,
+        "payload_exact_match": false,
+        "scales_exact_match": true,
+        "value_mismatch_examples": [
+          {
+            "channel": 36,
+            "distance_to_half_integer": 3.750404564684118e-08,
+            "gpu_code": -3,
+            "head": 1,
+            "scale": 0.7946428656578064,
+            "token": 3,
+            "torch_code": -3,
+            "torch_normalized": -3.4999999624959544,
+            "value": -2.78125
+          },
+          {
+            "channel": 37,
+            "distance_to_half_integer": 0.37640444212919455,
+            "gpu_code": 5,
+            "head": 1,
+            "scale": 0.7946428656578064,
+            "token": 3,
+            "torch_code": 5,
+            "torch_normalized": 4.8764044421291945,
+            "value": 3.875
+          },
+          {
+            "channel": 88,
+            "distance_to_half_integer": 1.5646218542997303e-07,
+            "gpu_code": 4,
+            "head": 1,
+            "scale": 2.2857143878936768,
+            "token": 5,
+            "torch_code": 3,
+            "torch_normalized": 3.4999998435378146,
+            "value": 8.0
+          },
+          {
+            "channel": 89,
+            "distance_to_half_integer": 0.036621069761168856,
+            "gpu_code": 1,
+            "head": 1,
+            "scale": 2.2857143878936768,
+            "token": 5,
+            "torch_code": 1,
+            "torch_normalized": 0.5366210697611689,
+            "value": 1.2265625
+          },
+          {
+            "channel": 106,
+            "distance_to_half_integer": 0.30601073061777706,
+            "gpu_code": 4,
+            "head": 0,
+            "scale": 1.633928656578064,
+            "token": 10,
+            "torch_code": 4,
+            "torch_normalized": 3.806010730617777,
+            "value": 6.21875
+          }
+        ],
+        "value_payload_mismatched_bytes": 19,
+        "value_scale_max_abs_delta": 0.0,
+        "value_scale_max_relative_delta": 0.0
+      },
+      "int4_key_reconstruction": {
+        "all_finite": true,
+        "max_abs": 0.9296875,
+        "relative_l2": 0.22245073318481445,
+        "rmse": 0.3268606960773468
+      },
+      "int4_value_reconstruction": {
+        "all_finite": true,
+        "max_abs": 1.1428565979003906,
+        "relative_l2": 0.13250045478343964,
+        "rmse": 0.33629006147384644
+      },
+      "int8_key_reconstruction": {
+        "all_finite": true,
+        "max_abs": 0.05108886957168579,
+        "relative_l2": 0.012499752454459667,
+        "rmse": 0.01836666464805603
+      },
+      "int8_value_reconstruction": {
+        "all_finite": true,
+        "max_abs": 0.06299209594726562,
+        "relative_l2": 0.007332289591431618,
+        "rmse": 0.01860956661403179
+      },
+      "lab_g32_gpu_vs_cpu_codec_key": {
+        "all_finite": true,
+        "max_abs": 2.86102294921875e-06,
+        "relative_l2": 1.035328125453816e-07,
+        "rmse": 1.527603927797827e-07
+      },
+      "lab_g32_gpu_vs_cpu_codec_value": {
+        "all_finite": true,
+        "max_abs": 2.86102294921875e-06,
+        "relative_l2": 1.0854532916937387e-07,
+        "rmse": 2.769443767647317e-07
+      },
+      "layer": 27,
+      "shape": {
+        "k": [
+          512,
+          2,
+          128
+        ],
+        "q": [
+          512,
+          12,
+          128
+        ],
+        "v": [
+          512,
+          2,
+          128
+        ]
+      },
+      "single_token_decode_triton_vs_dense_int4": {
+        "all_finite": true,
+        "max_abs": 0.048828125,
+        "relative_l2": 0.0037611082661896944,
+        "rmse": 0.0040266322903335094
+      },
+      "triton_vs_dense_int4": {
+        "all_finite": true,
+        "max_abs": 0.578125,
+        "relative_l2": 0.012434941716492176,
+        "rmse": 0.01298519130796194
+      },
+      "triton_vs_gpu_written_cache_dense": {
+        "all_finite": true,
+        "max_abs": 0.015625,
+        "relative_l2": 5.7464152632746845e-05,
+        "rmse": 5.999227869324386e-05
+      }
+    },
+    "7": {
+      "attention_vs_fp32_dense_oracle": {
+        "gpu_written_cache_dense": {
+          "all_finite": true,
+          "max_abs": 2.74609375,
+          "relative_l2": 0.5373744964599609,
+          "rmse": 0.1491255760192871
+        },
+        "int4_dense": {
+          "all_finite": true,
+          "max_abs": 2.74609375,
+          "relative_l2": 0.5370116233825684,
+          "rmse": 0.1490248739719391
+        },
+        "int4_triton": {
+          "all_finite": true,
+          "max_abs": 2.74609375,
+          "relative_l2": 0.53737473487854,
+          "rmse": 0.14912563562393188
+        },
+        "int8_dense": {
+          "all_finite": true,
+          "max_abs": 0.18359375,
+          "relative_l2": 0.03828955069184303,
+          "rmse": 0.010625647380948067
+        },
+        "k_only_int4_dense": {
+          "all_finite": true,
+          "max_abs": 2.74609375,
+          "relative_l2": 0.5173866748809814,
+          "rmse": 0.14357881247997284
+        },
+        "lab_g32_rotation_dense": {
+          "all_finite": true,
+          "max_abs": 0.8828125,
+          "relative_l2": 0.2001206874847412,
+          "rmse": 0.05553503707051277
+        },
+        "rotation_only_dense": {
+          "all_finite": true,
+          "max_abs": 1.16796875,
+          "relative_l2": 0.22698253393173218,
+          "rmse": 0.06298941373825073
+        },
+        "v_only_int4_dense": {
+          "all_finite": true,
+          "max_abs": 0.234375,
+          "relative_l2": 0.1408260613679886,
+          "rmse": 0.03908032178878784
+        }
+      },
+      "bf16_fp32_dense_oracle": {
+        "all_finite": true
+      },
+      "captured_qkv_dtype": "torch.bfloat16",
+      "codec": {
+        "axis": "per-token/per-head",
+        "bound": 7,
+        "group_size": 128,
+        "rounding": "torch.round ties-to-even",
+        "scale_dtype": "float32"
+      },
+      "decode_tail_poison": {
+        "nan_tail_all_finite": false,
+        "nan_tail_vs_zero_tail": {
+          "all_finite": false,
+          "max_abs": NaN,
+          "relative_l2": NaN,
+          "rmse": NaN
+        },
+        "page_size": 128,
+        "scale_tail_nan": true,
+        "sequence_length": 145,
+        "split_count_expected": 8,
+        "zero_tail_all_finite": true
+      },
+      "diagnostic_context_tokens": 145,
+      "diagnostic_query_tokens": 64,
+      "div_rn_int4_writer_compare": {
+        "attention_vs_fp32_dense_oracle": {
+          "all_finite": true,
+          "max_abs": 2.74609375,
+          "relative_l2": 0.5370116233825684,
+          "rmse": 0.1490248739719391
+        },
+        "dense_attention_vs_torch_codec": {
+          "all_finite": true,
+          "max_abs": 0.0,
+          "relative_l2": 0.0,
+          "rmse": 0.0
+        },
+        "key_payload_mismatched_bytes": 0,
+        "key_scale_max_abs_delta": 0.0,
+        "payload_exact_match": true,
+        "triton_attention_vs_dense_from_gpu_written_cache": {
+          "all_finite": true,
+          "max_abs": 0.0009765625,
+          "relative_l2": 2.408564068900887e-05,
+          "rmse": 6.574060535058379e-06
+        },
+        "value_payload_mismatched_bytes": 0,
+        "value_scale_max_abs_delta": 0.0
+      },
+      "gpu_writer_compare": {
+        "key_mismatch_examples": [
+          {
+            "channel": 110,
+            "distance_to_half_integer": 1.6794263890673733e-07,
+            "gpu_code": 4,
+            "head": 0,
+            "scale": 1.4196429252624512,
+            "token": 133,
+            "torch_code": 3,
+            "torch_normalized": 3.499999832057361,
+            "value": 4.96875
+          },
+          {
+            "channel": 111,
+            "distance_to_half_integer": 0.29481137858402184,
+            "gpu_code": -1,
+            "head": 0,
+            "scale": 1.4196429252624512,
+            "token": 133,
+            "torch_code": -1,
+            "torch_normalized": -1.2051886214159782,
+            "value": -1.7109375
+          }
+        ],
+        "key_payload_mismatched_bytes": 1,
+        "key_scale_max_abs_delta": 0.0,
+        "key_scale_max_relative_delta": 0.0,
+        "payload_exact_match": false,
+        "scales_exact_match": true,
+        "value_mismatch_examples": [
+          {
+            "channel": 52,
+            "distance_to_half_integer": 0.08064531014686649,
+            "gpu_code": 2,
+            "head": 1,
+            "scale": 0.2421875149011612,
+            "token": 32,
+            "torch_code": 2,
+            "torch_normalized": 2.4193546898531335,
+            "value": 0.5859375
+          },
+          {
+            "channel": 53,
+            "distance_to_half_integer": 2.1534580030291295e-07,
+            "gpu_code": -4,
+            "head": 1,
+            "scale": 0.2421875149011612,
+            "token": 32,
+            "torch_code": -3,
+            "torch_normalized": -3.4999997846541997,
+            "value": -0.84765625
+          },
+          {
+            "channel": 68,
+            "distance_to_half_integer": 0.022798717052593287,
+            "gpu_code": -1,
+            "head": 1,
+            "scale": 0.1774553656578064,
+            "token": 34,
+            "torch_code": -1,
+            "torch_normalized": -0.5227987170525933,
+            "value": -0.0927734375
+          },
+          {
+            "channel": 69,
+            "distance_to_half_integer": 1.6794263890673733e-07,
+            "gpu_code": -4,
+            "head": 1,
+            "scale": 0.1774553656578064,
+            "token": 34,
+            "torch_code": -3,
+            "torch_normalized": -3.499999832057361,
+            "value": -0.62109375
+          },
+          {
+            "channel": 94,
+            "distance_to_half_integer": 2.4275344534530063e-07,
+            "gpu_code": -4,
+            "head": 0,
+            "scale": 0.2455357313156128,
+            "token": 45,
+            "torch_code": -3,
+            "torch_normalized": -3.4999997572465547,
+            "value": -0.859375
+          }
+        ],
+        "value_payload_mismatched_bytes": 9,
+        "value_scale_max_abs_delta": 0.0,
+        "value_scale_max_relative_delta": 0.0
+      },
+      "int4_key_reconstruction": {
+        "all_finite": true,
+        "max_abs": 2.5848217010498047,
+        "relative_l2": 0.2721606194972992,
+        "rmse": 0.8797056674957275
+      },
+      "int4_value_reconstruction": {
+        "all_finite": true,
+        "max_abs": 0.3459821939468384,
+        "relative_l2": 0.16593146324157715,
+        "rmse": 0.09442874789237976
+      },
+      "int8_key_reconstruction": {
+        "all_finite": true,
+        "max_abs": 0.1417323350906372,
+        "relative_l2": 0.017574936151504517,
+        "rmse": 0.05680752918124199
+      },
+      "int8_value_reconstruction": {
+        "all_finite": true,
+        "max_abs": 0.018823862075805664,
+        "relative_l2": 0.009188788011670113,
+        "rmse": 0.005229181610047817
+      },
+      "lab_g32_gpu_vs_cpu_codec_key": {
+        "all_finite": true,
+        "max_abs": 7.62939453125e-06,
+        "relative_l2": 1.0909330683261942e-07,
+        "rmse": 3.542493516306422e-07
+      },
+      "lab_g32_gpu_vs_cpu_codec_value": {
+        "all_finite": true,
+        "max_abs": 4.76837158203125e-07,
+        "relative_l2": 1.0942950723347167e-07,
+        "rmse": 6.261322482714604e-08
+      },
+      "layer": 7,
+      "shape": {
+        "k": [
+          512,
+          2,
+          128
+        ],
+        "q": [
+          512,
+          12,
+          128
+        ],
+        "v": [
+          512,
+          2,
+          128
+        ]
+      },
+      "single_token_decode_triton_vs_dense_int4": {
+        "all_finite": true,
+        "max_abs": 0.0185546875,
+        "relative_l2": 0.005846194922924042,
+        "rmse": 0.0018210539128631353
+      },
+      "triton_vs_dense_int4": {
+        "all_finite": true,
+        "max_abs": 0.25390625,
+        "relative_l2": 0.007967252284288406,
+        "rmse": 0.0021746233105659485
+      },
+      "triton_vs_gpu_written_cache_dense": {
+        "all_finite": true,
+        "max_abs": 0.001953125,
+        "relative_l2": 3.265966734034009e-05,
+        "rmse": 8.913282727007754e-06
+      }
+    }
+  },
+  "poisoned_tail_repro": {
+    "context_length": 145,
+    "expected_num_splits": 8,
+    "head_dim": 128,
+    "kv_heads": 2,
+    "nan_tail_all_finite": false,
+    "nan_tail_vs_zero_tail": {
+      "all_finite": false,
+      "max_abs": NaN,
+      "relative_l2": NaN,
+      "rmse": NaN
+    },
+    "page_size": 128,
+    "query_heads": 12,
+    "query_tokens": 1,
+    "zero_tail_all_finite": true
+  },
+  "prompt_sha256": "f06f7e5952428973a0984c60d0706257f7f116c360786a6356edddf152dac902",
+  "prompt_tokens_captured": 512,
+  "torch_version": "2.13.0+cu132"
+}
