@@ -19,6 +19,26 @@ from __future__ import annotations
 import torch
 
 
+def standard_rope(
+    positions: torch.Tensor,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    head_dim: int,
+    cos_sin_cache: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Apply NeoX-style RoPE without QK normalization using an FP32 table."""
+    from flashinfer.rope import apply_rope_with_cos_sin_cache
+
+    return apply_rope_with_cos_sin_cache(
+        positions,
+        query,
+        key,
+        head_dim,
+        cos_sin_cache,
+        is_neox=True,
+    )
+
+
 def fused_qk_norm_rope(
     qkv: torch.Tensor,
     *,
@@ -130,6 +150,7 @@ def vision_rotary_mul(
 
 
 __all__ = [
+    "standard_rope",
     "fused_qk_norm_rope",
     "interleaved_rotary_embedding",
     "mrope",

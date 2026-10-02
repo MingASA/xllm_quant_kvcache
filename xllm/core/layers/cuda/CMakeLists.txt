@@ -1,5 +1,10 @@
 include(cc_library)
 
+if(FLASHINFER_FA2_0_6_18_ABI)
+  set_source_files_properties(flashinfer_planinfo.cpp xattention_planinfo.cpp
+    PROPERTIES COMPILE_DEFINITIONS FLASHINFER_FA2_0_6_18_ABI)
+endif()
+
 cc_library(
   NAME
     cuda_layers

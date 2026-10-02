@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "cuda_graph_executor_impl.h"
+#include "core/runtime/cuda_graph_executor_impl.h"
 
 #include <c10/core/Device.h>
 #include <c10/core/TensorOptions.h>
@@ -23,9 +23,12 @@ limitations under the License.
 #include <torch/torch.h>
 
 #include <algorithm>
+#include <memory>
 #include <numeric>
 #include <shared_mutex>
+#include <type_traits>
 #include <unordered_map>
+#include <utility>
 
 #include "core/common/global_flags.h"
 #include "core/common/metrics.h"
@@ -48,6 +51,20 @@ limitations under the License.
 namespace xllm::runtime::cuda {
 
 namespace {
+
+template <typename Pool>
+std::unique_ptr<Pool> make_vmm_mempool(
+    std::shared_ptr<xllm::VMMTorchAllocator> allocator) {
+  if constexpr (std::is_constructible_v<
+                    Pool,
+                    std::shared_ptr<xllm::VMMTorchAllocator>,
+                    bool>) {
+    return std::make_unique<Pool>(std::move(allocator),
+                                  /*is_user_created=*/true);
+  } else {
+    return std::make_unique<Pool>(allocator.get(), /*is_user_created=*/true);
+  }
+}
 
 struct GraphPoolMemoryUsage {
   size_t reserved_bytes = 0;
@@ -1223,7 +1240,7 @@ constexpr uint32_t kPhysicalPoolIdDecode = 1;
 
 struct CudaGraphExecutorImpl::VmmPoolState {
   std::unique_ptr<xllm::SharedVMMAllocator> allocator;
-  std::unique_ptr<xllm::VMMTorchAllocator> torch_allocator;
+  std::shared_ptr<xllm::VMMTorchAllocator> torch_allocator;
   std::unordered_map<uint32_t, std::unique_ptr<TorchMemPool>> mempools_by_shape;
 };
 
@@ -1244,7 +1261,7 @@ CudaGraphExecutorImpl::get_or_create_vmm_pool_state(uint32_t physical_pool_id) {
     state->allocator = std::make_unique<xllm::SharedVMMAllocator>();
     state->allocator->init(device_.index());
     state->torch_allocator =
-        std::make_unique<xllm::VMMTorchAllocator>(state->allocator.get());
+        std::make_shared<xllm::VMMTorchAllocator>(state->allocator.get());
     slot = std::move(state);
     LOG(INFO) << "Created VMM pool state for executor " << this << ", device "
               << device_.index() << ", physical_pool_id: " << physical_pool_id;
@@ -1262,8 +1279,7 @@ TorchMemPool* CudaGraphExecutorImpl::get_or_create_vmm_mempool(
   if (it != mempools.end()) {
     return it->second.get();
   }
-  auto pool = std::make_unique<TorchMemPool>(state.torch_allocator.get(),
-                                             /*is_user_created=*/true);
+  auto pool = make_vmm_mempool<TorchMemPool>(state.torch_allocator);
   TorchMemPool* ptr = pool.get();
   mempools[shape_id] = std::move(pool);
   VLOG(kGraphExecutorLogVerboseLevel)

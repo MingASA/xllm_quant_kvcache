@@ -75,6 +75,7 @@ from .rotary_embedding import (
     fused_qk_norm_rope,
     interleaved_rotary_embedding,
     mrope,
+    standard_rope,
     vision_rotary_mul,
 )
 from .sparse_attention import (
@@ -97,6 +98,7 @@ __all__ = [
     "update_decode_graph_metadata",
     "vision_fusion_attention",
     "fused_qk_norm_rope",
+    "standard_rope",
     "interleaved_rotary_embedding",
     "mrope",
     "vision_rotary_mul",

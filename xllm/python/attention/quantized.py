@@ -12,15 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Experimental eager quantized paged attention for CUDA and CPU validation.
+"""Quantized paged attention with fused CUDA kernels and a CPU reference path.
 
-Payloads and FP32 scales are owned by the C++ cache allocator. Attention
-dequantizes one page at a time and uses online softmax; it never expands the
-entire cache pool. This is a correctness baseline, not a fused fast kernel.
+Payloads and FP32 scales are owned by the C++ cache allocator. CUDA execution
+quantizes/scatters K/V and performs paged online-softmax attention in Triton
+kernels without materializing a dequantized cache. CPU execution retains a
+small eager reference implementation for correctness tests.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import torch
@@ -33,6 +35,26 @@ if TYPE_CHECKING:
 
 _FP8_DTYPES = {"fp8_e4m3": torch.float8_e4m3fn, "fp8_e5m2": torch.float8_e5m2}
 _QUERY_TILE_SIZE = 64
+_triton_write_quantized_kv: Callable[..., None] | None = None
+_triton_quantized_paged_attention: Callable[..., torch.Tensor] | None = None
+
+
+def _get_triton_write_quantized_kv() -> Callable[..., None]:
+    global _triton_write_quantized_kv
+    if _triton_write_quantized_kv is None:
+        from xllm.python.attention.quantized_triton import write_quantized_kv
+
+        _triton_write_quantized_kv = write_quantized_kv
+    return _triton_write_quantized_kv
+
+
+def _get_triton_quantized_paged_attention() -> Callable[..., torch.Tensor]:
+    global _triton_quantized_paged_attention
+    if _triton_quantized_paged_attention is None:
+        from xllm.python.attention.quantized_triton import quantized_paged_attention
+
+        _triton_quantized_paged_attention = quantized_paged_attention
+    return _triton_quantized_paged_attention
 
 
 class KVCacheCodec:
@@ -127,6 +149,19 @@ def write_quantized_kv(
         raise ValueError("K/V, slots and cache must be on the same device")
     if slots.ndim != 1 or slots.numel() != key.shape[0] or slots.dtype not in (torch.int32, torch.int64):
         raise ValueError("slot_mapping must contain one integer slot per token")
+    if key.device.type == "cuda":
+        _get_triton_write_quantized_kv()(
+            key.contiguous(),
+            value.contiguous(),
+            slots.contiguous(),
+            cache.key,
+            cache.value,
+            cache.key_scale,
+            cache.value_scale,
+            codec.cache_dtype,
+            codec.head_dim,
+        )
+        return
     capacity = cache.key.shape[0] * cache.key.shape[1]
     if ((slots < -1) | (slots >= capacity)).any().item():
         raise ValueError("KV slot out of range")
@@ -151,7 +186,13 @@ class QuantizedPagedAttentionBackend(AttentionBackend):
         self._num_kv_heads = num_kv_heads
         self._kv_caches: list[LayerCache] = []
         self._metadata: AttentionMetadata | None = None
-        self._plans: list[tuple[int, int, int, list[int]]] = []
+        self._cpu_plans: list[tuple[int, int, int, list[int]]] = []
+        self._query_to_sequence: torch.Tensor | None = None
+        self._query_positions: torch.Tensor | None = None
+        self._context_lengths: torch.Tensor | None = None
+        self._query_offsets: torch.Tensor | None = None
+        self._max_query_tokens = 0
+        self._query_token_count = 0
 
     def bind_kv_caches(self, kv_caches: list[LayerCache]) -> None:
         if not kv_caches:
@@ -177,56 +218,128 @@ class QuantizedPagedAttentionBackend(AttentionBackend):
             raise ValueError("Quantized caches are not bound")
         if metadata.block_table is None or metadata.q_seq_lens_host is None:
             raise ValueError("Quantized attention requires block tables and host query lengths")
+        cache = self._kv_caches[0].key
+        block_table = metadata.block_table
+        if block_table.ndim != 2 or block_table.device != cache.device or block_table.stride(1) != 1:
+            raise ValueError("Quantized block table must be a contiguous 2D tensor on the cache device")
+        if metadata.q_seq_lens_host.device.type != "cpu":
+            raise ValueError("Quantized attention requires CPU-resident host query lengths")
         query_lengths = metadata.q_seq_lens_host.tolist()
-        context_lengths = list(metadata.kv_seq_lens_host_values)
-        block_table = metadata.block_table.cpu().tolist()
-        if len(query_lengths) != len(context_lengths) or len(block_table) != len(query_lengths):
+        host_context_lengths = metadata.kv_seq_lens_host_values
+        if host_context_lengths is None:
+            if metadata.kv_seq_lens_host is None or metadata.kv_seq_lens_host.device.type != "cpu":
+                raise ValueError("Quantized attention requires CPU-resident host context lengths")
+            host_context_lengths = metadata.kv_seq_lens_host.tolist()
+        context_lengths = list(host_context_lengths)
+        # CUDA scheduler host vectors carry cumulative offsets, while test and
+        # other backend metadata may already contain one length per sequence.
+        batch_size = block_table.shape[0]
+        if len(query_lengths) == batch_size + 1 and query_lengths[0] == 0:
+            query_lengths = [end - start for start, end in zip(query_lengths, query_lengths[1:])]
+        if len(context_lengths) == batch_size + 1 and context_lengths[0] == 0:
+            context_lengths = [end - start for start, end in zip(context_lengths, context_lengths[1:])]
+        if len(query_lengths) != len(context_lengths) or block_table.shape[0] != len(query_lengths):
             raise ValueError("Quantized attention batch metadata does not match")
-        plans = []
-        expected_slots = []
+        if metadata.slot_mapping.ndim != 1 or metadata.slot_mapping.numel() != sum(query_lengths):
+            raise ValueError("KV slot mapping must contain one slot per query token")
+        if metadata.slot_mapping.device != cache.device:
+            raise ValueError("KV slot mapping must be on the cache device")
+
+        query_to_sequence = []
+        query_positions = []
+        query_offsets = [0]
         offset = 0
-        for query_len, context_len, row in zip(query_lengths, context_lengths, block_table):
+        for sequence, (query_len, context_len) in enumerate(zip(query_lengths, context_lengths)):
             if query_len <= 0 or context_len < query_len:
                 raise ValueError("Invalid query/context lengths")
             num_pages = (context_len + self.page_size - 1) // self.page_size
-            pages = row[:num_pages]
-            if len(pages) != num_pages or any(page < 0 or page >= self.num_kv_blocks for page in pages):
-                raise ValueError("Invalid quantized KV block table")
-            if len(set(pages)) != len(pages):
-                raise ValueError("Aliased pages within a sequence are not supported")
-            plans.append((offset, query_len, context_len, pages))
-            expected_slots.extend(
-                pages[position // self.page_size] * self.page_size + position % self.page_size
-                for position in range(context_len - query_len, context_len)
-            )
+            if num_pages > block_table.shape[1]:
+                raise ValueError("Quantized KV block table is too short for the context")
+            query_to_sequence.extend([sequence] * query_len)
+            query_positions.extend(range(context_len - query_len, context_len))
             offset += query_len
-        if metadata.slot_mapping.cpu().tolist() != expected_slots:
-            raise ValueError("KV write slots must match the appended query positions")
-        if len(set(expected_slots)) != len(expected_slots):
-            raise ValueError("Concurrent queries cannot overwrite shared KV slots")
+            query_offsets.append(offset)
+
+        device = cache.device
+        self._query_to_sequence = torch.tensor(query_to_sequence, dtype=torch.int32, device=device)
+        self._query_positions = torch.tensor(query_positions, dtype=torch.int32, device=device)
+        self._context_lengths = torch.tensor(context_lengths, dtype=torch.int32, device=device)
+        self._query_offsets = torch.tensor(query_offsets, dtype=torch.int32, device=device)
+        self._max_query_tokens = max(query_lengths)
+        self._query_token_count = offset
+        self._cpu_plans = []
+        if device.type == "cpu":
+            host_block_table = block_table.tolist()
+            expected_slots = []
+            offset = 0
+            for query_len, context_len, row in zip(query_lengths, context_lengths, host_block_table):
+                num_pages = (context_len + self.page_size - 1) // self.page_size
+                pages = row[:num_pages]
+                if len(pages) != num_pages or any(page < 0 or page >= self.num_kv_blocks for page in pages):
+                    raise ValueError("Invalid quantized KV block table")
+                if len(set(pages)) != len(pages):
+                    raise ValueError("Aliased pages within a sequence are not supported")
+                self._cpu_plans.append((offset, query_len, context_len, pages))
+                expected_slots.extend(
+                    pages[position // self.page_size] * self.page_size + position % self.page_size
+                    for position in range(context_len - query_len, context_len)
+                )
+                offset += query_len
+            if metadata.slot_mapping.tolist() != expected_slots:
+                raise ValueError("KV write slots must match the appended query positions")
+            if len(set(expected_slots)) != len(expected_slots):
+                raise ValueError("Concurrent queries cannot overwrite shared KV slots")
         self._metadata = metadata
-        self._plans = plans
 
     def execute(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, layer: Attention) -> torch.Tensor:
-        if self._metadata is None:
-            raise RuntimeError("Quantized attention prepare() was not called")
-        if layer.head_dim != self._codec.head_dim or layer.num_kv_heads != self._num_kv_heads:
-            raise ValueError("Layer shape does not match quantized cache")
-        if layer.num_heads % layer.num_kv_heads:
-            raise ValueError("Query heads must be divisible by KV heads")
-        query = q.reshape(-1, layer.num_heads, layer.head_dim)
-        key = k.reshape(-1, layer.num_kv_heads, layer.head_dim)
+        query = self._validate_query(q, layer)
+        key = k.reshape(-1, self._num_kv_heads, self._codec.head_dim)
         value = v.reshape_as(key)
-        if query.shape[0] != sum(plan[1] for plan in self._plans) or key.shape[0] != query.shape[0]:
-            raise ValueError("Attention tokens do not match the prepared batch")
-        if not query.is_floating_point() or query.device != key.device:
-            raise ValueError("Queries must be floating point on the KV device")
-        if not torch.isfinite(query).all().item():
+        if key.shape[0] != query.shape[0] or value.shape != key.shape:
+            raise ValueError("Attention K/V tokens do not match the prepared batch")
+        if key.device != query.device or value.device != query.device:
+            raise ValueError("Attention Q/K/V must be on the same device")
+        if query.device.type == "cpu" and not torch.isfinite(query).all().item():
             raise ValueError("Quantized attention requires finite queries")
         cache = self._kv_caches[layer.layer_id]
         write_quantized_kv(cache, key, value, self._metadata.slot_mapping, self._codec)
+        return self.execute_attention(query, layer)
+
+    def execute_attention(self, q: torch.Tensor, layer: Attention) -> torch.Tensor:
+        """Attend over the already-populated quantized cache without writing K/V."""
+        query = self._validate_query(q, layer)
+        cache = self._kv_caches[layer.layer_id]
+        if query.device.type == "cuda":
+            if (
+                self._query_to_sequence is None
+                or self._query_positions is None
+                or self._context_lengths is None
+                or self._query_offsets is None
+            ):
+                raise RuntimeError("Quantized attention plan is incomplete")
+            output = _get_triton_quantized_paged_attention()(
+                query.contiguous(),
+                cache.key,
+                cache.value,
+                cache.key_scale,
+                cache.value_scale,
+                self._metadata.block_table,
+                self._query_to_sequence,
+                self._query_positions,
+                self._context_lengths,
+                self._codec.cache_dtype,
+                layer.scale,
+                layer.sliding_window if layer.sliding_window > 0 else 0,
+                layer.causal,
+                self._query_offsets,
+                self._max_query_tokens,
+            )
+            return output.flatten(1)
+
+        if not torch.isfinite(query).all().item():
+            raise ValueError("Quantized attention requires finite queries")
         output = torch.empty_like(query)
-        for offset, query_len, context_len, pages in self._plans:
+        for offset, query_len, context_len, pages in self._cpu_plans:
             for start in range(0, query_len, _QUERY_TILE_SIZE):
                 stop = min(start + _QUERY_TILE_SIZE, query_len)
                 tile = query[offset + start : offset + stop]
@@ -235,6 +348,20 @@ class QuantizedPagedAttentionBackend(AttentionBackend):
                     tile, positions, cache, pages, context_len, layer
                 )
         return output.flatten(1)
+
+    def _validate_query(self, q: torch.Tensor, layer: Attention) -> torch.Tensor:
+        if self._metadata is None:
+            raise RuntimeError("Quantized attention prepare() was not called")
+        if layer.head_dim != self._codec.head_dim or layer.num_kv_heads != self._num_kv_heads:
+            raise ValueError("Layer shape does not match quantized cache")
+        if layer.num_heads % layer.num_kv_heads:
+            raise ValueError("Query heads must be divisible by KV heads")
+        query = q.reshape(-1, layer.num_heads, layer.head_dim)
+        if query.shape[0] != self._query_token_count or not query.is_floating_point():
+            raise ValueError("Attention queries do not match the prepared floating-point batch")
+        if query.device != self._kv_caches[layer.layer_id].key.device:
+            raise ValueError("Attention queries must be on the KV cache device")
+        return query
 
     def _attend_pages(
         self,

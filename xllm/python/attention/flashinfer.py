@@ -16,13 +16,12 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import flashinfer
 import torch
 from flashinfer.decode import fast_decode_plan
 
-from xllm.python import kernels
 from xllm.python.attention.backend import (
     AttentionBackend,
     AttentionMetadata,
@@ -33,6 +32,16 @@ if TYPE_CHECKING:
     from xllm.python.layers.attention import Attention
 
 _WORKSPACE_SIZE = 128 * 1024 * 1024
+_runtime_kernels: Any = None
+
+
+def _get_runtime_kernels() -> Any:
+    global _runtime_kernels
+    if _runtime_kernels is None:
+        from xllm.python import kernels
+
+        _runtime_kernels = kernels
+    return _runtime_kernels
 
 
 def _should_use_tensor_core_decode(
@@ -282,13 +291,37 @@ class FlashInferBackend(AttentionBackend):
         k_3d = _pack_head_axes(k.view(-1, layer.num_kv_heads, layer.head_dim))
         v_3d = _pack_head_axes(v.view(-1, layer.num_kv_heads, layer.head_dim))
 
-        kernels.reshape_paged_cache(metadata.slot_mapping, k_3d, v_3d, k_cache, v_cache)
+        _get_runtime_kernels().reshape_paged_cache(metadata.slot_mapping, k_3d, v_3d, k_cache, v_cache)
+        return self.execute_attention(q_3d, layer, k_3d, v_3d)
 
+    def execute_attention(
+        self,
+        q: torch.Tensor,
+        layer: Attention,
+        k: torch.Tensor | None = None,
+        v: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Run the prepared FlashInfer attention plan without writing the cache.
+
+        This split is useful for stage-level benchmarks and keeps the ordinary
+        ``execute`` lifecycle unchanged: normal callers still write K/V and run
+        attention together.
+        """
+        metadata = self._metadata
+        if metadata is None:
+            raise RuntimeError("FlashInferBackend.prepare() was not called")
+        q_3d = q.view(-1, layer.num_heads, layer.head_dim)
         if metadata.is_prefill:
+            if k is None or v is None:
+                raise ValueError("Ragged prefill attention requires current K/V tensors")
+            k_3d = _pack_head_axes(k.view(-1, layer.num_kv_heads, layer.head_dim))
+            v_3d = _pack_head_axes(v.view(-1, layer.num_kv_heads, layer.head_dim))
             output = self._prefill_ragged_wrapper.run(q_3d, k_3d, v_3d)
         elif metadata.is_chunked_prefill:
-            output = self._prefill_paged_wrapper.run(q_3d, (k_cache, v_cache))
+            layer_cache = self._kv_caches[layer.layer_id]
+            output = self._prefill_paged_wrapper.run(q_3d, (layer_cache.key, layer_cache.value))
         else:
-            output = self._active_decode_wrapper.run(q_3d, (k_cache, v_cache))
+            layer_cache = self._kv_caches[layer.layer_id]
+            output = self._active_decode_wrapper.run(q_3d, (layer_cache.key, layer_cache.value))
 
         return output.view(-1, layer.num_heads * layer.head_dim)

@@ -13,18 +13,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "flashinfer_planinfo.h"
+#include "core/layers/cuda/flashinfer_planinfo.h"
 
 #include <glog/logging.h>
 
 #include <vector>
 
 #include "core/common/global_flags.h"
+#include "core/kernels/cuda/utils.h"
+#include "core/layers/cuda/flashinfer_workspace.h"
 #include "core/platform/device.h"
 #include "core/platform/platform.h"
 #include "core/util/utils.h"
-#include "flashinfer_workspace.h"
-#include "kernels/cuda/utils.h"
 
 using namespace xllm::kernel::cuda;
 
@@ -160,7 +160,12 @@ void update_prefill_plan_info(std::shared_ptr<PlanInfo> plan_info,
                       /*window_size_left=*/-1,
                       /*fixed_split_size=*/-1,
                       /*disable_split_kv=*/false,
-                      /*num_colocated_ctas=*/0)
+                      /*num_colocated_ctas=*/0
+#if defined(FLASHINFER_FA2_0_6_18_ABI)
+                      ,
+                      /*uniform_q_len=*/0
+#endif
+                      )
                 .cast<ffi::Array<int64_t>>();
   plan_info->plan_info = deep_copy_plan_info(plan_result);
 }
@@ -242,7 +247,12 @@ void update_chunked_prefill_plan_info(std::shared_ptr<PlanInfo> plan_info,
                                            window_size_left,
                                            /*fixed_split_size=*/-1,
                                            /*disable_split_kv=*/false,
-                                           /*num_colocated_ctas=*/0)
+                                           /*num_colocated_ctas=*/0
+#if defined(FLASHINFER_FA2_0_6_18_ABI)
+                                           ,
+                                           /*uniform_q_len=*/0
+#endif
+                                           )
           .cast<ffi::Array<int64_t>>());
 }
 

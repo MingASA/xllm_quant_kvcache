@@ -121,6 +121,10 @@ void batch_prefill_impl(const std::string& uri,
         /*maybe_prefix_len_ptr=*/ffi::Optional<ffi::Tensor>(),
         /*maybe_token_pos_in_items_ptr=*/ffi::Optional<ffi::Tensor>(),
         /*maybe_max_item_len_ptr=*/ffi::Optional<ffi::Tensor>(),
+#if defined(FLASHINFER_FA2_0_6_18_ABI)
+        /*maybe_k_cache_sf=*/ffi::Optional<ffi::Tensor>(),
+        /*maybe_v_cache_sf=*/ffi::Optional<ffi::Tensor>(),
+#endif
         /*logits_soft_cap=*/0.0,
         sm_scale,
         /*rope_rcp_scale=*/1.0,

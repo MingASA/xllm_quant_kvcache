@@ -15,10 +15,12 @@ import hashlib
 import importlib.metadata
 import json
 import math
+import os
 import platform
 import statistics
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from datetime import datetime, timezone
@@ -111,10 +113,67 @@ def _dense(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
 
 
 def _write_bf16_kv(cache: LayerCache, key: torch.Tensor, value: torch.Tensor, slots: torch.Tensor) -> None:
+    kernels = sys.modules.get("xllm.python.kernels")
+    if key.device.type == "cuda" and kernels is not None:
+        kernels.reshape_paged_cache(slots, key.contiguous(), value.contiguous(), cache.key, cache.value)
+        return
+    if key.device.type == "cuda":
+        from xllm.python.attention.quantized_triton import write_bf16_kv
+
+        write_bf16_kv(key.contiguous(), value.contiguous(), slots.contiguous(), cache.key, cache.value)
+        return
     valid = slots >= 0
     indices = slots[valid].long()
     cache.key.flatten(0, 1).index_copy_(0, indices, key[valid])
     cache.value.flatten(0, 1).index_copy_(0, indices, value[valid])
+
+
+def _attention_metadata(
+    pages: torch.Tensor, slots: torch.Tensor, context: int, query_tokens: int, page_size: int
+) -> SimpleNamespace:
+    batch, pages_per_sequence = pages.shape
+    device = pages.device
+    page_indptr_host = torch.arange(batch + 1, dtype=torch.int32) * pages_per_sequence
+    page_last_length = context - (pages_per_sequence - 1) * page_size
+    query_indptr = torch.arange(batch + 1, dtype=torch.int32, device=device) * query_tokens
+    return SimpleNamespace(
+        block_table=pages,
+        slot_mapping=slots,
+        q_seq_lens_host=torch.full((batch,), query_tokens, dtype=torch.int32),
+        kv_seq_lens_host_values=[context] * batch,
+        kv_seq_lens_host=torch.full((batch,), context, dtype=torch.int32),
+        paged_kv_indptr=page_indptr_host.to(device=device),
+        paged_kv_indptr_host=page_indptr_host,
+        paged_kv_indices=pages.reshape(-1).to(dtype=torch.int32),
+        paged_kv_last_page_len=torch.full((batch,), page_last_length, dtype=torch.int32, device=device),
+        paged_kv_last_page_len_host=torch.full((batch,), page_last_length, dtype=torch.int32),
+        qo_indptr=query_indptr,
+        q_cu_seq_lens=None,
+        kv_cu_seq_lens=None,
+        is_prefill=False,
+        is_chunked_prefill=query_tokens > 1,
+    )
+
+
+def _flashinfer_backend(cache: LayerCache, metadata: SimpleNamespace, args: argparse.Namespace):
+    os.environ.setdefault(
+        "FLASHINFER_WORKSPACE_BASE",
+        str(Path(tempfile.gettempdir()) / "xllm-flashinfer-workspace"),
+    )
+    from xllm.python.attention.flashinfer import FlashInferBackend
+
+    backend = FlashInferBackend(
+        args.heads,
+        args.kv_heads,
+        args.head_dim,
+        args.head_dim**-0.5,
+        -1,
+        torch.device(args.device),
+        torch.bfloat16,
+    )
+    backend.bind_kv_caches([cache])
+    backend.prepare(metadata)
+    return backend
 
 
 def _prepare_plans(metadata: SimpleNamespace, page_size: int, num_blocks: int) -> list[tuple[int, int, int, list[int]]]:
@@ -234,6 +293,12 @@ def _case(args: argparse.Namespace, length: int, fmt: str, batch: int, queries: 
         "kv_heads": args.kv_heads,
         "page_size": args.page_size,
         "device": args.device,
+        "bf16_cache_writer": "xllm_reshape_paged_cache"
+        if "xllm.python.kernels" in sys.modules
+        else "triton_standalone"
+        if args.device == "cuda"
+        else "torch_index_copy",
+        "quantized_cache_writer": "fused_triton" if args.device == "cuda" and fmt != "bf16" else None,
     }
     if fmt == "bf16":
         cache = LayerCache(
@@ -279,37 +344,68 @@ def _case(args: argparse.Namespace, length: int, fmt: str, batch: int, queries: 
     new_k = k[:, -queries:].reshape(-1, args.kv_heads, dim)
     new_v = v[:, -queries:].reshape_as(new_k)
     q_flat = q.reshape(-1, args.heads, dim)
-    actual = _paged_attention(q_flat, cache, codec, plans, layer, args.page_size)
-    if not torch.isfinite(actual).all().item():
-        raise RuntimeError("Nonfinite attention output")
+    metadata = _attention_metadata(
+        pages.to(device=args.device, dtype=torch.int32),
+        slots[:, -queries:].reshape(-1),
+        length,
+        queries,
+        args.page_size,
+    )
+    if args.device == "cuda":
+        backend = _flashinfer_backend(cache, metadata, args) if codec is None else None
+        if codec is None and args.bf16_backend == "triton":
+            from xllm.python.attention.quantized_triton import quantized_paged_attention
 
-    if fmt == "bf16":
-        bf16_reference = actual
+            query_to_sequence = torch.arange(batch, device=args.device, dtype=torch.int32).repeat_interleave(queries)
+            query_positions = torch.arange(length - queries, length, device=args.device, dtype=torch.int32).repeat(batch)
+            context_lengths = torch.full((batch,), length, device=args.device, dtype=torch.int32)
+            query_offsets = torch.arange(batch + 1, device=args.device, dtype=torch.int32) * queries
+
+            def triton_attention(query: torch.Tensor, layer: SimpleNamespace) -> torch.Tensor:
+                return quantized_paged_attention(
+                    query, cache.key, cache.value, cache.key, cache.value,
+                    metadata.block_table, query_to_sequence, query_positions,
+                    context_lengths, "bf16", layer.scale, layer.sliding_window,
+                    layer.causal, query_offsets, queries,
+                ).flatten(1)
+
+            flashinfer_reference = backend.execute_attention(q_flat, layer)
+            backend = SimpleNamespace(execute_attention=triton_attention)
+        if codec is not None:
+            backend = QuantizedPagedAttentionBackend(fmt, dim, args.kv_heads)
+            backend.bind_kv_caches([cache])
+            backend.prepare(metadata)
+        write_kv(new_k, new_v, metadata.slot_mapping)
+        actual = backend.execute_attention(q_flat, layer)
+        if codec is None and args.bf16_backend == "triton":
+            torch.testing.assert_close(actual.float(), flashinfer_reference.float(), rtol=0.02, atol=0.005)
+        if not torch.isfinite(actual).all().item():
+            raise RuntimeError("Nonfinite attention output")
         implementation_max_abs = None
+        if codec is not None:
+            decoded_key = codec.decode(cache.key, cache.key_scale)[pages.to(args.device)].reshape(
+                batch, pages_per_seq * args.page_size, args.kv_heads, dim
+            )[:, :length]
+            decoded_value = codec.decode(cache.value, cache.value_scale)[pages.to(args.device)].reshape(
+                batch, pages_per_seq * args.page_size, args.kv_heads, dim
+            )[:, :length]
+            quant_reference = _dense(q.float(), decoded_key, decoded_value)
+            torch.testing.assert_close(actual.float(), quant_reference, rtol=0.02, atol=0.005)
+            implementation_max_abs = (actual.float() - quant_reference).abs().max().item()
+            del quant_reference, decoded_key, decoded_value
+        bf16_reference = (
+            flashinfer_reference if codec is None and args.bf16_backend == "triton"
+            else actual if codec is None else None
+        )
+    else:
         backend = None
-    else:
-        backend = QuantizedPagedAttentionBackend(fmt, dim, args.kv_heads)
-        backend.bind_kv_caches([cache])
-        backend.prepare(metadata)
-        backend_actual = backend.execute(q_flat, new_k, new_v, layer)
-        decoded_key = codec.decode(cache.key, cache.key_scale)[pages.to(args.device)].reshape(
-            batch, pages_per_seq * args.page_size, args.kv_heads, dim
-        )[:, :length]
-        decoded_value = codec.decode(cache.value, cache.value_scale)[pages.to(args.device)].reshape(
-            batch, pages_per_seq * args.page_size, args.kv_heads, dim
-        )[:, :length]
-        quant_reference = _dense(q.float(), decoded_key, decoded_value)
-        torch.testing.assert_close(backend_actual.float(), quant_reference, rtol=0.02, atol=0.005)
-        implementation_max_abs = (backend_actual.float() - quant_reference).abs().max().item()
-        # The quantized backend output is the measured result; the shared page loop
-        # above supplies the attention-only timing without rewriting the cache.
-        actual = backend_actual
-        del backend_actual, quant_reference, decoded_key, decoded_value
-        bf16_reference = None
+        actual = _paged_attention(q_flat, cache, codec, plans, layer, args.page_size)
+        if not torch.isfinite(actual).all().item():
+            raise RuntimeError("Nonfinite attention output")
+        implementation_max_abs = None
+        bf16_reference = actual if codec is None else None
 
-    if fmt == "bf16":
-        bf16_reference = actual
-    else:
+    if codec is not None:
         bf16_cache = LayerCache(
             key=torch.zeros(
                 (blocks, args.page_size, args.kv_heads, dim), device=args.device, dtype=torch.bfloat16
@@ -319,14 +415,21 @@ def _case(args: argparse.Namespace, length: int, fmt: str, batch: int, queries: 
             ),
         )
         _write_bf16_kv(bf16_cache, k.flatten(0, 1), v.flatten(0, 1), slots.flatten())
-        bf16_reference = _paged_attention(q_flat, bf16_cache, None, plans, layer, args.page_size)
+        if args.device == "cuda":
+            bf16_backend = _flashinfer_backend(bf16_cache, metadata, args)
+            bf16_reference = bf16_backend.execute_attention(q_flat, layer)
+            del bf16_backend
+        else:
+            bf16_reference = _paged_attention(q_flat, bf16_cache, None, plans, layer, args.page_size)
         del bf16_cache
 
     error = actual.float() - bf16_reference.float()
     row["output_relative_l2_vs_bf16"] = (error.norm() / bf16_reference.float().norm().clamp_min(1e-12)).item()
     row["output_max_abs_vs_bf16"] = error.abs().max().item()
     row["implementation_max_abs"] = implementation_max_abs
-    row["baseline_kind"] = "shared_eager_paged_online_softmax"
+    row["baseline_kind"] = "flashinfer_paged" if args.device == "cuda" else "eager_cpu_reference"
+    row["attention_backend"] = args.bf16_backend if fmt == "bf16" else "triton"
+    row["kv_budget_mib"] = args.kv_budget_mib
     cache_tensors = [cache.key, cache.value]
     if cache.key_scale is not None:
         cache_tensors.extend((cache.key_scale, cache.value_scale))
@@ -338,16 +441,16 @@ def _case(args: argparse.Namespace, length: int, fmt: str, batch: int, queries: 
     if backend is None:
         def full_call() -> torch.Tensor:
             full_plans = _prepare_plans(metadata, args.page_size, blocks)
-            _write_bf16_kv(cache, new_k, new_v, metadata.slot_mapping)
-            return _paged_attention(q_flat, cache, None, full_plans, layer, args.page_size)
-
-        attention = lambda: _paged_attention(q_flat, cache, None, plans, layer, args.page_size)
-    else:
-        def full_call() -> torch.Tensor:
-            backend.prepare(metadata)
-            return backend.execute(q_flat, new_k, new_v, layer)
+            write_kv(new_k, new_v, metadata.slot_mapping)
+            return _paged_attention(q_flat, cache, codec, full_plans, layer, args.page_size)
 
         attention = lambda: _paged_attention(q_flat, cache, codec, plans, layer, args.page_size)
+    else:
+        def full_call() -> torch.Tensor:
+            write_kv(new_k, new_v, metadata.slot_mapping)
+            return backend.execute_attention(q_flat, layer)
+
+        attention = lambda: backend.execute_attention(q_flat, layer)
 
     stages = {
         "cache_write": lambda: write_kv(new_k, new_v, metadata.slot_mapping),
@@ -355,6 +458,8 @@ def _case(args: argparse.Namespace, length: int, fmt: str, batch: int, queries: 
         "full_call": full_call,
     }
     del bf16_reference, actual, error
+    if args.device == "cuda" and codec is None and args.bf16_backend == "triton":
+        del flashinfer_reference
     _sync(args.device)
     if args.device == "cuda":
         row["allocated_before_timing_bytes"] = torch.cuda.memory_allocated()
@@ -397,10 +502,22 @@ def _main() -> int:
     ):
         parser.add_argument("--" + name, type=int, default=default)
     parser.add_argument("--seed", type=int, default=2026)
+    parser.add_argument("--rounds", type=int, default=1, help="Independent benchmark rounds per case")
     parser.add_argument("--output-dir", type=Path, default=Path("kv_benchmark_results"))
     parser.add_argument("--preflight-only", action="store_true")
+    parser.add_argument("--bf16-backend", choices=("flashinfer", "triton"), default="flashinfer")
+    parser.add_argument("--kv-budget-mib", type=float, default=None,
+                        help="Single-layer KV-only budget; choose each format's maximum batch at each context")
     args = parser.parse_args()
+    if args.kv_budget_mib is not None and (not math.isfinite(args.kv_budget_mib) or args.kv_budget_mib <= 0):
+        parser.error("KV budget must be finite and positive")
+    if args.device != "cuda" and args.bf16_backend != "flashinfer":
+        parser.error("Triton BF16 requires CUDA")
     batches = args.batches if args.batches is not None else [args.batch or 1]
+    if args.kv_budget_mib is not None:
+        if args.batches is not None or args.batch is not None:
+            parser.error("KV budget selects batch automatically; do not specify batches")
+        batches = [1]
     query_lengths = args.query_lengths if args.query_lengths is not None else [args.query_tokens or 1]
     if any(
         value <= 0
@@ -413,6 +530,7 @@ def _main() -> int:
             args.kv_heads,
             args.page_size,
             args.iterations,
+            args.rounds,
             args.threads,
         )
     ):
@@ -423,7 +541,7 @@ def _main() -> int:
     destination = args.output_dir / (datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "_" + uuid.uuid4().hex[:8])
     destination.mkdir(parents=True, exist_ok=False)
     metadata = {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": "running",
         "arguments": vars(args) | {"output_dir": str(args.output_dir)},
         "python": sys.version,
@@ -438,7 +556,9 @@ def _main() -> int:
             path: hashlib.sha256((_ROOT / path).read_bytes()).hexdigest()
             for path in (
                 "tools/benchmark_kv_cache.py",
+                "xllm/python/attention/flashinfer.py",
                 "xllm/python/attention/quantized.py",
+                "xllm/python/attention/quantized_triton.py",
                 "xllm/python/attention/backend.py",
             )
         },
@@ -476,6 +596,9 @@ def _main() -> int:
                 summary,
                 fieldnames=[
                     "format",
+                    "attention_backend",
+                    "kv_budget_mib",
+                    "round",
                     "context",
                     "batch",
                     "query_tokens",
@@ -491,57 +614,80 @@ def _main() -> int:
                     "output_relative_l2_vs_bf16",
                     "output_max_abs_vs_bf16",
                     "compression_vs_bf16",
+                    "bf16_cache_writer",
+                    "quantized_cache_writer",
                 ],
             )
             writer.writeheader()
             if not args.preflight_only:
-                for length in args.contexts:
-                    for batch in batches:
-                        for queries in query_lengths:
-                            for fmt in args.formats:
-                                metadata["active_case"] = {
-                                    "format": fmt,
-                                    "context": length,
-                                    "batch": batch,
-                                    "query_tokens": queries,
-                                }
-                                row = _case(args, length, fmt, batch, queries)
-                                raw.write(json.dumps(row) + "\n")
-                                raw.flush()
-                                for stage, timing in row["timings"].items():
-                                    writer.writerow(
-                                        {
-                                            key: row.get(key)
-                                            for key in (
-                                                "format",
-                                                "context",
-                                                "batch",
-                                                "query_tokens",
-                                                "processed_tokens_per_call",
-                                                "kv_cache_bytes",
-                                                "kv_cache_mib",
-                                                "output_relative_l2_vs_bf16",
-                                                "output_max_abs_vs_bf16",
-                                                "compression_vs_bf16",
-                                            )
-                                        }
-                                        | {
-                                            "stage": stage,
-                                            "p50_ms": timing["p50_ms"],
-                                            "p95_ms": timing["p95_ms"],
-                                            "tokens_per_second_p50": timing["tokens_per_second_p50"],
-                                            "runtime_peak_allocated_bytes": timing.get("peak_allocated_bytes"),
-                                            "runtime_peak_increment_bytes": timing.get("peak_increment_bytes"),
-                                        }
+                for round_index in range(args.rounds):
+                    for length in args.contexts:
+                        for batch in batches:
+                            for queries in query_lengths:
+                                for fmt in args.formats:
+                                    case_batch = batch
+                                    if args.kv_budget_mib is not None:
+                                        storage_bytes = args.head_dim * 2 if fmt == "bf16" else (
+                                            KVCacheCodec(fmt, args.head_dim).storage_dim + 4
+                                        )
+                                        sequence_bytes = (
+                                            math.ceil(length / args.page_size) * args.page_size
+                                            * args.kv_heads * 2 * storage_bytes
+                                        )
+                                        case_batch = int(args.kv_budget_mib * 1024**2) // sequence_bytes
+                                        if case_batch < 1:
+                                            raise ValueError("KV budget cannot hold one sequence for this context")
+                                    metadata["active_case"] = {
+                                        "round": round_index + 1,
+                                        "format": fmt,
+                                        "context": length,
+                                        "batch": case_batch,
+                                        "query_tokens": queries,
+                                    }
+                                    row = _case(args, length, fmt, case_batch, queries)
+                                    row["round"] = round_index + 1
+                                    raw.write(json.dumps(row) + "\n")
+                                    raw.flush()
+                                    for stage, timing in row["timings"].items():
+                                        writer.writerow(
+                                            {
+                                                key: row.get(key)
+                                                for key in (
+                                                    "format",
+                                                    "attention_backend",
+                                                    "kv_budget_mib",
+                                                    "round",
+                                                    "context",
+                                                    "batch",
+                                                    "query_tokens",
+                                                    "processed_tokens_per_call",
+                                                    "kv_cache_bytes",
+                                                    "kv_cache_mib",
+                                                    "output_relative_l2_vs_bf16",
+                                                    "output_max_abs_vs_bf16",
+                                                    "compression_vs_bf16",
+                                                    "bf16_cache_writer",
+                                                    "quantized_cache_writer",
+                                                )
+                                            }
+                                            | {
+                                                "stage": stage,
+                                                "p50_ms": timing["p50_ms"],
+                                                "p95_ms": timing["p95_ms"],
+                                                "tokens_per_second_p50": timing["tokens_per_second_p50"],
+                                                "runtime_peak_allocated_bytes": timing.get("peak_allocated_bytes"),
+                                                "runtime_peak_increment_bytes": timing.get("peak_increment_bytes"),
+                                            }
+                                        )
+                                    summary.flush()
+                                    logger.info(
+                                        "Completed round=%d %s context=%d batch=%d query_tokens=%d",
+                                        round_index + 1,
+                                        fmt,
+                                        length,
+                                        case_batch,
+                                        queries,
                                     )
-                                summary.flush()
-                                logger.info(
-                                    "Completed %s context=%d batch=%d query_tokens=%d",
-                                    fmt,
-                                    length,
-                                    batch,
-                                    queries,
-                                )
         metadata["status"] = "preflight_passed" if args.preflight_only else "complete"
         metadata.pop("active_case", None)
         return 0

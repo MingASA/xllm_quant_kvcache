@@ -18,13 +18,18 @@ limitations under the License.
 // VMMTorchAllocator is only available for platforms using PyTorch's
 // CUDACachingAllocator interface (CUDA, ILU, ROCm).
 #if defined(USE_CUDA) || defined(USE_ILU)
+#include <torch/version.h>
+
 #if TORCH_VERSION_MAJOR >= 2 && TORCH_VERSION_MINOR >= 10
 #include <ATen/cuda/MemPool.h>
 #endif
 #include <c10/cuda/CUDACachingAllocator.h>
 #include <glog/logging.h>
 
-#include "shared_vmm_allocator.h"
+#include <string>
+#include <vector>
+
+#include "core/platform/shared_vmm_allocator.h"
 
 namespace xllm {
 
@@ -185,6 +190,16 @@ class VMMTorchAllocator
                   "unexpectedly!";
   }
 
+#if TORCH_VERSION_MAJOR > 2 || \
+    (TORCH_VERSION_MAJOR == 2 && TORCH_VERSION_MINOR >= 12)
+  void attachOomRejectionObserver(
+      c10::cuda::CUDACachingAllocator::OomRejectionObserver /*observer*/)
+      override {
+    LOG(FATAL) << "VMMTorchAllocator::attachOomRejectionObserver() called "
+                  "unexpectedly!";
+  }
+#endif
+
   void attachAllocatorTraceTracker(
       c10::cuda::CUDACachingAllocator::AllocatorTraceTracker /*tracker*/)
       override {
@@ -258,6 +273,25 @@ class VMMTorchAllocator
   }
 #endif  // TORCH_VERSION_MAJOR >= 2 && TORCH_VERSION_MINOR >= 10
 
+#if TORCH_VERSION_MAJOR > 2 || \
+    (TORCH_VERSION_MAJOR == 2 && TORCH_VERSION_MINOR >= 11)
+  c10::cuda::CUDACachingAllocator::SnapshotInfo snapshot(
+      at::cuda::MempoolId_t /*mempool_id*/ = {0, 0},
+      bool /*include_traces*/ = true) override {
+    LOG(FATAL) << "VMMTorchAllocator::snapshot() called unexpectedly!";
+    return {};
+  }
+
+  void recordHistory(
+      bool /*enabled*/,
+      c10::cuda::CUDACachingAllocator::CreateContextFn /*context_recorder*/,
+      size_t /*alloc_trace_max_entries*/,
+      c10::cuda::CUDACachingAllocator::RecordContext /*when*/,
+      bool /*clearHistory*/,
+      const std::vector<std::string>& /*skip_actions*/) override {
+    LOG(FATAL) << "VMMTorchAllocator::recordHistory() called unexpectedly!";
+  }
+#else
   c10::cuda::CUDACachingAllocator::SnapshotInfo snapshot(
       at::cuda::MempoolId_t /*mempool_id*/ = {0, 0}) override {
     LOG(FATAL) << "VMMTorchAllocator::snapshot() called unexpectedly!";
@@ -272,6 +306,7 @@ class VMMTorchAllocator
       bool /*clearHistory*/) override {
     LOG(FATAL) << "VMMTorchAllocator::recordHistory() called unexpectedly!";
   }
+#endif
 #else
   void emptyCache() override {
     LOG(FATAL) << "VMMTorchAllocator::emptyCache() called unexpectedly!";

@@ -13,10 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xllm_server.h"
+#include "server/xllm_server.h"
 
 #include <brpc/server.h>
 #include <butil/at_exit.h>
+#include <butil/endpoint.h>
 #include <unistd.h>
 
 #include <array>
@@ -27,7 +28,7 @@ limitations under the License.
 #include "core/framework/config/distributed_config.h"
 #include "core/framework/config/kv_cache_config.h"
 #include "core/framework/config/service_config.h"
-#include "health_reporter.h"
+#include "server/health_reporter.h"
 
 namespace xllm {
 
@@ -148,10 +149,20 @@ bool XllmServer::start(std::unique_ptr<APIService> service) {
   options.num_threads = ::xllm::ServiceConfig::get_instance().num_threads();
   // Use custom health reporter for /health endpoint
   options.health_reporter = &HealthReporter::instance();
-  if (server_->Start(::xllm::ServiceConfig::get_instance().port(), &options) !=
-      0) {
-    LOG(ERROR) << "Failed to start server on port "
-               << ::xllm::ServiceConfig::get_instance().port();
+  const auto& service_config = ServiceConfig::get_instance();
+  butil::EndPoint endpoint(butil::IP_ANY, service_config.port());
+  if (!service_config.host().empty() &&
+      butil::str2endpoint(service_config.host().c_str(),
+                          service_config.port(),
+                          &endpoint) != 0 &&
+      butil::hostname2endpoint(service_config.host().c_str(),
+                               service_config.port(),
+                               &endpoint) != 0) {
+    LOG(ERROR) << "Invalid HTTP server host: " << service_config.host();
+    return false;
+  }
+  if (server_->Start(endpoint, &options) != 0) {
+    LOG(ERROR) << "Failed to start server on address " << endpoint;
     return false;
   }
   LOG(INFO) << "Brpc Server started on port "

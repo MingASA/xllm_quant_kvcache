@@ -201,6 +201,9 @@ PyAttentionMetadataView::PyAttentionMetadataView(
     std::shared_ptr<layer::AttentionMetadata> metadata,
     const ModelInputParams& params)
     : PyAttentionMetadataView(std::move(metadata)) {
+  block_table_ = metadata_->block_table.defined()
+                     ? metadata_->block_table
+                     : params.attention.device.block_tables;
   multi_block_tables_ = params.multi_block_tables;
   linear_state_indices_ = params.embedding.linear_state_indices;
   // Python model kernels consume materialized execution rows. Empty DP ranks
@@ -279,7 +282,8 @@ const std::vector<int32_t>& PyAttentionMetadataView::kv_seq_lens_host_values()
 }
 
 py::object PyAttentionMetadataView::block_table() const {
-  return optional_tensor(metadata_->block_table);
+  return optional_tensor(block_table_.defined() ? block_table_
+                                                : metadata_->block_table);
 }
 
 py::object PyAttentionMetadataView::kv_seq_lens() const {

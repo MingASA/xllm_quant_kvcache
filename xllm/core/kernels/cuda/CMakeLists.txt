@@ -1,5 +1,10 @@
 include(cc_library)
 
+if(FLASHINFER_FA2_0_6_18_ABI)
+  set_source_files_properties(batch_prefill.cpp batch_chunked_prefill.cpp
+    PROPERTIES COMPILE_DEFINITIONS FLASHINFER_FA2_0_6_18_ABI)
+endif()
+
 # CUTLASS headers are provided by root CMakeLists.txt via submodule (third_party/cutlass)
 include_directories(${CMAKE_CURRENT_LIST_DIR})
 

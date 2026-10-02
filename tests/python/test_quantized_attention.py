@@ -25,6 +25,199 @@ _DTYPES = ("int8", "fp8", "fp8_e4m3", "fp8_e5m2", "int4")
 _DEVICES = ["cpu"] + (["cuda"] if torch.cuda.is_available() else [])
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="Requires CUDA")
+@pytest.mark.parametrize("queries", (1, 16))
+@pytest.mark.parametrize("length", (19, 1025))
+@pytest.mark.parametrize("window", (-1, 3))
+def test_bf16_same_framework_paged_attention(queries: int, length: int, window: int) -> None:
+    from xllm.python.attention.quantized_triton import quantized_paged_attention, write_bf16_kv
+
+    torch.manual_seed(2026)
+    page_size, dim = 4, 9
+    key = torch.randn(length, 2, dim, device="cuda", dtype=torch.bfloat16)
+    value = torch.randn_like(key)
+    query = torch.randn(queries, 4, dim, device="cuda", dtype=torch.bfloat16)
+    blocks = (length + page_size - 1) // page_size
+    pages = torch.randperm(blocks, device="cuda", dtype=torch.int32)[None]
+    positions = torch.arange(length, device="cuda")
+    slots = pages[0, positions // page_size] * page_size + positions % page_size
+    cache_key = torch.zeros(blocks, page_size, 2, dim, device="cuda", dtype=torch.bfloat16)
+    cache_value = torch.zeros_like(cache_key)
+    write_bf16_kv(key, value, slots, cache_key, cache_value)
+    actual = quantized_paged_attention(
+        query,
+        cache_key,
+        cache_value,
+        cache_key,
+        cache_value,
+        pages,
+        torch.zeros(queries, device="cuda", dtype=torch.int32),
+        torch.arange(length - queries, length, device="cuda", dtype=torch.int32),
+        torch.tensor([length], device="cuda", dtype=torch.int32),
+        "bf16",
+        dim**-0.5,
+        window,
+        True,
+        torch.tensor([0, queries], device="cuda", dtype=torch.int32),
+        queries,
+    )
+    torch.testing.assert_close(actual.flatten(1), _dense_attention(query, key, value, window), rtol=0.02, atol=0.005)
+
+
+def _assert_prefill_gqa_group_and_tail_matches_dense(
+    cache_dtype: str, gqa_group: int, query_tokens: int, window: int
+) -> None:
+    from xllm.python.attention.quantized_triton import quantized_paged_attention, write_bf16_kv
+
+    torch.manual_seed(880 + gqa_group * 31 + query_tokens * 3 + window)
+    page_size, dim, kv_heads = 8, 32, 2
+    query_heads = kv_heads * gqa_group
+    context_length = query_tokens + 7
+    num_blocks = (context_length + page_size - 1) // page_size
+    codec = KVCacheCodec("int8", dim) if cache_dtype == "int8" else None
+    storage_dtype = codec.storage_dtype if codec is not None else torch.bfloat16
+    storage_dim = codec.storage_dim if codec is not None else dim
+    cache_shape = (num_blocks, page_size, kv_heads, storage_dim)
+    cache_key = torch.zeros(cache_shape, dtype=storage_dtype, device="cuda")
+    cache_value = torch.zeros_like(cache_key)
+    key_scale = torch.ones(cache_shape[:-1], dtype=torch.float32, device="cuda")
+    value_scale = torch.ones_like(key_scale)
+
+    key = torch.randn(context_length, kv_heads, dim, device="cuda", dtype=torch.bfloat16)
+    value = torch.randn_like(key)
+    query = torch.randn(query_tokens, query_heads, dim, device="cuda", dtype=torch.bfloat16)
+    pages = torch.randperm(num_blocks, device="cuda", dtype=torch.int32)[None]
+    positions = torch.arange(context_length, device="cuda")
+    slots = pages[0, positions // page_size].to(torch.int64) * page_size + positions % page_size
+    if codec is None:
+        write_bf16_kv(key, value, slots, cache_key, cache_value)
+        decoded_key, decoded_value = key, value
+        attention_format = "bf16"
+    else:
+        cache = LayerCache(key=cache_key, value=cache_value, key_scale=key_scale, value_scale=value_scale)
+        write_quantized_kv(cache, key, value, slots, codec)
+        decoded_key = codec.decode(*codec.encode(key))
+        decoded_value = codec.decode(*codec.encode(value))
+        attention_format = "int8"
+
+    actual = quantized_paged_attention(
+        query,
+        cache_key,
+        cache_value,
+        key_scale,
+        value_scale,
+        pages,
+        torch.zeros(query_tokens, device="cuda", dtype=torch.int32),
+        torch.arange(context_length - query_tokens, context_length, device="cuda", dtype=torch.int32),
+        torch.tensor([context_length], device="cuda", dtype=torch.int32),
+        attention_format,
+        dim**-0.5,
+        window,
+        True,
+        torch.tensor([0, query_tokens], device="cuda", dtype=torch.int32),
+        query_tokens,
+    )
+    expected = _dense_attention(query, decoded_key, decoded_value, window)
+    torch.testing.assert_close(actual.flatten(1), expected, rtol=0.02, atol=0.005)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="Requires CUDA")
+@pytest.mark.parametrize("cache_dtype", ("bf16", "int8"))
+@pytest.mark.parametrize("gqa_group", (1, 2, 4, 6))
+@pytest.mark.parametrize("query_tokens", (3, 16, 19))
+@pytest.mark.parametrize("window", (-1, 5))
+def test_prefill_gqa_group_and_tail_matches_dense(
+    cache_dtype: str, gqa_group: int, query_tokens: int, window: int
+) -> None:
+    _assert_prefill_gqa_group_and_tail_matches_dense(cache_dtype, gqa_group, query_tokens, window)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="Requires CUDA")
+@pytest.mark.parametrize("cache_dtype", ("bf16", "int8"))
+def test_prefill_gqa_group8_and_group3(cache_dtype: str) -> None:
+    _assert_prefill_gqa_group_and_tail_matches_dense(cache_dtype, 8, 19, 3)
+    _assert_prefill_gqa_group_and_tail_matches_dense(cache_dtype, 3, 19, 3)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="Requires CUDA")
+@pytest.mark.parametrize("page_size", (16, 128))
+@pytest.mark.parametrize("window", (-1, 5))
+def test_int8_mixed_gqa6_prefill_and_decode(page_size: int, window: int) -> None:
+    torch.manual_seed(611)
+    dim, context_length = 128, 145
+    query_lengths = [65, 1, 7]
+    blocks_per_sequence = (context_length + page_size - 1) // page_size
+    num_blocks = blocks_per_sequence * len(query_lengths)
+    codec = KVCacheCodec("int8", dim)
+    shape = (num_blocks, page_size, 2, dim)
+    cache = LayerCache(
+        key=torch.zeros(shape, dtype=torch.int8, device="cuda"),
+        value=torch.zeros(shape, dtype=torch.int8, device="cuda"),
+        # Unwritten tail slots must not contaminate attention with NaNs.
+        key_scale=torch.full(shape[:-1], float("nan"), device="cuda"),
+        value_scale=torch.full(shape[:-1], float("nan"), device="cuda"),
+    )
+    pages = torch.randperm(num_blocks).reshape(len(query_lengths), blocks_per_sequence).tolist()
+    backend = QuantizedPagedAttentionBackend("int8", dim, 2)
+    backend.bind_kv_caches([cache])
+    queries, expected = [], []
+    for row, query_length in zip(pages, query_lengths):
+        key = torch.randn(context_length, 2, dim, device="cuda", dtype=torch.bfloat16)
+        value = torch.randn_like(key)
+        query = torch.randn(query_length, 12, dim, device="cuda", dtype=torch.bfloat16)
+        positions = torch.arange(context_length, device="cuda")
+        device_pages = torch.tensor(row, device="cuda")
+        slots = device_pages[positions // page_size] * page_size + positions % page_size
+        write_quantized_kv(cache, key, value, slots, codec)
+        queries.append(query)
+        expected.append(
+            _dense_attention(query, codec.decode(*codec.encode(key)), codec.decode(*codec.encode(value)), window)
+        )
+    backend.prepare(_metadata(pages, query_lengths, [context_length] * len(query_lengths), page_size, "cuda"))
+    actual = backend.execute_attention(torch.cat(queries), _layer(dim, window, num_heads=12))
+    torch.testing.assert_close(actual, torch.cat(expected), rtol=0.02, atol=0.005)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="Requires CUDA")
+@pytest.mark.parametrize("window", (-1, 3))
+def test_int8_split_decode_with_empty_partitions(window: int) -> None:
+    torch.manual_seed(51)
+    codec = KVCacheCodec("int8", 9)
+    cache = _cache(codec, "cuda", page_size=128)
+    backend = QuantizedPagedAttentionBackend("int8", 9, 2)
+    backend.bind_kv_caches([cache])
+    key, value = torch.randn(2, 17, 2, 9, device="cuda")
+    query = torch.randn(1, 4, 9, device="cuda")
+    slots = torch.arange(17, device="cuda")
+    write_quantized_kv(cache, key, value, slots, codec)
+    # Table capacity triggers splitting, while only its first page is valid.
+    backend.prepare(_metadata([[0, 1, 2, 3, 4, 5, 6, 7]], [1], [17], 128, "cuda"))
+    actual = backend.execute_attention(query, _layer(9, window))
+    expected = _dense_attention(query, codec.decode(*codec.encode(key)), codec.decode(*codec.encode(value)), window)
+    torch.testing.assert_close(actual, expected, atol=2e-6, rtol=2e-5)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="Requires CUDA")
+def test_int8_prefill_split_window_with_empty_partitions() -> None:
+    torch.manual_seed(52)
+    codec = KVCacheCodec("int8", 16)
+    cache = _cache(codec, "cuda", page_size=128)
+    backend = QuantizedPagedAttentionBackend("int8", 16, 2)
+    backend.bind_kv_caches([cache])
+    key, value = torch.randn(2, 17, 2, 16, device="cuda")
+    query = torch.randn(3, 4, 16, device="cuda", dtype=torch.bfloat16)
+    write_quantized_kv(cache, key, value, torch.arange(17, device="cuda"), codec)
+    backend.prepare(_metadata([list(range(8))], [3], [17], 128, "cuda"))
+
+    actual = backend.execute(query, key[14:], value[14:], _layer(16, window=3))
+    decoded_key = codec.decode(*codec.encode(key))
+    decoded_value = codec.decode(*codec.encode(value))
+    expected = _dense_attention(query, decoded_key, decoded_value, window=3)
+
+    assert not torch.isnan(actual).any()
+    torch.testing.assert_close(actual, expected, rtol=0.02, atol=0.005)
+
+
 def _cache(codec: KVCacheCodec, device: str = "cpu", page_size: int = 4) -> LayerCache:
     shape = (8, page_size, 2, codec.storage_dim)
     return LayerCache(
@@ -49,6 +242,80 @@ def _metadata(
         kv_seq_lens_host_values=context_lengths,
         slot_mapping=torch.tensor(slots, dtype=torch.int64, device=device),
     )
+
+
+def _cumulative_lengths(lengths: tuple[int, ...]) -> list[int]:
+    offsets = [0]
+    for length in lengths:
+        offsets.append(offsets[-1] + length)
+    return offsets
+
+
+def _execute_batch_with_lengths(
+    query_lengths: tuple[int, ...],
+    context_lengths: tuple[int, ...],
+    pages: tuple[tuple[int, ...], ...],
+    *,
+    cumulative: bool,
+) -> torch.Tensor:
+    torch.manual_seed(20261001)
+    page_size, head_dim = 4, 8
+    total_query_tokens = sum(query_lengths)
+    codec = KVCacheCodec("int8", head_dim)
+    cache = _cache(codec, page_size=page_size)
+    backend = QuantizedPagedAttentionBackend("int8", head_dim, 2)
+    backend.bind_kv_caches([cache])
+    metadata = _metadata(
+        [list(row) for row in pages],
+        list(query_lengths),
+        list(context_lengths),
+        page_size,
+        "cpu",
+    )
+    if cumulative:
+        metadata.q_seq_lens_host = torch.tensor(_cumulative_lengths(query_lengths), dtype=torch.int32)
+        metadata.kv_seq_lens_host_values = _cumulative_lengths(context_lengths)
+    backend.prepare(metadata)
+
+    key, value = torch.randn(2, total_query_tokens, 2, head_dim)
+    query = torch.randn(total_query_tokens, 4, head_dim)
+    return backend.execute(query, key, value, _layer(head_dim))
+
+
+@pytest.mark.parametrize(
+    ("query_lengths", "context_lengths", "pages"),
+    [
+        ((3,), (3,), ((0, 1, 2),)),
+        ((2, 3), (2, 3), ((0, 1, 2), (3, 4, 5))),
+        ((2, 1), (5, 7), ((0, 1, 2), (3, 4, 5))),
+        ((1, 1), (6, 9), ((0, 1, 2), (3, 4, 5))),
+    ],
+    ids=("batch1-prefill", "batch2-prefill", "batch2-chunked-prefill", "batch2-decode"),
+)
+def test_cumulative_host_lengths_match_per_sequence_lengths(
+    query_lengths: tuple[int, ...],
+    context_lengths: tuple[int, ...],
+    pages: tuple[tuple[int, ...], ...],
+) -> None:
+    per_sequence_output = _execute_batch_with_lengths(query_lengths, context_lengths, pages, cumulative=False)
+    cumulative_output = _execute_batch_with_lengths(query_lengths, context_lengths, pages, cumulative=True)
+
+    torch.testing.assert_close(cumulative_output, per_sequence_output, rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("invalid_field", ("query", "context"))
+def test_invalid_cumulative_host_length_count_is_rejected(invalid_field: str) -> None:
+    codec = KVCacheCodec("int8", 8)
+    backend = QuantizedPagedAttentionBackend("int8", 8, 2)
+    backend.bind_kv_caches([_cache(codec, page_size=4)])
+    metadata = _metadata([[0]], [1], [1], 4, "cpu")
+    if invalid_field == "query":
+        metadata.q_seq_lens_host = torch.tensor([0, 1, 2], dtype=torch.int32)
+    else:
+        metadata.kv_seq_lens_host_values = [0, 1, 2]
+
+    with pytest.raises(ValueError, match="batch metadata does not match"):
+        backend.prepare(metadata)
 
 
 def _layer(head_dim: int, window: int = -1, num_heads: int = 4) -> SimpleNamespace:
@@ -145,6 +412,26 @@ def test_scatter_padding_and_reused_slot(cache_dtype: str, device: str) -> None:
     assert torch.equal(cache.key_scale.flatten(0, 1)[7], torch.ones(2, device=device))
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="Requires CUDA")
+def test_int8_writer_matches_bf16_codec_on_rounding_ties() -> None:
+    codec = KVCacheCodec("int8", 8)
+    cache = _cache(codec, "cuda")
+    key_head = torch.tensor([[127.0, 0.5, 1.5, 2.5, 3.5, -0.5, -1.5, -2.5]], device="cuda", dtype=torch.bfloat16)
+    value_head = torch.tensor([[127.0, -0.5, -1.5, -2.5, -3.5, 0.5, 1.5, 2.5]], device="cuda", dtype=torch.bfloat16)
+    key, value = key_head[:, None, :].expand(-1, 2, -1), value_head[:, None, :].expand(-1, 2, -1)
+    slots = torch.tensor([3], device="cuda")
+
+    write_quantized_kv(cache, key, value, slots, codec)
+    expected_key, expected_key_scale = codec.encode(key)
+    expected_value, expected_value_scale = codec.encode(value)
+
+    torch.cuda.synchronize()
+    assert torch.equal(cache.key.flatten(0, 1)[3], expected_key[0])
+    assert torch.equal(cache.key_scale.flatten(0, 1)[3], expected_key_scale[0])
+    assert torch.equal(cache.value.flatten(0, 1)[3], expected_value[0])
+    assert torch.equal(cache.value_scale.flatten(0, 1)[3], expected_value_scale[0])
+
+
 @pytest.mark.parametrize("cache_dtype", _DTYPES)
 @pytest.mark.parametrize("window", (-1, 3))
 @pytest.mark.parametrize("device", _DEVICES)
@@ -168,19 +455,20 @@ def test_prefill_chunked_prefill_and_decode(cache_dtype: str, window: int, devic
 
 
 @pytest.mark.parametrize("cache_dtype", _DTYPES)
-def test_shared_prefix_and_independent_batch_tails(cache_dtype: str) -> None:
+@pytest.mark.parametrize("device", _DEVICES)
+def test_shared_prefix_and_independent_batch_tails(cache_dtype: str, device: str) -> None:
     torch.manual_seed(123)
     codec = KVCacheCodec(cache_dtype, 8)
-    cache = _cache(codec)
+    cache = _cache(codec, device)
     backend = QuantizedPagedAttentionBackend(cache_dtype, 8, 2)
     backend.bind_kv_caches([cache])
-    key, value = torch.randn(2, 7, 2, 8)
-    query = torch.randn(7, 4, 8)
-    backend.prepare(_metadata([[3]], [4], [4], 4, "cpu"))
+    key, value = torch.randn(2, 7, 2, 8, device=device)
+    query = torch.randn(7, 4, 8, device=device)
+    backend.prepare(_metadata([[3]], [4], [4], 4, device))
     backend.execute(query[:4], key[:4], value[:4], _layer(8))
     prefix_data = cache.key[3].clone()
     prefix_scales = cache.key_scale[3].clone()
-    backend.prepare(_metadata([[3, 1], [3, 6]], [1, 2], [5, 6], 4, "cpu"))
+    backend.prepare(_metadata([[3, 1], [3, 6]], [1, 2], [5, 6], 4, device))
     output = backend.execute(query[4:], key[4:], value[4:], _layer(8))
     for begin, end in ((4, 5), (5, 7)):
         indices = list(range(4)) + list(range(begin, end))

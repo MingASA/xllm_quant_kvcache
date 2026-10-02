@@ -74,6 +74,12 @@ def get_model_class(name: str) -> type[nn.Module]:
 
 def _register_builtin_models() -> None:
     _register_model_path(
+        "xllm.python.models.qwen2",
+        "Qwen2ForCausalLM",
+        "Qwen2ForCausalLM",
+        "qwen2",
+    )
+    _register_model_path(
         "xllm.python.models.qwen3",
         "Qwen3ForCausalLM",
         "Qwen3ForCausalLM",

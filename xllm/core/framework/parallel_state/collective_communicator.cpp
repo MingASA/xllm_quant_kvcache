@@ -336,6 +336,11 @@ void CollectiveCommunicator::create_process_groups(
   int32_t ep_size = parallel_args_->ep_size();
   int32_t cp_size = parallel_args_->cp_size();
 
+#if !defined(USE_NPU) && !defined(USE_MLU) && !defined(USE_DCU)
+  CHECK_LE(cp_size, 1)
+      << "Context parallel process groups are not supported on this platform";
+#endif
+
   std::string host;
   int32_t port;
   net::parse_host_port_from_addr(master_addr, host, port);
@@ -499,6 +504,7 @@ void CollectiveCommunicator::create_process_groups(
   }
   port += tp_group_count + single_rank_group_port_gap + single_rank_group_count;
 
+#if defined(USE_NPU) || defined(USE_MLU) || defined(USE_DCU)
   if (cp_topology.has_value()) {
     const std::vector<int32_t>& cp_ranks = cp_topology->pcp_group_ranks();
     const int32_t cp_local_rank = cp_topology->pcp_rank();
@@ -552,7 +558,9 @@ void CollectiveCommunicator::create_process_groups(
               << ", pcp_size=" << cp_topology->pcp_size()
               << ", dcp_rank=" << cp_topology->dcp_rank()
               << ", dcp_size=" << cp_topology->dcp_size();
-  } else {
+  } else
+#endif
+  {
     // CP is disabled, so the TP group remains the CP collective handle.
     parallel_args_->cp_group_ = tp_group_.get();
     if constexpr (Platform::is_mlu()) {

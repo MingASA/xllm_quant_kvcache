@@ -114,6 +114,7 @@ class PyAttentionMetadataView final {
   std::shared_ptr<layer::AttentionMetadata> metadata_;
   torch::Tensor kv_seq_lens_host_;
   torch::Tensor q_seq_lens_host_;
+  torch::Tensor block_table_;
   std::vector<torch::Tensor> multi_block_tables_;
   torch::Tensor linear_state_indices_;
   std::vector<int32_t> dp_execution_token_counts_;
