@@ -45,6 +45,10 @@ limitations under the License. -->
 
 </details>
 
+## KV Cache 量化实验分支
+
+本分支包含 KV cache 量化实验。2026-10-02 在 Qwen2.5-1.5B-Instruct、RTX 5060 Ti 16GB 的 GSM8K 全量评测中，BF16 基线严格/宽松准确率为 43.82%/64.67%；仅 V INT4（G128）为 41.17%/64.67%，K/V RHT INT4（G32）为 0%/0.38%。新 INT4 变体是量化后反量化并写入 BF16 cache 的质量对照，不是压缩 KV 存储或生产性能结论。实验详情与限制见[分支实验说明](README.md)及[完整结果报告](docs/kv_cache_gsm8k_int4_variants_20261002_zh.md)。
+
 ## 简介
 
 **xLLM** 是一个高效的开源大模型推理框架，专为**国产芯片**优化设计，提供企业级的服务部署，使得性能更高、成本更低。
