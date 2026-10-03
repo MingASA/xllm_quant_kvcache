@@ -1,0 +1,461 @@
+/* Copyright 2025-2026 The xLLM Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    https://github.com/xLLM-AI/xllm/blob/main/LICENSE
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#include <gtest/gtest.h>
+
+#include <algorithm>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "core/framework/block/block_manager_pool.h"
+#include "core/framework/model/mtp_utils.h"
+#include "core/framework/request/incremental_decoder.h"
+#include "core/framework/request/sequence.h"
+#include "core/framework/request/stopping_checker.h"
+#include "core/framework/sampling/sampling_params.h"
+#include "platform/platform.h"
+#include "runtime/decode_graph_bucket.h"
+#include "scheduler/profile/decode_graph_warmup_plan.h"
+#include "scheduler/profile/graph_warmup.h"
+#include "scheduler/profile/profile_manager.h"
+
+namespace xllm {
+namespace {
+
+Sequence make_sequence(size_t index, const std::vector<int32_t>& tokens) {
+  RequestSamplingParam sampling_param;
+  sampling_param.beam_width = 0;
+  sampling_param.is_embeddings = false;
+
+  StoppingChecker stopping_checker;
+
+  SequenceParams params;
+  params.seq_capacity = tokens.size() + 8;
+  params.echo = false;
+  params.skip_special_tokens = true;
+  params.streaming = false;
+  params.enable_schedule_overlap = false;
+  params.rec_type = RecType::kNone;
+  params.bos_token_id = 0;
+  params.request_id = "profile_graph_warmup_test";
+  params.sampling_param = &sampling_param;
+  params.stopping_checker = &stopping_checker;
+
+  IncrementalDecoder decoder(
+      /*prompt=*/"prompt",
+      /*num_prompt_tokens=*/tokens.size(),
+      /*echo=*/params.echo,
+      /*skip_special_tokens=*/params.skip_special_tokens);
+
+  return Sequence(index,
+                  tokens,
+                  /*input_embedding=*/torch::Tensor(),
+                  /*mm_data=*/MMData(),
+                  decoder,
+                  params);
+}
+
+runtime::DecodeGraphExecutionShape make_decode_graph_execution_shape(
+    int64_t num_decoding_tokens,
+    int32_t num_speculative_tokens,
+    bool enable_no_padding,
+    int32_t max_graph_batch_size = 0) {
+  runtime::DecodeGraphExecutionShape execution_shape;
+  execution_shape.num_decoding_tokens = num_decoding_tokens;
+  execution_shape.num_speculative_tokens = num_speculative_tokens;
+  execution_shape.enable_graph_mode_decode_no_padding = enable_no_padding;
+  execution_shape.max_graph_batch_size = max_graph_batch_size;
+  return execution_shape;
+}
+
+class RecordingProfileEngine final : public Engine {
+ public:
+  RecordingProfileEngine() {
+    BlockManagerPool::Options options;
+    options.num_blocks(/*num_blocks=*/64)
+        .block_size(/*block_size=*/4)
+        .enable_prefix_cache(/*enable_prefix_cache=*/false)
+        .max_seqs_per_batch(/*max_seqs_per_batch=*/8);
+    block_manager_ = std::make_unique<BlockManagerPool>(options, /*dp_size=*/1);
+    model_args_.vocab_size(128)
+        .eos_token_id(2)
+        .max_position_embeddings(16)
+        .hidden_size(8);
+  }
+
+  ForwardOutput step(std::vector<Batch>& batches) override {
+    for (Batch& batch : batches) {
+      for (Sequence* sequence : batch.get_sequences()) {
+        all_requests_marked_ =
+            all_requests_marked_ && sequence->is_graph_warmup();
+      }
+    }
+    return ForwardOutput();
+  }
+
+  void update_last_step_result(std::vector<Batch>& batches) override {
+    (void)batches;
+  }
+
+  BlockManagerPool* block_manager_pool() const override {
+    return block_manager_.get();
+  }
+
+  const ModelArgs& model_args() const override { return model_args_; }
+
+  std::vector<int64_t> get_active_activation_memory() const override {
+    return {};
+  }
+
+  void reset_profile_markers() { all_requests_marked_ = true; }
+
+  bool all_requests_marked() const { return all_requests_marked_; }
+
+ private:
+  std::unique_ptr<BlockManagerPool> block_manager_;
+  ModelArgs model_args_;
+  bool all_requests_marked_ = true;
+};
+
+TEST(GraphWarmupTest, BuildsCanonicalBuckets) {
+  const DecodeGraphWarmupPlan plan = get_compatibility_decode_graph_warmup_plan(
+      /*max_global_batch_size=*/64, /*dp_size=*/1);
+
+  EXPECT_EQ(plan.batch_sizes,
+            (std::vector<int32_t>{1, 2, 4, 8, 16, 32, 48, 64}));
+}
+
+TEST(GraphWarmupTest, IncludesNonCanonicalMaxBucket) {
+  const DecodeGraphWarmupPlan plan = get_compatibility_decode_graph_warmup_plan(
+      /*max_global_batch_size=*/40, /*dp_size=*/1);
+
+  EXPECT_EQ(plan.batch_sizes, (std::vector<int32_t>{1, 2, 4, 8, 16, 32, 40}));
+}
+
+TEST(GraphWarmupTest, SkipsBucketsBelowDpSize) {
+  const DecodeGraphWarmupPlan plan = get_compatibility_decode_graph_warmup_plan(
+      /*max_global_batch_size=*/16, /*dp_size=*/4);
+
+  EXPECT_EQ(plan.batch_sizes, (std::vector<int32_t>{4, 8, 16}));
+}
+
+TEST(GraphWarmupTest, AllowsAllBucketsSkipped) {
+  const DecodeGraphWarmupPlan plan = get_compatibility_decode_graph_warmup_plan(
+      /*max_global_batch_size=*/2, /*dp_size=*/4);
+
+  EXPECT_TRUE(plan.batch_sizes.empty());
+}
+
+TEST(DecodeGraphWarmupPlanTest, CoversEveryPaddedMtpTokenBucket) {
+  if (!Platform::supports_mtp_decode_graph_warmup()) {
+    GTEST_SKIP() << "MTP decode graph warmup is not supported.";
+  }
+
+  const runtime::DecodeGraphExecutionShape execution_shape =
+      make_decode_graph_execution_shape(
+          /*num_decoding_tokens=*/4,
+          /*num_speculative_tokens=*/3,
+          /*enable_no_padding=*/false);
+  const DecodeGraphWarmupPlan plan = build_decode_graph_warmup_plan(
+      execution_shape, /*max_global_batch_size=*/64, /*dp_size=*/1);
+
+  EXPECT_EQ(
+      plan.batch_sizes,
+      (std::vector<int32_t>{
+          1, 2, 3, 5, 9, 13, 17, 21, 25, 29, 33, 37, 41, 45, 49, 53, 57, 61}));
+}
+
+TEST(DecodeGraphWarmupPlanTest, UsesLocalDpBatchesAndKeepsPartialBatch) {
+  if (!Platform::supports_mtp_decode_graph_warmup()) {
+    GTEST_SKIP() << "MTP decode graph warmup is not supported.";
+  }
+
+  const runtime::DecodeGraphExecutionShape execution_shape =
+      make_decode_graph_execution_shape(
+          /*num_decoding_tokens=*/4,
+          /*num_speculative_tokens=*/0,
+          /*enable_no_padding=*/false);
+  const DecodeGraphWarmupPlan plan = build_decode_graph_warmup_plan(
+      execution_shape, /*max_global_batch_size=*/66, /*dp_size=*/4);
+
+  EXPECT_EQ(plan.batch_sizes, (std::vector<int32_t>{4, 8, 12, 20, 36, 52, 66}));
+}
+
+TEST(DecodeGraphWarmupPlanTest, Dp32C64UsesLocalGraphBuckets) {
+  if (!Platform::supports_mtp_decode_graph_warmup()) {
+    GTEST_SKIP() << "MTP decode graph warmup is not supported.";
+  }
+
+  const runtime::DecodeGraphExecutionShape execution_shape =
+      make_decode_graph_execution_shape(
+          /*num_decoding_tokens=*/4,
+          /*num_speculative_tokens=*/3,
+          /*enable_no_padding=*/false);
+  const DecodeGraphWarmupPlan plan = build_decode_graph_warmup_plan(
+      execution_shape, /*max_global_batch_size=*/64, /*dp_size=*/32);
+
+  // The scheduler batch is global, while graph shapes are keyed by the
+  // largest local DP batch. C64 therefore needs the local-batch-2 bucket.
+  EXPECT_EQ(plan.batch_sizes, (std::vector<int32_t>{32, 64}));
+}
+
+TEST(DecodeGraphWarmupPlanTest,
+     GraphLimitKeepsCppBatchSemanticsAndCoversMtpBuckets) {
+  if (!Platform::supports_mtp_decode_graph_warmup()) {
+    GTEST_SKIP() << "MTP decode graph warmup is not supported.";
+  }
+
+  const runtime::DecodeGraphExecutionShape execution_shape =
+      make_decode_graph_execution_shape(
+          /*num_decoding_tokens=*/4,
+          /*num_speculative_tokens=*/3,
+          /*enable_no_padding=*/false,
+          /*max_graph_batch_size=*/16);
+  const DecodeGraphWarmupPlan plan = build_decode_graph_warmup_plan(
+      execution_shape, /*max_global_batch_size=*/64, /*dp_size=*/1);
+
+  EXPECT_EQ(plan.batch_sizes,
+            (std::vector<int32_t>{1, 2, 4, 8, 12, 16, 32, 48, 64}));
+}
+
+TEST(DecodeGraphWarmupPlanTest,
+     Mtp1GraphLimitPreservesCompatibilityBatchSizes) {
+  if (!Platform::supports_mtp_decode_graph_warmup()) {
+    GTEST_SKIP() << "MTP decode graph warmup is not supported.";
+  }
+
+  const runtime::DecodeGraphExecutionShape execution_shape =
+      make_decode_graph_execution_shape(
+          /*num_decoding_tokens=*/2,
+          /*num_speculative_tokens=*/1,
+          /*enable_no_padding=*/false,
+          /*max_graph_batch_size=*/16);
+  const DecodeGraphWarmupPlan plan = build_decode_graph_warmup_plan(
+      execution_shape, /*max_global_batch_size=*/64, /*dp_size=*/1);
+
+  EXPECT_EQ(plan.batch_sizes,
+            (std::vector<int32_t>{1, 2, 4, 8, 16, 32, 48, 64}));
+}
+
+// The graph batch limit caps the DP-local decode batch, not the
+// scheduler-global one, so with dp_size > 1 the sweep must still reach every
+// graph-eligible local batch's token bucket.
+TEST(DecodeGraphWarmupPlanTest, GraphLimitIsLocalAcrossDpGroups) {
+  if (!Platform::supports_mtp_decode_graph_warmup()) {
+    GTEST_SKIP() << "MTP decode graph warmup is not supported.";
+  }
+
+  const runtime::DecodeGraphExecutionShape execution_shape =
+      make_decode_graph_execution_shape(
+          /*num_decoding_tokens=*/6,
+          /*num_speculative_tokens=*/5,
+          /*enable_no_padding=*/false,
+          /*max_graph_batch_size=*/16);
+  const int32_t dp_size = 4;
+  const int32_t max_global_batch_size = 64;
+  const DecodeGraphWarmupPlan plan = build_decode_graph_warmup_plan(
+      execution_shape, max_global_batch_size, dp_size);
+
+  EXPECT_EQ(plan.batch_sizes, (std::vector<int32_t>{4, 8, 20, 32, 40, 52, 64}));
+
+  std::vector<int64_t> warmed_buckets;
+  for (const int32_t batch_size : plan.batch_sizes) {
+    const int64_t num_tokens = static_cast<int64_t>(batch_size / dp_size) *
+                               execution_shape.num_decoding_tokens;
+    warmed_buckets.push_back(runtime::get_decode_graph_token_bucket(
+        num_tokens, /*enable_no_padding=*/false));
+  }
+  for (int32_t local_batch_size = 1;
+       local_batch_size <= std::min(max_global_batch_size / dp_size,
+                                    execution_shape.max_graph_batch_size);
+       ++local_batch_size) {
+    const int64_t num_tokens = static_cast<int64_t>(local_batch_size) *
+                               execution_shape.num_decoding_tokens;
+    const int64_t bucket = runtime::get_decode_graph_token_bucket(
+        num_tokens, /*enable_no_padding=*/false);
+    EXPECT_NE(std::find(warmed_buckets.begin(), warmed_buckets.end(), bucket),
+              warmed_buckets.end())
+        << "local batch " << local_batch_size
+        << " maps to unwarmed token bucket " << bucket;
+  }
+}
+
+TEST(DecodeGraphWarmupPlanTest, NoPaddingKeepsCompatibilityBatches) {
+  const runtime::DecodeGraphExecutionShape execution_shape =
+      make_decode_graph_execution_shape(
+          /*num_decoding_tokens=*/4,
+          /*num_speculative_tokens=*/3,
+          /*enable_no_padding=*/true);
+  const DecodeGraphWarmupPlan plan = build_decode_graph_warmup_plan(
+      execution_shape, /*max_global_batch_size=*/64, /*dp_size=*/1);
+
+  EXPECT_EQ(plan.batch_sizes,
+            (std::vector<int32_t>{1, 2, 4, 8, 16, 32, 48, 64}));
+}
+
+TEST(DecodeGraphWarmupPlanTest, PreservesSuppliedExecutionShape) {
+  const runtime::DecodeGraphExecutionShape execution_shape =
+      make_decode_graph_execution_shape(
+          /*num_decoding_tokens=*/4,
+          /*num_speculative_tokens=*/3,
+          /*enable_no_padding=*/false);
+  const DecodeGraphWarmupPlan plan = build_decode_graph_warmup_plan(
+      execution_shape, /*max_global_batch_size=*/16, /*dp_size=*/1);
+
+  EXPECT_EQ(plan.execution_shape.num_decoding_tokens, 4);
+  EXPECT_EQ(plan.execution_shape.num_speculative_tokens, 3);
+  EXPECT_FALSE(plan.execution_shape.enable_graph_mode_decode_no_padding);
+  EXPECT_EQ(plan.execution_shape.max_graph_batch_size, 0);
+  if (Platform::supports_mtp_decode_graph_warmup()) {
+    EXPECT_EQ(plan.batch_sizes, (std::vector<int32_t>{1, 2, 3, 5, 9, 13}));
+  } else {
+    EXPECT_EQ(plan.batch_sizes, (std::vector<int32_t>{1, 2, 4, 8, 16}));
+  }
+}
+
+TEST(DecodeGraphWarmupPlanTest, RespectsReducedWarmupCapacity) {
+  const runtime::DecodeGraphExecutionShape execution_shape =
+      make_decode_graph_execution_shape(
+          /*num_decoding_tokens=*/1,
+          /*num_speculative_tokens=*/0,
+          /*enable_no_padding=*/false);
+  const DecodeGraphWarmupPlan plan = build_decode_graph_warmup_plan(
+      execution_shape, /*max_global_batch_size=*/15, /*dp_size=*/1);
+
+  EXPECT_EQ(plan.batch_sizes, (std::vector<int32_t>{1, 2, 4, 8, 15}));
+}
+
+TEST(GraphWarmupTest, PrefillRoleUsesPrefillOnlyPlan) {
+  EXPECT_EQ(graph_warmup_plan(InstanceRole::PREFILL),
+            GraphWarmupPlan::PREFILL_ONLY);
+}
+
+TEST(GraphWarmupTest, NonPrefillRolesUseUnifiedPlan) {
+  EXPECT_EQ(graph_warmup_plan(InstanceRole::DEFAULT), GraphWarmupPlan::UNIFIED);
+  EXPECT_EQ(graph_warmup_plan(InstanceRole::MIX), GraphWarmupPlan::UNIFIED);
+  EXPECT_EQ(graph_warmup_plan(InstanceRole::INVALID), GraphWarmupPlan::UNIFIED);
+}
+
+TEST(GraphWarmupTest, DecodeRoleUsesDecodeOnlyPlan) {
+  EXPECT_EQ(graph_warmup_plan(InstanceRole::DECODE),
+            GraphWarmupPlan::DECODE_ONLY);
+}
+
+TEST(GraphWarmupTest, FormatsWarmupProgress) {
+  const std::string progress = graph_warmup_progress(
+      /*completed=*/3, /*total=*/8, /*token_bucket=*/8, /*latency_ms=*/12.5);
+
+  EXPECT_EQ(progress,
+            "Graph warmup progress: [########------------] 3/8 37.5%, "
+            "token_bucket=8, latency=12.50 ms");
+}
+
+TEST(GraphWarmupTest, FormatsCompletedWarmupProgress) {
+  const std::string progress = graph_warmup_progress(
+      /*completed=*/8,
+      /*total=*/8,
+      /*token_bucket=*/64,
+      /*latency_ms=*/100.0);
+
+  EXPECT_EQ(progress,
+            "Graph warmup progress: [####################] 8/8 100.0%, "
+            "token_bucket=64, latency=100.00 ms");
+}
+
+TEST(GraphWarmupTest, InjectsBootstrapEmbeddingWhenSpeculativeEnabled) {
+  Sequence sequence = make_sequence(/*index=*/0, /*tokens=*/{1, 2, 3});
+
+  prepare_warmup_decode_sequence(&sequence,
+                                 /*embedding_width=*/128,
+                                 /*num_speculative_tokens=*/3);
+
+  const torch::Tensor embedding = sequence.get_mtp_bootstrap_embedding();
+  ASSERT_TRUE(embedding.defined());
+  EXPECT_EQ(embedding.dim(), 2);
+  EXPECT_EQ(embedding.size(0), 1);
+  EXPECT_EQ(embedding.size(1), 128);
+}
+
+TEST(GraphWarmupTest, DeepseekV4MtpUsesFlattenedHyperConnectionWidth) {
+  ModelArgs model_args;
+  model_args.model_type() = "deepseek_v4_mtp";
+  model_args.hidden_size() = 128;
+  model_args.hc_mult() = 4;
+
+  EXPECT_EQ(mtp_hidden_state_width(model_args), 512);
+}
+
+TEST(GraphWarmupTest, OtherMtpModelsUseDenseHiddenWidth) {
+  ModelArgs model_args;
+  model_args.model_type() = "deepseek_v32_mtp";
+  model_args.hidden_size() = 128;
+  model_args.hc_mult() = 4;
+
+  EXPECT_EQ(mtp_hidden_state_width(model_args), 128);
+}
+
+TEST(GraphWarmupTest, SkipsBootstrapEmbeddingWhenSpeculativeDisabled) {
+  Sequence sequence = make_sequence(/*index=*/0, /*tokens=*/{1, 2, 3});
+
+  prepare_warmup_decode_sequence(&sequence,
+                                 /*embedding_width=*/128,
+                                 /*num_speculative_tokens=*/0);
+
+  EXPECT_FALSE(sequence.get_mtp_bootstrap_embedding().defined());
+}
+
+TEST(GraphWarmupTest, ProducesUniqueWarmupRequestIds) {
+  const std::string first = next_warmup_request_id();
+  const std::string second = next_warmup_request_id();
+
+  EXPECT_FALSE(first.empty());
+  EXPECT_FALSE(second.empty());
+  EXPECT_NE(first, second);
+}
+
+TEST(GraphWarmupTest, PresetDpRankControlsBlockAllocation) {
+  BlockManagerPool::Options options;
+  options.num_blocks(/*num_blocks=*/8)
+      .block_size(/*block_size=*/2)
+      .enable_prefix_cache(/*enable_prefix_cache=*/false)
+      .max_seqs_per_batch(/*max_seqs_per_batch=*/4);
+  BlockManagerPool pool(options, /*dp_size=*/2);
+  Sequence sequence = make_sequence(/*index=*/0, /*tokens=*/{1, 2, 3});
+  sequence.set_dp_rank(/*dp_rank=*/1);
+  const std::vector<size_t> used_before = pool.num_used_blocks();
+
+  ASSERT_TRUE(pool.allocate(&sequence, /*num_tokens=*/3));
+
+  EXPECT_EQ(sequence.dp_rank(), 1);
+  EXPECT_EQ(pool.num_used_blocks()[0], used_before[0]);
+  EXPECT_GT(pool.num_used_blocks()[1], used_before[1]);
+}
+
+TEST(GraphWarmupTest, MarksOrdinaryProfileRequestsAsSyntheticLoad) {
+  RecordingProfileEngine engine;
+  ProfileManager::Options options;
+  options.max_tokens_per_batch(4).max_seqs_per_batch(1).dp_size(1);
+  ProfileManager profile_manager(&engine, options);
+  engine.reset_profile_markers();
+
+  profile_manager.run_request(/*token_length=*/4, /*prefix_length=*/0);
+
+  EXPECT_TRUE(engine.all_requests_marked());
+}
+
+}  // namespace
+}  // namespace xllm

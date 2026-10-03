@@ -1,0 +1,28 @@
+name: 🐛 Bug report
+description: Raise an issue here if you find a bug.
+title: "[Bug]: "
+labels: ["bug"]
+
+body:
+- type: markdown
+  attributes:
+    value: >
+      #### Before submitting an issue, please make sure the issue hasn't been already addressed. please search: [existing issues](https://github.com/xLLM-AI/xllm/issues).
+- type: textarea
+  attributes:
+    label: Your environment
+    description: |
+      Please provide what the environment you are running.
+  validations:
+    required: true
+- type: textarea
+  attributes:
+    label: 🐛 Describe the bug
+    description: |
+      Please provide a clear and concise description of what the bug is.
+  validations:
+    required: true
+- type: markdown
+  attributes:
+    value: >
+      Thanks for report the bug!

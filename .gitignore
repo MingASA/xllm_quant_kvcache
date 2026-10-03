@@ -1,0 +1,61 @@
+# Visual Studio Code
+/.vscode*
+
+# Idea
+/.idea
+/cmake-build-debug/
+/cmake-build-release/
+
+# CMake
+/build*
+
+# vcpkg
+/.vcpkg*
+
+# cache
+/.*cache
+
+# deps
+/.deps
+
+# libtorch
+/libtorch
+
+# tests
+/Testing*
+
+# rust
+Cargo.lock
+
+
+# distribution / packaging
+.Python
+build/
+dist/
+eggs/
+.eggs/
+sdist/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Python module builds
+*.egg-info/
+xllm/*.pyd
+xllm/*.so
+xllm/version.py
+__pycache__/
+.pkl_memoize_py3/
+
+# compile_commands.json from nvbench
+compile_commands.json
+
+# ascend kernel meta files
+/kernel_meta
+
+# local files
+/local
+/logs
+/log

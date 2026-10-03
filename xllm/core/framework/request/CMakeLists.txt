@@ -1,0 +1,145 @@
+include(cc_library)
+include(cc_binary)
+
+cc_library(
+  NAME 
+    request
+  HDRS
+    dit_request.h
+    dit_request_params.h
+    finish_reason.h
+    incremental_decoder.h
+    request_base.h
+    request.h
+    llm_request_factory.h
+    vlm_request_factory.h
+    rec_request_factory.h
+    dit_request.h
+    request_output.h
+    usage.h
+    dit_request_output.h
+    dit_request_params.h
+    request_params.h
+    sample_slot.h
+    sequence.h
+    rec_sequence.h
+    onerec_sequence.h
+    sequence_factory.h
+    sequence_logprob_state.h
+    sequence_kv_state.h
+    sequences_group.h
+    request_state.h
+    rec_type.h
+    stopping_checker.h
+    priority_comparator.h
+  SRCS
+    dit_request.cpp
+    finish_reason.cpp
+    incremental_decoder.cpp
+    request.cpp
+    request_base.cpp
+    llm_request_factory.cpp
+    vlm_request_factory.cpp
+    rec_request_factory.cpp
+    dit_request.cpp
+    request_output.cpp
+    dit_request_output.cpp
+    request_params.cpp
+    sample_slot.cpp
+    dit_request_params.cpp
+    sequence.cpp
+    rec_sequence.cpp
+    onerec_sequence.cpp
+    sequence_factory.cpp
+    sequence_logprob_state.cpp
+    sequence_kv_state.cpp
+    sequences_group.cpp
+    request_state.cpp
+    stopping_checker.cpp
+    priority_comparator.cpp
+  DEPS
+    :config
+    :kv_cache
+    :prefix_cache
+    :encoder_cache
+    :block
+    :tokenizer
+    :chat_template
+    :multimodal
+    :json_object_grammar
+    glog::glog
+    absl::strings
+    absl::time
+    proto::xllm_proto
+    torch
+)
+
+cc_binary(
+  NAME
+    request_state_benchmark
+  SRCS
+    request_state_benchmark.cpp
+  DEPS
+    :request
+    torch
+    benchmark::benchmark
+    benchmark::benchmark_main
+)
+target_link_libraries(request_state_benchmark
+                      PUBLIC
+                      Python::Python
+                      $<$<BOOL:${USE_NPU}>:ascendcl>
+                      $<$<BOOL:${USE_NPU}>:hccl>
+                      $<$<BOOL:${USE_NPU}>:c_sec>
+                      $<$<BOOL:${USE_NPU}>:nnopbase>)
+target_link_options(request_state_benchmark
+                    PRIVATE
+                    $<$<BOOL:${USE_MLU}>:-Wl,--no-as-needed>)
+
+# Request-path hop 2: LLMMaster thread-pool hand-off + LLMRequestFactory.
+cc_binary(
+  NAME
+    llm_request_factory_benchmark
+  SRCS
+    llm_request_factory_benchmark.cpp
+  DEPS
+    :common
+    :config
+    :request
+    torch
+    benchmark::benchmark
+    benchmark::benchmark_main
+)
+target_link_libraries(llm_request_factory_benchmark
+                      PUBLIC
+                      Python::Python
+                      $<$<BOOL:${USE_NPU}>:ascendcl>
+                      $<$<BOOL:${USE_NPU}>:hccl>
+                      $<$<BOOL:${USE_NPU}>:c_sec>
+                      $<$<BOOL:${USE_NPU}>:nnopbase>)
+target_link_options(llm_request_factory_benchmark
+                    PRIVATE
+                    $<$<BOOL:${USE_MLU}>:-Wl,--no-as-needed>)
+
+# Request-path hop 5: sampled tokens -> streaming / final RequestOutput.
+cc_binary(
+  NAME
+    request_output_benchmark
+  SRCS
+    request_output_benchmark.cpp
+  DEPS
+    :request
+    torch
+    benchmark::benchmark
+    benchmark::benchmark_main
+)
+target_link_libraries(request_output_benchmark
+                      PUBLIC
+                      Python::Python
+                      $<$<BOOL:${USE_NPU}>:ascendcl>
+                      $<$<BOOL:${USE_NPU}>:hccl>
+                      $<$<BOOL:${USE_NPU}>:c_sec>
+                      $<$<BOOL:${USE_NPU}>:nnopbase>)
+target_link_options(request_output_benchmark
+                    PRIVATE
+                    $<$<BOOL:${USE_MLU}>:-Wl,--no-as-needed>)

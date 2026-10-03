@@ -1,0 +1,61 @@
+include(cc_binary)
+include(cc_library)
+
+cc_library(
+  NAME
+    batch
+  HDRS
+    dit_batch.h
+    batch.h
+    batch_factory.h
+    batch_input_builder.h
+    rec_batch_input_builder.h
+    onerec_batch_input_builder.h
+    onerec_xattention_batch_input_builder.h
+    rec_multi_round_batch_input_builder.h
+  SRCS
+    dit_batch.cpp
+    batch.cpp
+    batch_factory.cpp
+    batch_input_builder.cpp
+    rec_batch_input_builder.cpp
+    onerec_batch_input_builder.cpp
+    onerec_xattention_batch_input_builder.cpp
+    rec_multi_round_batch_input_builder.cpp
+    beam_search.h
+  DEPS
+    :config
+    :request
+    :runtime
+    :common
+    :mposition
+    glog::glog
+    xxHash
+)
+
+# Request-path hop 4: Batch -> ForwardInput -> packed proto -> worker output
+# proto -> Batch::process_sample_output (all host-side, CPU tensors).
+cc_binary(
+  NAME
+    batch_benchmark
+  SRCS
+    batch_benchmark.cpp
+  DEPS
+    :config
+    :batch
+    torch
+    benchmark::benchmark
+    benchmark::benchmark_main
+    $<$<BOOL:${USE_MLU}>:torch_mlu>
+    $<$<BOOL:${USE_NPU}>:torch_npu>
+)
+target_link_libraries(batch_benchmark
+                      PUBLIC
+                      Python::Python
+                      $<$<BOOL:${USE_NPU}>:ascendcl>
+                      $<$<BOOL:${USE_NPU}>:hccl>
+                      $<$<BOOL:${USE_NPU}>:c_sec>
+                      $<$<BOOL:${USE_NPU}>:nnopbase>)
+target_link_options(batch_benchmark
+                    PRIVATE
+                    $<$<BOOL:${USE_MLU}>:-Wl,--no-as-needed>)

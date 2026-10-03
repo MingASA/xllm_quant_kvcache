@@ -1,0 +1,44 @@
+include(cc_library)
+
+add_subdirectory(vlm/mposition)
+
+if(USE_NPU)
+  include_directories(
+    ${CMAKE_SOURCE_DIR}/third_party/spdlog/include
+  )
+endif()
+
+cc_library(
+  NAME
+    models
+  HDRS
+    model_registry.h
+    models.h
+    dit/utils/lanczos_resample.h
+    $<$<BOOL:${USE_NPU}>:dit/utils/dit_block_weight_manager.h>
+    py_model_helper.h
+  SRCS
+    model_registry.cpp
+    dit/utils/lanczos_resample.cpp
+    $<$<BOOL:${USE_NPU}>:dit/utils/dit_block_weight_manager.cpp>
+    vlm/utils/multimodal_utils.cpp
+    llm/py_causal_lm.cpp
+    py_model_helper.cpp
+  DEPS
+    :model
+    :mposition
+    :parallel_state
+    :model_context
+    :dit_cache
+    :model_loader
+    :layers
+    util
+    $<$<BOOL:${USE_NPU}>:npu_layers>
+    $<$<BOOL:${USE_CUDA}>:cuda_kernels>
+    torch_python
+    Python::Python
+)
+
+if(USE_XLITE)
+  xllm_link_xlite(models)
+endif()

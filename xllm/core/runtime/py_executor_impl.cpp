@@ -1,0 +1,343 @@
+/* Copyright 2026 The xLLM Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    https://github.com/xLLM-AI/xllm/blob/main/LICENSE
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#include "core/runtime/py_executor_impl.h"
+
+#include <glog/logging.h>
+#include <pybind11/pybind11.h>
+#include <torch/python.h>
+
+#include <memory>
+#include <optional>
+#include <vector>
+
+#include "common/metrics.h"
+#include "core/framework/config/execution_config.h"
+#include "core/framework/kv_cache/kv_shard_layout.h"
+#include "core/layers/common/attention_metadata.h"
+#include "core/layers/common/attention_metadata_builder.h"
+#include "core/layers/common/kv_shard_batch_metadata.h"
+#include "core/runtime/py_attention_metadata.h"
+#include "core/util/pybind_helper.h"
+#include "models/llm/py_causal_lm.h"
+
+#if defined(USE_NPU)
+#include <torch_npu/csrc/core/npu/NPUStream.h>
+
+#include "models/llm/npu/mtp_topk_state.h"
+#include "platform/npu/npu_layer_synchronizer.h"
+#endif
+
+namespace py = pybind11;
+
+namespace xllm {
+namespace {
+
+thread_local PyCausalLM* active_py_causal_lm = nullptr;
+
+void register_xllm_runtime_module(py::module_& m) {
+  register_attention_metadata_views(m);
+
+  m.def("tp_all_reduce", [](torch::Tensor tensor) {
+    if (active_py_causal_lm != nullptr) {
+      active_py_causal_lm->tp_all_reduce(tensor);
+    }
+    return tensor;
+  });
+  m.def("tp_all_gather", [](torch::Tensor tensor, int64_t dim) {
+    if (active_py_causal_lm != nullptr) {
+      return active_py_causal_lm->tp_all_gather(tensor, dim);
+    }
+    return tensor;
+  });
+  m.def("moe_tp_all_reduce", [](torch::Tensor tensor) {
+    if (active_py_causal_lm != nullptr) {
+      active_py_causal_lm->moe_tp_all_reduce(tensor);
+    }
+    return tensor;
+  });
+  m.def("moe_ep_all_reduce", [](torch::Tensor tensor) {
+    if (active_py_causal_lm != nullptr) {
+      active_py_causal_lm->moe_ep_all_reduce(tensor);
+    }
+    return tensor;
+  });
+
+#if defined(USE_NPU)
+  py::class_<NPULayerSynchronizerImpl,
+             std::shared_ptr<NPULayerSynchronizerImpl>>(m, "LayerSynchronizer")
+      .def("record_event",
+           [](NPULayerSynchronizerImpl& self, int64_t layer_id) {
+             int32_t device_id = static_cast<int32_t>(
+                 c10_npu::getCurrentNPUStream().device_index());
+             return self.record_event(layer_id, device_id);
+           });
+#endif
+}
+
+void ensure_xllm_runtime_module() {
+  py::module_ sys = py::module_::import("sys");
+  py::dict modules = py::reinterpret_borrow<py::dict>(sys.attr("modules"));
+  const py::str module_name("xllm_runtime");
+  if (modules.contains(module_name)) {
+    return;
+  }
+
+  py::object module_object =
+      py::module_::import("types").attr("ModuleType")(module_name);
+  py::module_ module = py::reinterpret_borrow<py::module_>(module_object);
+  register_xllm_runtime_module(module);
+  modules[module_name] = module;
+}
+
+}  // namespace
+
+PyExecutorImpl::PyExecutorImpl(CausalLM* model,
+                               const ModelArgs& args,
+                               const torch::Device& device,
+                               const runtime::Options& options)
+    : py_causal_lm_(dynamic_cast<PyCausalLM*>(model)),
+      args_(args),
+      device_(device),
+      options_(options),
+      enable_mla_(args.enable_mla()) {
+  CHECK(py_causal_lm_ != nullptr) << "PyExecutorImpl requires PyCausalLM";
+
+  py::gil_scoped_acquire gil;
+  ensure_xllm_runtime_module();
+  py::module_ executor_module =
+      py::module_::import("xllm.python.model_executor.executor");
+  // These values belong to the executor, not the checkpoint. In particular,
+  // the MTP draft has different speculative options from its target.
+  py::dict executor_config = py_causal_lm_->config_dict().attr("copy")();
+  executor_config["enable_disagg_pd"] = options_.enable_disagg_pd();
+  executor_config["instance_role"] = options_.instance_role().to_string();
+  executor_config["task_type"] = options_.task_type();
+  executor_config["num_speculative_tokens"] = options_.num_speculative_tokens();
+  executor_config["speculative_algorithm"] = options_.speculative_algorithm();
+  executor_config["is_draft_engine"] = options_.is_draft_engine();
+  executor_config["kv_cache_dtype"] = options_.kv_cache_dtype();
+  py_executor_ = executor_module.attr("ModelExecutor")(
+      py_causal_lm_->python_model(),
+      executor_config,
+      options_.max_seqs_per_batch(),
+      options_.num_decoding_tokens(),
+      ExecutionConfig::get_instance().acl_graph_decode_batch_size_limit());
+}
+
+PyExecutorImpl::~PyExecutorImpl() {
+  if (active_py_causal_lm == py_causal_lm_) {
+    active_py_causal_lm = nullptr;
+  }
+  clear_python_object(py_executor_);
+}
+
+ForwardInput PyExecutorImpl::prepare_inputs(Batch& batch) {
+  return batch.prepare_forward_input(
+      options_.num_decoding_tokens(), 0, args_, options_.cp_size());
+}
+
+ModelOutput PyExecutorImpl::run(const torch::Tensor& tokens,
+                                const torch::Tensor& positions,
+                                std::vector<KVCache>& kv_caches,
+                                const ModelInputParams& params) {
+  torch::NoGradGuard no_grad;
+  COUNTER_INC(num_model_execution_total_eager);
+  active_py_causal_lm = py_causal_lm_;
+
+  // Build or reuse attention metadata.
+  std::shared_ptr<layer::AttentionMetadata> attn_metadata =
+      params.attn_metadata;
+  if (!attn_metadata) {
+    attn_metadata = std::make_shared<layer::AttentionMetadata>(
+        layer::AttentionMetadataBuilder::build(
+            params, enable_mla_, std::nullopt, device_));
+  }
+  if (enable_mla_ && py_causal_lm_->cp_size() > 1 &&
+      py_causal_lm_->kv_split_size() > 1 &&
+      (attn_metadata->is_prefill || attn_metadata->is_chunked_prefill)) {
+    const KVShardLayout layout(options_.block_size(),
+                               py_causal_lm_->kv_split_size(),
+                               py_causal_lm_->kv_split_rank());
+    attn_metadata->kv_shard_batch_metadata =
+        layer::build_kv_shard_batch_metadata(*attn_metadata, layout);
+  }
+
+  py::gil_scoped_acquire gil;
+
+  // Lazy bind KV caches on first call.
+  int64_t num_layers = static_cast<int64_t>(kv_caches.size());
+  if (!kv_bound_) {
+    py::list kv_caches_py;
+    for (auto& kv : kv_caches) {
+      // Slot order must match ``LayerCache`` on the Python side.
+      // Keep this order synchronized with LayerCache/_LAYER_CACHE_SLOTS.
+      // The first eleven slots preserve the legacy generic/DeepSeek-V4 ABI;
+      // the last two carry per-token/head K/V quantization scales.
+      kv_caches_py.append(
+          py::make_tuple(optional_tensor(kv.get_k_cache()),
+                         optional_tensor(kv.get_v_cache()),
+                         optional_tensor(kv.get_index_cache()),
+                         optional_tensor(kv.get_conv_cache()),
+                         optional_tensor(kv.get_ssm_cache()),
+                         optional_tensor(kv.get_swa_cache()),
+                         optional_tensor(kv.get_compress_kv_state()),
+                         optional_tensor(kv.get_compress_score_state()),
+                         optional_tensor(kv.get_compress_index_kv_state()),
+                         optional_tensor(kv.get_compress_index_score_state()),
+                         optional_tensor(kv.get_indexer_cache_scale()),
+                         optional_tensor(kv.get_k_cache_scale()),
+                         optional_tensor(kv.get_v_cache_scale())));
+    }
+    py_executor_.attr("bind_kv_caches")(kv_caches_py);
+    kv_bound_ = true;
+    kv_layer_count_ = num_layers;
+  } else {
+    CHECK_EQ(num_layers, kv_layer_count_)
+        << "KV cache layer count changed after initial bind";
+  }
+
+  py::object py_metadata =
+      py::cast(PyAttentionMetadataView(attn_metadata, params));
+  py::object input_embedding =
+      optional_tensor(params.embedding.input_embedding);
+  py::object mtp_topk_indices = py::none();
+#if defined(USE_NPU)
+  if (params.mtp_topk_state != nullptr) {
+    const auto state =
+        std::dynamic_pointer_cast<const npu::model::NpuMtpTopkState>(
+            params.mtp_topk_state);
+    CHECK(state != nullptr)
+        << "Python NPU model received an incompatible MTP top-k state";
+    mtp_topk_indices = py::cast(state->topk_indices());
+  }
+#else
+  CHECK(params.mtp_topk_state == nullptr)
+      << "Python MTP top-k state is supported only on NPU";
+#endif
+
+  // --- VLM: vision encode + embedding merge on image/video prefill steps ---
+  // On steps carrying multimodal input, ``params.multimodal.mm_data`` holds the
+  // batched ``pixel_values`` + ``image_grid_thw`` (still images) and/or
+  // ``pixel_values_videos`` + ``video_grid_thw`` (video) — same accessors the
+  // C++ Qwen3-VL base uses in qwen3_vl_base.h. Drive the Python model's
+  // ``encode`` -> ``get_input_embeddings`` pipeline: the latter scatters each
+  // modality's embeddings at its placeholder-token positions and sets
+  // ``model._inputs_embeds`` / ``deepstack_input_embeds`` for the runner-driven
+  // ``Qwen3VLModel.forward``. Decode steps carry no mm_data, so the attributes
+  // stay clear and the aclgraph embed path is used.
+  //
+  // NOTE: this scatters the FULL image/video embedding into the current
+  // forward's tokens, so it assumes every multimodal token is in this batch
+  // (i.e. enable_chunked_prefill=False). Chunked prefill — where a chunk
+  // boundary can land inside an item's token span — needs item-level scatter
+  // (reuse EncoderEmbeddingGatherVisitor + the NPU backend's paged mixed-batch
+  // attention, both tracked for a follow-up PR).
+  auto& mm_data = params.multimodal.mm_data;
+  if (mm_data.valid()) {
+    torch::Tensor pixel_values;
+    if (const auto& res = mm_data.get<torch::Tensor>("pixel_values")) {
+      pixel_values = res.value();
+    }
+    torch::Tensor image_grid_thw;
+    if (const auto& res = mm_data.get<torch::Tensor>("image_grid_thw")) {
+      image_grid_thw = res.value();
+    }
+    torch::Tensor pixel_values_videos;
+    if (const auto& res = mm_data.get<torch::Tensor>("pixel_values_videos")) {
+      pixel_values_videos = res.value();
+    }
+    torch::Tensor video_grid_thw;
+    if (const auto& res = mm_data.get<torch::Tensor>("video_grid_thw")) {
+      video_grid_thw = res.value();
+    }
+
+    if (pixel_values.defined() || pixel_values_videos.defined()) {
+      py::object top_model = py_causal_lm_->python_model();
+      // encode() moves the tensors onto device internally.
+      py::object image_embeds = py::none();
+      if (pixel_values.defined() && image_grid_thw.defined()) {
+        image_embeds = top_model.attr("encode")(pixel_values, image_grid_thw);
+      }
+      py::object video_embeds = py::none();
+      if (pixel_values_videos.defined() && video_grid_thw.defined()) {
+        video_embeds =
+            top_model.attr("encode")(pixel_values_videos, video_grid_thw);
+      }
+      // Sets top_model.model._inputs_embeds + deepstack_input_embeds.
+      top_model.attr("get_input_embeddings")(
+          tokens, image_embeds, video_embeds);
+    }
+  }
+
+  // --- mRoPE: collapse [3, N] decode positions to 1-D ---
+  // Only PURE decode collapses to 1-D: decode rows are identical
+  // (batch_input_builder get_mrope_positions), and mRoPE(p,p,p) == standard
+  // RoPE at p, so a single row feeds the captured aclgraph's 1-D
+  // static_positions unchanged. Chunked/mixed prefill (is_prefill=false but
+  // is_chunked_prefill=true) still needs the full [3, N] for the Python mRoPE
+  // path, so it is excluded here. The 2-D shape itself is the mRoPE signal:
+  // non-mRoPE models never receive 2-D positions, so no config flag is needed.
+  torch::Tensor positions_arg = positions;
+  if (positions.dim() == 2 && !attn_metadata->is_prefill &&
+      !attn_metadata->is_chunked_prefill) {
+    positions_arg = positions.slice(/*dim=*/0, /*start=*/0, /*end=*/1)
+                        .squeeze(0)
+                        .contiguous();
+  }
+
+  py::object py_sync = py::none();
+#if defined(USE_NPU)
+  if (params.parallel.layer_synchronizer) {
+    py_sync = py::cast(params.parallel.layer_synchronizer);
+  }
+#endif
+
+  // Execute: one C++ -> Python call per step. input_embedding stays None for
+  // the Qwen3-VL python path (embeddings are merged via the attribute set by
+  // get_input_embeddings above), so the runner takes the 2-arg model() branch
+  // and Qwen3VLModel.forward reads _inputs_embeds. positions_arg carries the
+  // mRoPE [3,N]->1-D decode collapse.
+  py::object hidden_obj = py_executor_.attr("execute")(tokens,
+                                                       positions_arg,
+                                                       py_metadata,
+                                                       input_embedding,
+                                                       py_sync,
+                                                       mtp_topk_indices);
+  if (py::isinstance<py::tuple>(hidden_obj)) {
+    py::tuple output = hidden_obj.cast<py::tuple>();
+    CHECK(output.size() == 2 || output.size() == 3)
+        << "Python model tuple output must be (hidden_states, "
+           "aux_hidden_states) or (hidden_states, aux_hidden_states, "
+           "mtp_topk_indices)";
+    ModelOutput model_output(output[0].cast<torch::Tensor>());
+    if (!output[1].is_none()) {
+      model_output.aux_hidden_states = output[1].cast<torch::Tensor>();
+    }
+    if (output.size() == 3 && !output[2].is_none()) {
+#if defined(USE_NPU)
+      model_output.mtp_topk_state =
+          std::make_shared<npu::model::NpuMtpTopkState>(
+              output[2].cast<torch::Tensor>());
+#else
+      LOG(FATAL) << "Python MTP top-k output is supported only on NPU";
+#endif
+    }
+    return model_output;
+  }
+  return ModelOutput(hidden_obj.cast<torch::Tensor>());
+}
+
+}  // namespace xllm

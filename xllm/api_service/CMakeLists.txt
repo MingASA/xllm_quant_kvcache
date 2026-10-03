@@ -1,0 +1,103 @@
+include(cc_library)
+include(cc_binary)
+
+cc_library(
+  NAME
+    api_service
+  HDRS
+    api_service.h
+    api_service_impl.h
+    call.h
+    request_id.h
+    chat_json_parser.h
+    chat_request_decoder.h
+    chat_struct_spans.h
+    completion_json_parser.h
+    json_fast_path.h
+    json_scan.h
+    completion_service_impl.h
+    rec_completion_service_impl.h
+    chat_service_impl.h
+    anthropic_service_impl.h
+    anthropic_stream_utils.h
+    sample_service_impl.h
+    embedding_service_impl.h
+    audio_generation_service_impl.h
+    image_generation_service_impl.h
+    text_generation_service_impl.h
+    video_generation_service_impl.h
+    rerank_service_impl.h
+    qwen3_rerank_service_impl.h
+    non_stream_call.h
+    service_impl_factory.h
+    serving_mode.h
+    stream_call.h
+    models_service_impl.h
+    stream_output_parser.h
+    mm_service_utils.h
+    embedding_output_builder.h
+    utils.h
+  SRCS
+    api_service.cpp
+    chat_json_parser.cpp
+    chat_request_decoder.cpp
+    chat_struct_spans.cpp
+    completion_json_parser.cpp
+    json_fast_path.cpp
+    json_scan.cpp
+    service_impl_factory.cpp
+    call.cpp
+    request_id.cpp
+    completion_service_impl.cpp
+    rec_completion_service_impl.cpp
+    chat_service_impl.cpp
+    anthropic_service_impl.cpp
+    anthropic_stream_utils.cpp
+    sample_service_impl.cpp
+    embedding_service_impl.cpp
+    audio_generation_service_impl.cpp
+    image_generation_service_impl.cpp
+    text_generation_service_impl.cpp
+    video_generation_service_impl.cpp
+    models_service_impl.cpp
+    rerank_service_impl.cpp
+    stream_output_parser.cpp
+    qwen3_rerank_service_impl.cpp
+    embedding_output_builder.cpp
+  DEPS
+    :master
+    :chat_template
+    :util
+    glog::glog
+    proto::xllm_proto
+    absl::flat_hash_set
+    absl::random_random
+    :function_call
+    :reasoning
+    torch
+    $<$<BOOL:${USE_NPU}>:torch_npu>
+)
+
+# Request-path hop 1: JSON -> proto -> RequestParams, response proto -> JSON.
+cc_binary(
+  NAME
+    api_service_benchmark
+  SRCS
+    api_service_benchmark.cpp
+  DEPS
+    :api_service
+    proto::xllm_proto
+    torch
+    benchmark::benchmark
+    benchmark::benchmark_main
+)
+target_link_libraries(api_service_benchmark
+                      PUBLIC
+                      Python::Python
+                      $<$<BOOL:${USE_NPU}>:ascendcl>
+                      $<$<BOOL:${USE_NPU}>:hccl>
+                      $<$<BOOL:${USE_NPU}>:c_sec>
+                      $<$<BOOL:${USE_NPU}>:nnopbase>)
+target_link_options(api_service_benchmark
+                    PRIVATE
+                    $<$<BOOL:${USE_MLU}>:-Wl,--no-as-needed>)

@@ -1,0 +1,118 @@
+name: CheckFormat
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '.github/**'
+      - 'cibuild/**'
+      - 'cmake/**'
+      - 'docs/**'
+      - 'third_party/**'
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+    paths-ignore:
+      - '.github/**'
+      - 'cibuild/**'
+      - 'cmake/**'
+      - 'docs/**'
+      - 'third_party/**'
+
+jobs:
+  format-check:
+    runs-on: [xllm-cpu-only-cicd]
+    steps:
+      - name: Install clang-format
+        run: |
+          pip install clang-format==20.1.6
+          clang-format --version
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine base commit for comparison
+        id: get_base_commit
+        run: |
+          # pull_request action
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "base_commit=${{ github.event.pull_request.base.sha }}" >> $GITHUB_OUTPUT
+          else
+            # push action
+            echo "base_commit=${{ github.sha }}~1" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Verify clang-format configuration
+        run: |
+          if [ ! -f ".clang-format" ]; then
+            echo "❌ .clang-format file not found in repository root"
+            exit 1
+          fi
+          clang-format --style=file --dump-config > /dev/null || {
+            echo "❌ .clang-format file has invalid format"
+            exit 1
+          }
+
+      - name: Check code format
+        shell: /usr/bin/bash {0}
+        run: |
+          BASE_COMMIT="${{ steps.get_base_commit.outputs.base_commit }}"
+          CLANG_FORMAT_FILE="$(pwd)/.clang-format"
+
+          # ignore path
+          IGNORED_PATHS=(
+            "^.github/.*"
+            "^cibuild/.*"
+            "^cmake/.*"
+            "^docs/.*"
+            "^third_party/.*"
+            "^tools/.*"
+          )
+
+          # ignore files
+          FILES=$(git diff --name-only "$BASE_COMMIT" -- '*.c' '*.h' '*.cc' '*.cp' '*.cpp' '*.c++' '*.cxx' '*.hh' '*.hpp' '*.hxx' '*.inc' '*.cu' '*.cuh' | \
+            grep -v -E "$(IFS=\|; echo "${IGNORED_PATHS[*]}")")
+
+          if [ -z "$FILES" ]; then
+            echo "✅ No files to check (all excluded)"
+            exit 0
+          fi
+
+          # run clang-format
+          diff=$(git-clang-format \
+            --style=file:"$CLANG_FORMAT_FILE" \
+            --extensions="c,h,cc,cp,cpp,c++,cxx,hh,hpp,hxx,inc,cu,cuh" \
+            --commit "$BASE_COMMIT" \
+            --diff \
+            -- $FILES)
+
+          # check diff
+          if [ "$diff" = "no modified files to format" ] || [ "$diff" = "clang-format did not modify any files" ]; then
+            echo "✅ Code format is correct"
+            exit 0
+          fi
+
+          printf "\n❌ You have introduced coding style breakages.\n"
+
+          printf "\n\033[1mSuggested changes:\n\n"
+          echo "$diff"
+          exit 1
+
+  python-lint:
+    runs-on: [xllm-cpu-only-cicd]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Verify Ruff
+        run: |
+          command -v ruff
+          test "$(ruff --version)" = "ruff 0.14.0"
+
+      - name: Check Python formatting
+        run: ruff format --check --diff .
+
+      - name: Check Python lint
+        run: ruff check --output-format github .

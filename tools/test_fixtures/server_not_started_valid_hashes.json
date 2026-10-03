@@ -1,0 +1,12 @@
+{
+  "fixture_only": true,
+  "server_started": false,
+  "model_impl": "python",
+  "graph_mode": "off",
+  "kv_cache_mode": "auto",
+  "checkpoint_path": "/fixture/checkpoint",
+  "checkpoint_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "model_config_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+  "chat_template_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+  "model": "fixture-model"
+}

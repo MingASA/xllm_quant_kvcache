@@ -1,0 +1,209 @@
+include(cc_test)
+
+cc_test(
+  NAME
+    acl_graph_bucket_policy_test
+  SRCS
+    acl_graph_bucket_policy_test.cpp
+  DEPS
+    GTest::gtest_main
+)
+
+if(USE_NPU)
+  cc_test(
+    NAME
+      mtp_decode_metadata_test
+    SRCS
+      mtp_decode_metadata_test.cpp
+    DEPS
+      :runtime
+      :platform
+      GTest::gtest_main
+  )
+
+  cc_test(
+    NAME
+      dspark_confidence_head_test
+    SRCS
+      dspark_confidence_head_test.cpp
+    DEPS
+      :models
+      :state_dict
+      :xllm_ops
+      glog::glog
+      torch
+      GTest::gtest_main
+  )
+  target_link_libraries(dspark_confidence_head_test
+                        PRIVATE
+                        torch_npu
+                        ascendcl
+                        hccl
+                        c_sec
+                        nnopbase
+                        atb)
+  target_link_options(dspark_confidence_head_test PRIVATE
+    "-Wl,--whole-archive"
+    "${CMAKE_BINARY_DIR}/third_party/spdlog/libspdlog.a"
+    "-Wl,--no-whole-archive")
+
+  cc_test(
+    NAME
+      acl_graph_executor_test
+    SRCS
+      acl_graph_executor_test.cpp
+    DEPS
+      :xllm_server
+      :runtime
+      :model_loader
+      :batch
+      :block
+      :model
+      :models
+      :sampler
+      :kv_cache
+      GTest::gtest_main
+      torch_npu
+      atb_customize
+  )
+  target_link_libraries(acl_graph_executor_test
+                        PRIVATE
+                        torch_npu
+                        ascendcl
+                        hccl
+                        c_sec
+                        nnopbase)
+  target_link_options(acl_graph_executor_test PRIVATE
+    "-Wl,--whole-archive"
+    "${CMAKE_BINARY_DIR}/third_party/spdlog/libspdlog.a"
+    "-Wl,--no-whole-archive")
+
+  cc_test(
+    NAME
+      acl_graph_task_update_test
+    SRCS
+      acl_graph_task_update_test.cpp
+    DEPS
+      :xllm_server
+      :runtime
+      :model_loader
+      :batch
+      :block
+      :model
+      :models
+      :sampler
+      :kv_cache
+      GTest::gtest_main
+      torch_npu
+      atb_customize
+  )
+  target_link_libraries(acl_graph_task_update_test
+                        PRIVATE
+                        torch_npu
+                        ascendcl
+                        hccl
+                        c_sec
+                        nnopbase)
+  target_link_options(acl_graph_task_update_test PRIVATE
+    "-Wl,--whole-archive"
+    "${CMAKE_BINARY_DIR}/third_party/spdlog/libspdlog.a"
+    "-Wl,--no-whole-archive")
+endif()
+
+cc_test(
+  NAME
+    worker_json_object_overlap_test
+  SRCS
+    worker_json_object_overlap_test.cpp
+  DEPS
+    :json_object_grammar
+    GTest::gtest_main
+)
+
+if(USE_NPU OR USE_MLU)
+  cc_test(
+    NAME
+      worker_hierarchy_kv_cache_transfer_test
+    SRCS
+      worker_hierarchy_kv_cache_transfer_test.cpp
+    DEPS
+      :runtime
+      :kv_cache
+      :platform
+      GTest::gtest_main
+  )
+endif()
+
+if(USE_MLU)
+  cc_test(
+    NAME
+      mlu_graph_executor_test
+    SRCS
+      mlu_graph_executor_test.cpp
+      mlu_linear_state_restore_worker_test.cpp
+    DEPS
+      :runtime
+      :model_loader
+      :batch
+      :kv_cache
+      :platform
+      GTest::gtest_main
+      torch_mlu
+  )
+endif()
+
+if(USE_NPU OR USE_MLU)
+  cc_test(
+    NAME
+      mtp_host_offload_test
+    SRCS
+      mtp_host_offload_test.cpp
+    DEPS
+      :runtime
+      :model_loader
+      :batch
+      :kv_cache
+      :platform
+      GTest::gtest_main
+  )
+  if(USE_MLU)
+    target_link_libraries(mtp_host_offload_test PRIVATE torch_mlu)
+  endif()
+endif()
+
+if(USE_CUDA)
+  cc_test(
+    NAME
+      cuda_graph_executor_test
+    SRCS
+      cuda_graph_executor_test.cpp
+    DEPS
+      :config
+      :runtime
+      :cuda_layers
+      :batch
+      :block
+      :kv_cache
+      :kernels
+      GTest::gtest_main
+      torch
+  )
+endif()
+
+if(USE_DCU)
+  cc_test(
+    NAME
+      dcu_graph_executor_test
+    SRCS
+      dcu_graph_executor_test.cpp
+    DEPS
+      :runtime
+      :batch
+      :block
+      :kv_cache
+      :kernels
+      GTest::gtest_main
+      torch
+      hip::host
+  )
+endif()

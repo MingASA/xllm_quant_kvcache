@@ -1,0 +1,334 @@
+/* Copyright 2025-2026 The xLLM Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    https://github.com/xLLM-AI/xllm/blob/main/LICENSE
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#pragma once
+
+#include <bvar/bvar.h>
+#include <bvar/multi_dimension.h>
+
+#include <cstddef>
+
+#include "common/macros.h"
+#include "util/timer.h"
+
+namespace xllm {
+
+using bvar::Adder;
+
+class AutoCounter final {
+ public:
+  AutoCounter(bvar::Adder<double>& counter) : counter_(counter) {}
+
+  ~AutoCounter() {
+    // add the elapsed time to the counter
+    counter_ << timer_.elapsed_seconds();
+  }
+
+ private:
+  // NOLINTNEXTLINE
+  bvar::Adder<double>& counter_;
+
+  // the timer
+  Timer timer_;
+};
+
+// Records one admitted request in the process-cumulative token hit rate.
+void record_prefix_cache_hit_metrics(size_t prompt_tokens, size_t hit_tokens);
+
+}  // namespace xllm
+
+// define helpful macros to hide boilerplate code
+// NOLINTBEGIN(bugprone-macro-parentheses)
+
+// define gauge (using bvar::Status for single values)
+#define DEFINE_GAUGE(name, desc) bvar::Status<double> GAUGE_##name(#name, 0.0);
+
+#define GAUGE_SET(name, value) GAUGE_##name.set_value(value);
+
+#define GAUGE_ADD(name, value) \
+  GAUGE_##name.set_value(GAUGE_##name.get_value() + value);
+
+#define GAUGE_INC(name) GAUGE_##name.set_value(GAUGE_##name.get_value() + 1);
+
+#define GAUGE_VALUE(name) (GAUGE_##name.get_value())
+
+// define counter (using bvar::Adder for accumulating values)
+#define DEFINE_COUNTER(name, desc) bvar::Adder<double> COUNTER_##name(#name);
+
+#define COUNTER_ADD(name, value) COUNTER_##name << (value);
+
+#define COUNTER_VALUE(name) (COUNTER_##name.get_value())
+
+#define COUNTER_INC(name) COUNTER_##name << 1;
+
+// Declares a latency counter having a variable name based on line number.
+// example: AUTO_COUNTER(a_counter_name);
+#define AUTO_COUNTER(name) \
+  xllm::AutoCounter SAFE_CONCAT(name, __LINE__)(COUNTER_##name);
+
+// define histogram (using bvar::LatencyRecorder for latency measurements)
+#define DEFINE_HISTOGRAM(name, desc) \
+  bvar::LatencyRecorder HISTOGRAM_##name(#name);
+
+// value must be int64_t
+#define HISTOGRAM_OBSERVE(name, value) HISTOGRAM_##name << (value);
+
+// define multi histogram (using bvar::MultiDimension for multi-dimensional
+// measurements)
+#define DEFINE_MULTI_HISTOGRAM(name, label, desc)                     \
+  bvar::MultiDimension<bvar::LatencyRecorder> MULTI_HISTOGRAM_##name( \
+      #name, {(label)});
+
+#define MULTI_HISTOGRAM_OBSERVE(name, key, value)  \
+  bvar::LatencyRecorder* latency_recorder_##name = \
+      MULTI_HISTOGRAM_##name.get_stats({(key)});   \
+  if (latency_recorder_##name) {                   \
+    *latency_recorder_##name << (value);           \
+  }
+
+// define multi counter (using bvar::MultiDimension for labeled counters)
+#define DEFINE_MULTI_COUNTER(name, label, desc)                         \
+  bvar::MultiDimension<bvar::Adder<double>> MULTI_COUNTER_##name(#name, \
+                                                                 {(label)});
+
+#define MULTI_COUNTER_ADD(name, key, value)      \
+  do {                                           \
+    bvar::Adder<double>* counter_##name =        \
+        MULTI_COUNTER_##name.get_stats({(key)}); \
+    if (counter_##name) {                        \
+      *counter_##name << (value);                \
+    }                                            \
+  } while (false)
+
+// read a labeled counter's current value (0.0 when the label has no stats yet);
+// the multi-dimension analogue of COUNTER_VALUE
+#define MULTI_COUNTER_VALUE(name, key)                                    \
+  ([&]() -> double {                                                      \
+    bvar::Adder<double>* counter_##name =                                 \
+        MULTI_COUNTER_##name.get_stats({(key)});                          \
+    return counter_##name != nullptr ? counter_##name->get_value() : 0.0; \
+  }())
+
+// define multi gauge (using bvar::MultiDimension for labeled settable values)
+#define DEFINE_MULTI_GAUGE(name, label, desc)                          \
+  bvar::MultiDimension<bvar::Status<double>> MULTI_GAUGE_##name(#name, \
+                                                                {(label)});
+
+#define MULTI_GAUGE_SET(name, key, value)      \
+  do {                                         \
+    bvar::Status<double>* gauge_##name =       \
+        MULTI_GAUGE_##name.get_stats({(key)}); \
+    if (gauge_##name) {                        \
+      gauge_##name->set_value(value);          \
+    }                                          \
+  } while (false)
+
+// declare gauge
+#define DECLARE_GAUGE(name) extern bvar::Status<double> GAUGE_##name;
+
+// declare counter
+#define DECLARE_COUNTER(name) extern bvar::Adder<double> COUNTER_##name;
+
+// declare histogram
+#define DECLARE_HISTOGRAM(name) extern bvar::LatencyRecorder HISTOGRAM_##name;
+
+// declare multi histogram
+#define DECLARE_MULTI_HISTOGRAM(name) \
+  extern bvar::MultiDimension<bvar::LatencyRecorder> MULTI_HISTOGRAM_##name;
+
+// declare multi counter
+#define DECLARE_MULTI_COUNTER(name) \
+  extern bvar::MultiDimension<bvar::Adder<double>> MULTI_COUNTER_##name;
+
+// declare multi gauge
+#define DECLARE_MULTI_GAUGE(name) \
+  extern bvar::MultiDimension<bvar::Status<double>> MULTI_GAUGE_##name;
+
+// NOLINTEND(bugprone-macro-parentheses)
+
+// total number of request status
+DECLARE_COUNTER(request_status_total_ok);
+DECLARE_COUNTER(request_status_total_cancelled);
+DECLARE_COUNTER(request_status_total_unknown);
+DECLARE_COUNTER(request_status_total_invalid_argument);
+DECLARE_COUNTER(request_status_total_deadline_exceeded);
+DECLARE_COUNTER(request_status_total_resource_exhausted);
+DECLARE_COUNTER(request_status_total_unauthenticated);
+DECLARE_COUNTER(request_status_total_unavailable);
+DECLARE_COUNTER(request_status_total_unimplemented);
+
+// latency of request handling in seconds
+DECLARE_COUNTER(request_handling_latency_seconds_chat);
+DECLARE_COUNTER(request_handling_latency_seconds_completion);
+DECLARE_COUNTER(tokenization_latency_seconds);
+DECLARE_COUNTER(chat_template_latency_seconds);
+
+// latency of multimodal preprocessing in milliseconds
+DECLARE_HISTOGRAM(mm_input_loading_latency_milliseconds);
+DECLARE_HISTOGRAM(mm_preprocess_latency_milliseconds);
+
+// encoder cache hit rate in percent
+DECLARE_HISTOGRAM(encoder_cache_hit_rate);
+
+// latency of prefix cache operations in seconds
+DECLARE_COUNTER(prefix_cache_latency_seconds_insert);
+DECLARE_COUNTER(prefix_cache_latency_seconds_match);
+DECLARE_COUNTER(prefix_cache_latency_seconds_evict);
+DECLARE_COUNTER(prefix_cache_prompt_tokens_total);
+DECLARE_COUNTER(prefix_cache_hit_tokens_total);
+DECLARE_COUNTER(allocate_blocks_latency_seconds);
+
+// latency of detokenization operations in seconds
+DECLARE_COUNTER(detokenization_latency_seconds_stream);
+DECLARE_COUNTER(detokenization_latency_seconds_non_stream);
+
+DECLARE_GAUGE(prefix_cache_token_hit_rate_perc);
+
+// total number of model execution operations
+DECLARE_COUNTER(num_model_execution_total_eager);
+
+// MoonCake KV transfer metrics
+DECLARE_COUNTER(mooncake_transfer_completed_total_read);
+DECLARE_COUNTER(mooncake_transfer_completed_total_write);
+DECLARE_COUNTER(mooncake_transfer_bytes_total_read);
+DECLARE_COUNTER(mooncake_transfer_bytes_total_write);
+DECLARE_COUNTER(mooncake_transfer_failed_total);
+DECLARE_HISTOGRAM(mooncake_transfer_latency_microseconds_read);
+DECLARE_HISTOGRAM(mooncake_transfer_latency_microseconds_write);
+
+// latency of worker execution operations in seconds
+DECLARE_COUNTER(execution_latency_seconds_model);
+DECLARE_COUNTER(execution_latency_seconds_logits_processing);
+DECLARE_COUNTER(execution_latency_seconds_sampling);
+
+// JSON object constrained-decoding mask metrics.
+DECLARE_COUNTER(json_object_mask_cache_hits_total);
+DECLARE_COUNTER(json_object_mask_cache_misses_total);
+DECLARE_HISTOGRAM(json_object_mask_vocab_scan_latency_microseconds);
+DECLARE_HISTOGRAM(json_object_mask_row_build_latency_microseconds);
+DECLARE_HISTOGRAM(json_object_mask_batch_build_latency_microseconds);
+DECLARE_HISTOGRAM(json_object_mask_device_copy_latency_microseconds);
+DECLARE_HISTOGRAM(json_object_mask_transfer_submission_latency_microseconds);
+DECLARE_COUNTER(json_object_mask_build_calls_normal_total);
+DECLARE_COUNTER(json_object_mask_build_calls_draft_total);
+DECLARE_COUNTER(json_object_mask_build_calls_target_total);
+DECLARE_COUNTER(json_object_mask_build_rows_normal_total);
+DECLARE_COUNTER(json_object_mask_build_rows_draft_total);
+DECLARE_COUNTER(json_object_mask_build_rows_target_total);
+DECLARE_COUNTER(json_object_mask_build_constrained_rows_normal_total);
+DECLARE_COUNTER(json_object_mask_build_constrained_rows_draft_total);
+DECLARE_COUNTER(json_object_mask_build_constrained_rows_target_total);
+
+DECLARE_GAUGE(num_pending_requests);
+DECLARE_GAUGE(num_running_requests);
+DECLARE_GAUGE(num_waiting_requests);
+DECLARE_GAUGE(num_preempted_requests);
+DECLARE_GAUGE(num_offline_decode_preempt_offline_requests);
+DECLARE_GAUGE(num_online_decode_preempt_online_requests);
+DECLARE_GAUGE(num_online_prefill_preempt_offline_requests);
+DECLARE_GAUGE(num_online_decode_preempt_offline_requests);
+DECLARE_GAUGE(num_running_sequences);
+DECLARE_GAUGE(kv_cache_utilization_perc);
+DECLARE_GAUGE(num_blocks_in_prefix_cache);
+DECLARE_GAUGE(num_free_blocks);
+DECLARE_GAUGE(num_used_blocks);
+DECLARE_COUNTER(scheduling_latency_seconds);
+
+// total number of processing tokens
+DECLARE_COUNTER(num_processing_tokens_total_prompt);
+DECLARE_COUNTER(num_processing_tokens_total_generated);
+
+DECLARE_HISTOGRAM(num_prompt_tokens_per_request);
+DECLARE_HISTOGRAM(num_generated_tokens_per_request);
+
+DECLARE_HISTOGRAM(time_to_first_token_latency_milliseconds);
+DECLARE_HISTOGRAM(inter_token_latency_milliseconds);
+DECLARE_HISTOGRAM(inter_token_latency_microseconds);
+
+// latency of responding in seconds
+DECLARE_COUNTER(responsing_latency_seconds_stream);
+DECLARE_COUNTER(responsing_latency_seconds_non_stream);
+
+DECLARE_HISTOGRAM(end_2_end_latency_milliseconds);
+
+// total number of request that server processed
+DECLARE_COUNTER(server_request_in_total);
+DECLARE_COUNTER(server_request_total_ok);
+DECLARE_COUNTER(server_request_total_limit);
+DECLARE_COUNTER(server_request_total_fail);
+
+DECLARE_GAUGE(num_concurrent_requests);
+
+DECLARE_GAUGE(xllm_cpu_num);
+DECLARE_GAUGE(xllm_cpu_utilization);
+DECLARE_GAUGE(xllm_gpu_num);
+DECLARE_GAUGE(xllm_gpu_utilization);
+
+// latency of speculative execution in seconds
+DECLARE_COUNTER(speculative_execution_latency_seconds_draft);
+DECLARE_COUNTER(speculative_execution_latency_seconds_target);
+DECLARE_COUNTER(speculative_execution_latency_seconds_validation);
+DECLARE_COUNTER(speculative_num_drafts_total);
+DECLARE_COUNTER(speculative_num_accepted_tokens_total);
+DECLARE_COUNTER(speculative_num_draft_tokens_total);
+DECLARE_COUNTER(speculative_num_committed_tokens_total);
+DECLARE_MULTI_COUNTER(speculative_num_accepted_tokens_per_pos);
+DECLARE_GAUGE(speculative_mean_acceptance_length);
+DECLARE_MULTI_GAUGE(speculative_conditional_acceptance_rate_per_pos);
+DECLARE_HISTOGRAM(speculative_draft_token_d2h_latency_microseconds);
+DECLARE_MULTI_HISTOGRAM(
+    speculative_draft_token_copy_submission_latency_microseconds);
+DECLARE_MULTI_HISTOGRAM(
+    speculative_draft_token_ready_wait_latency_microseconds);
+DECLARE_MULTI_HISTOGRAM(speculative_draft_token_bulk_read_latency_microseconds);
+DECLARE_MULTI_HISTOGRAM(speculative_draft_token_handoff_latency_microseconds);
+DECLARE_COUNTER(speculative_draft_token_handoff_fallback_total);
+DECLARE_COUNTER(speculative_num_accepted_tokens_constrained_total);
+DECLARE_COUNTER(speculative_num_accepted_tokens_plain_total);
+DECLARE_COUNTER(speculative_num_draft_tokens_constrained_total);
+DECLARE_COUNTER(speculative_num_draft_tokens_plain_total);
+
+// latency of proto conversion in seconds
+DECLARE_COUNTER(proto_latency_seconds_proto2i);
+DECLARE_COUNTER(proto_latency_seconds_i2proto);
+DECLARE_COUNTER(proto_latency_seconds_proto2o);
+DECLARE_COUNTER(proto_latency_seconds_o2proto);
+
+// engine metrics
+DECLARE_COUNTER(prepare_input_latency_seconds);
+
+// rec engine metrics
+DECLARE_HISTOGRAM(rec_total_latency_microseconds);
+DECLARE_HISTOGRAM(prepare_input_latency_microseconds);
+DECLARE_HISTOGRAM(rec_first_token_latency_microseconds);
+DECLARE_HISTOGRAM(rec_second_token_latency_microseconds);
+DECLARE_HISTOGRAM(rec_third_token_latency_microseconds);
+DECLARE_HISTOGRAM(rec_sampling_latency_microseconds);
+DECLARE_GAUGE(rec_beam_search_width);
+DECLARE_HISTOGRAM(rec_input_token_num_per_request);
+
+// multi node metrics
+DECLARE_COUNTER(worker_service_latency_seconds);
+DECLARE_COUNTER(engine_latency_seconds);
+
+// memory metrics
+DECLARE_GAUGE(total_memory_size_in_kilobytes);
+DECLARE_GAUGE(weight_size_in_kilobytes);
+DECLARE_GAUGE(total_kv_cache_size_in_kilobytes);
+DECLARE_GAUGE(total_activation_size_in_kilobytes);
+
+DECLARE_MULTI_HISTOGRAM(active_kv_cache_size_in_kilobytes);
+DECLARE_MULTI_HISTOGRAM(prefill_active_activation_size_in_kilobytes);
+DECLARE_MULTI_HISTOGRAM(decode_active_activation_size_in_kilobytes);

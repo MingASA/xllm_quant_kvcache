@@ -1,0 +1,37 @@
+include(cc_library)
+
+add_subdirectory(tokenizers)
+
+cc_library(
+  NAME 
+    tokenizer
+  HDRS
+    tokenizer_args.h
+    tokenizer.h
+    tokenizer_factory.h
+    tiktoken_tokenizer.h
+    sentencepiece_tokenizer.h
+    fast_tokenizer.h
+    rwkv_tokenizer.h
+    tokenizer_proxy.h
+    rec_tokenizer.h
+  SRCS
+    tokenizer_factory.cpp
+    tiktoken_tokenizer.cpp
+    sentencepiece_tokenizer.cpp
+    fast_tokenizer.cpp
+    rwkv_tokenizer.cpp
+    tokenizer_proxy.cpp
+    rec_tokenizer.cpp
+  DEPS
+    :common
+    :sentencepiece
+    state_dict
+    absl::flat_hash_map
+    absl::flat_hash_set
+    absl::strings
+    glog::glog
+    nlohmann_json::nlohmann_json
+    rust_tokenizers
+    re2::re2
+)

@@ -1,0 +1,47 @@
+include(cc_library)
+
+cc_library(
+  NAME
+    npu_torch_layers
+  HDRS
+    fused_moe.h
+    attention.h
+    minimax_m2_decode_layer.h
+    minimax_rms_norm.h
+    minimax_m2_attention.h
+    qwen3_gated_delta_net_base.h
+    qwen3_next_attention.h
+    qwen3_next_gated_delta_net.h
+    qwen3_5_gated_delta_net.h
+    qwen3_next_hybrid_decoder_layer_base.h
+    qwen3_next_decoder_layer_impl.h
+    qwen3_5_decoder_layer_impl.h
+    deepseek_v4_eplb_load_utils.h
+    deepseek_v4_eplb_utils.h
+    deepseek_sparse_attention.h
+    compressor.h
+    deepseek_v4_indexer.h
+    deepseek_v4_gate.h
+  SRCS
+    fused_moe.cpp
+    attention.cpp
+    minimax_m2_decode_layer.cpp
+    minimax_rms_norm.cpp
+    minimax_m2_attention.cpp
+    qwen3_gated_delta_net_base.cpp
+    qwen3_next_attention.cpp
+    qwen3_next_gated_delta_net.cpp
+    qwen3_next_hybrid_decoder_layer_base.cpp
+    qwen3_5_gated_delta_net.cpp
+    qwen3_next_decoder_layer_impl.cpp
+    qwen3_5_decoder_layer_impl.cpp
+    deepseek_sparse_attention.cpp
+    compressor.cpp
+    deepseek_v4_indexer.cpp
+    deepseek_v4_gate.cpp
+  DEPS
+    :common_layers
+    :npu_layers
+    :xllm_ops
+    :triton_adapter
+)

@@ -1,0 +1,107 @@
+/* Copyright 2025-2026 The xLLM Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    https://github.com/xLLM-AI/xllm/blob/main/LICENSE
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#pragma once
+
+#include <torch/torch.h>
+
+#include "forward_params.h"
+#include "framework/model/causal_lm.h"
+#include "framework/model/model_input_params.h"
+#include "options.h"
+#include "runtime/worker_impl.h"
+
+namespace xllm {
+
+class LLMWorkerImpl : public WorkerImpl {
+ public:
+  enum class ForwardSyncPolicy : int8_t {
+    LEGACY = 0,
+    NO_SYNC,
+  };
+
+  LLMWorkerImpl(const ParallelArgs& parallel_args,
+                const torch::Device& device,
+                const runtime::Options& options);
+
+  ~LLMWorkerImpl() override = default;
+
+  // initialize model, cache manager. blocking call
+  bool init_model(ModelContext& context) override;
+
+  std::optional<ForwardOutput> step(const ForwardInput& input) override;
+
+  virtual std::optional<ForwardOutput> execute_no_sync_on_stream(
+      const ForwardInput& input,
+      Stream& compute_stream) override;
+
+  std::optional<ForwardOutput> execute_no_sync_on_stream(
+      const ForwardInput& input,
+      Stream& compute_stream,
+      bool record_ready_event);
+
+  std::optional<ForwardOutput> step_internal(
+      const ForwardInput& input,
+      ForwardSyncPolicy sync_policy = ForwardSyncPolicy::LEGACY,
+      bool record_ready_event = true);
+
+ protected:
+  std::optional<ForwardOutput> step_for_schedule_overlap(
+      const ForwardInput& input) override;
+  ForwardInput update_input_by_last_step_output_for_schedule_overlap(
+      ForwardInput& input) override;
+
+ public:
+#if defined(USE_NPU)
+  bool prepare_static_mtp_graph_tasks(const SpecVerifyGraphTaskSignal& signal,
+                                      const Stream& signal_stream);
+#endif
+
+  torch::Tensor dspark_markov_bias(const torch::Tensor& previous_token_ids) {
+    return model_->dspark_markov_bias(previous_token_ids);
+  }
+
+  torch::Tensor dspark_confidence_probs(const torch::Tensor& hidden_all,
+                                        const torch::Tensor& prev_matrix) {
+    return model_->dspark_confidence_probs(hidden_all, prev_matrix);
+  }
+  bool has_dspark_confidence_head() const {
+    return model_->has_dspark_confidence_head();
+  }
+
+  DFlash2CandidateOutput dflash2_candidates(
+      const torch::Tensor& hidden_states,
+      const torch::Tensor& unary_logits,
+      const torch::Tensor& anchor_token_ids) {
+    return model_->dflash2_candidates(
+        hidden_states, unary_logits, anchor_token_ids);
+  }
+
+  // DFlash-specific delegate: eagerly project target hidden into the draft's
+  // per-layer KV cache. Runs outside the executor because the pass has no
+  // attention and its shape doesn't match the decode graph. See CausalLM.
+  ModelOutput write_context_kv(const torch::Tensor& target_hidden,
+                               const torch::Tensor& positions,
+                               const torch::Tensor& device_cache_slots,
+                               const ModelInputParams& input_params) {
+    return model_->write_context_kv(
+        target_hidden, positions, device_cache_slots, kv_caches_, input_params);
+  }
+
+ protected:
+  std::unique_ptr<BeamSearcher> beam_searcher_;
+};
+
+}  // namespace xllm

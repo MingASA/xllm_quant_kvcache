@@ -1,0 +1,55 @@
+/* Copyright 2025-2026 The xLLM Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    https://github.com/xLLM-AI/xllm/blob/main/LICENSE
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+syntax = "proto3";
+
+option go_package = "jd.com/jd-infer/xllm;xllm";
+package xllm.proto;
+
+import "common.proto";
+
+message RerankRequest {
+  string model = 1;
+  string query = 2;
+  repeated string documents = 3;
+  optional int32 top_n = 4;
+  optional int32 truncate_prompt_tokens = 5;
+
+  optional string user = 6;
+
+  optional string service_request_id = 7;
+}
+
+message RerankDocument {
+  string text = 1;
+}
+
+message RerankResult {
+  int32 index = 1;
+
+  RerankDocument document = 2;
+
+  float relevance_score = 3;
+}
+
+message RerankResponse {
+  string id = 1;
+
+  string model = 2;
+
+  Usage usage = 3;
+
+  repeated RerankResult results = 4;
+}

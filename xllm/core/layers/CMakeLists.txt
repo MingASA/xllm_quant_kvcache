@@ -1,0 +1,80 @@
+include(cc_library)
+
+if(USE_NPU)
+  add_subdirectory(npu)
+  add_subdirectory(npu_torch)
+elseif(USE_MLU)
+  add_subdirectory(mlu)
+elseif(USE_ILU)
+  add_subdirectory(ilu)
+elseif(USE_MUSA)
+  add_subdirectory(musa)
+elseif(USE_CUDA)
+  add_subdirectory(cuda)
+elseif(USE_DCU)
+  add_subdirectory(dcu)
+endif()
+
+add_subdirectory(common)
+
+cc_library(
+  NAME
+    attention_mask
+  HDRS
+    common/attention_mask.h
+  SRCS
+    common/attention_mask.cpp
+  DEPS
+    :state_dict
+    :block
+    :kv_cache
+    :prefix_cache
+    glog::glog
+    gflags::gflags
+    torch
+)
+
+cc_library(
+  NAME
+    layers
+  HDRS
+    onerec_block_layer.h
+    oxygen_vision_layer.h
+    $<$<BOOL:${USE_NPU}>:deepseek_v4_decoder_layer.h>
+    qwen2_decoder_layer.h
+    qwen2_vision_layer.h
+    qwen2_5_vision_layer.h
+    qwen3_vision_layer.h
+    qwen3_decoder_layer.h
+    qwen3_moe_decoder_layer.h
+    $<$<BOOL:${USE_CUDA}>:rwkv7_decoder_layer.h>
+    $<$<BOOL:${USE_DCU}>:minimax_m2_attention.h>
+    $<$<BOOL:${USE_DCU}>:minimax_m2_decoder_layer.h>
+    $<$<BOOL:${USE_DCU}>:minimax_m2_tensor_parallel_rms_norm.h>
+  SRCS
+    oxygen_vision_layer.cpp
+    $<$<BOOL:${USE_NPU}>:deepseek_v4_decoder_layer.cpp>
+    qwen2_vision_layer.cpp
+    qwen2_decoder_layer.cpp
+    qwen2_5_vision_layer.cpp
+    qwen3_vision_layer.cpp
+    qwen3_moe_decoder_layer.cpp
+    $<$<BOOL:${USE_CUDA}>:rwkv7_decoder_layer.cpp>
+    $<$<BOOL:${USE_DCU}>:minimax_m2_attention.cpp>
+    $<$<BOOL:${USE_DCU}>:minimax_m2_decoder_layer.cpp>
+    $<$<BOOL:${USE_DCU}>:minimax_m2_tensor_parallel_rms_norm.cpp>
+  DEPS
+    $<$<BOOL:${USE_NPU}>:npu_layers>
+    $<$<BOOL:${USE_NPU}>:npu_torch_layers>
+    $<$<BOOL:${USE_MLU}>:mlu_layers>
+    $<$<BOOL:${USE_ILU}>:ilu_layers>  
+    $<$<AND:$<BOOL:${USE_CUDA}>,$<NOT:$<BOOL:${USE_MUSA}>>>:cuda_layers>
+    $<$<BOOL:${USE_MUSA}>:musa_layers>
+    $<$<BOOL:${USE_DCU}>:dcu_layers>
+    :common_layers
+    :parallel_state
+    :state_dict
+    :kv_cache
+    :attention_mask
+    torch
+)

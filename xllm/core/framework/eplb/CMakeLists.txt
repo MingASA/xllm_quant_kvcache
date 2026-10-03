@@ -1,0 +1,36 @@
+include(cc_binary)
+include(cc_library)
+
+include_directories(
+  ${CMAKE_SOURCE_DIR}/xllm/core/kernels/ascend
+  ${CMAKE_SOURCE_DIR}/xllm/core/kernels/ascend/core/include
+)
+
+cc_library(
+  NAME 
+    eplb
+  HDRS
+    eplb_aggregator.h
+    eplb_executor.h
+    eplb_info.h
+    eplb_manager.h
+    eplb_options.h
+    eplb_policy.h
+    eplb_utils.h
+    expert_weight_buffer_shm.h
+    expert_buffer_manager.h
+  SRCS 
+    eplb_aggregator.cpp
+    eplb_executor.cpp
+    eplb_manager.cpp
+    eplb_options.cpp
+    eplb_policy.cpp
+    expert_weight_buffer_shm.cpp
+    expert_buffer_manager.cpp
+  DEPS
+    :request
+    :common
+    glog::glog
+    torch
+    :platform
+)

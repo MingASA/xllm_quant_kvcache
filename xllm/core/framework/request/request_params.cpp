@@ -1,0 +1,764 @@
+/* Copyright 2025-2026 The xLLM Authors.
+Copyright 2024 The ScaleLLM Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    https://github.com/xLLM-AI/xllm/blob/main/LICENSE
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#include "request_params.h"
+
+#include <type_traits>
+
+#include "core/common/global_flags.h"
+#include "core/common/instance_name.h"
+#include "core/framework/config/model_config.h"
+#include "core/framework/config/service_config.h"
+#include "core/util/uuid.h"
+#include "request.h"
+// Pulls in RequestSamplingParam and SchedulerParam definitions for the
+// projection helpers below.
+#include "request_state.h"
+
+namespace xllm {
+namespace {
+thread_local ShortUUID short_uuid;
+
+std::string generate_completion_request_id() {
+  return "cmpl-" + InstanceName::name()->get_name_hash() + "-" +
+         short_uuid.random();
+}
+
+std::string generate_embedding_request_id() {
+  return "embeddingcmpl-" + InstanceName::name()->get_name_hash() + "-" +
+         short_uuid.random();
+}
+
+std::string generate_chat_request_id() {
+  return "chatcmpl-" + InstanceName::name()->get_name_hash() + "-" +
+         short_uuid.random();
+}
+
+std::string generate_rerank_request_id() {
+  return "rerankcmpl-" + InstanceName::name()->get_name_hash() + "-" +
+         short_uuid.random();
+}
+
+std::string generate_anthropic_chat_request_id() {
+  return "anthropiccmpl-" + InstanceName::name()->get_name_hash() + "-" +
+         short_uuid.random();
+}
+
+void apply_beam_search_logprobs_default(
+    RequestParams& params,
+    bool probability_params_explicitly_set) {
+  if (params.beam_width > 1 && !probability_params_explicitly_set) {
+    params.logprobs = true;
+    params.top_logprobs = static_cast<int64_t>(params.beam_width);
+  }
+}
+
+nlohmann::json proto_struct_to_json(const google::protobuf::Struct& pb_struct);
+
+// Handle tool_choice conversion from Anthropic format to internal format
+std::string handle_tool_choice(
+    const proto::AnthropicMessagesRequest& rpc_request) {
+  if (!rpc_request.has_tool_choice()) {
+    // No tool_choice specified - use default "auto" if tools exist
+    if (rpc_request.tools_size() > 0) {
+      return "auto";
+    }
+    return "";
+  }
+
+  const auto& tool_choice = rpc_request.tool_choice();
+  const std::string& type = tool_choice.type();
+  if (type == "auto") {
+    return "auto";
+  } else if (type == "any") {
+    return "required";
+  } else if (type == "tool") {
+    // Specific tool - format as JSON for named tool choice
+    // Format: {"type": "function", "function": {"name": "<tool_name>"}}
+    if (tool_choice.has_name()) {
+      nlohmann::json tool_choice_json = {
+          {"type", "function"}, {"function", {{"name", tool_choice.name()}}}};
+      return tool_choice_json.dump();
+    } else {
+      // Fallback to auto if no name specified
+      return "auto";
+    }
+  } else {
+    // Unknown type - default to auto
+    return "auto";
+  }
+}
+
+// Build tools list from Anthropic request
+std::vector<JsonTool> handle_tools(
+    const proto::AnthropicMessagesRequest& request) {
+  std::vector<JsonTool> tools;
+
+  for (const auto& tool : request.tools()) {
+    JsonTool json_tool;
+    json_tool.type = "function";
+    json_tool.function.name = tool.name();
+    if (tool.has_description()) {
+      json_tool.function.description = tool.description();
+    }
+
+    // Convert input_schema to JSON
+    if (tool.has_input_schema()) {
+      json_tool.function.parameters = proto_struct_to_json(tool.input_schema());
+    } else {
+      json_tool.function.parameters = nlohmann::json::object();
+    }
+
+    tools.push_back(std::move(json_tool));
+  }
+
+  return tools;
+}
+
+}  // namespace
+
+RequestParams::RequestParams(const proto::CompletionRequest& request,
+                             const std::string& x_rid,
+                             const std::string& x_rtime) {
+  request_id = generate_completion_request_id();
+  x_request_id = x_rid;
+  x_request_time = x_rtime;
+  if (x_request_id.empty() && request.has_x_request_id()) {
+    x_request_id = request.x_request_id();
+  }
+  if (x_request_time.empty() && request.has_x_request_time()) {
+    x_request_time = request.x_request_time();
+  }
+  if (request.has_offline()) {
+    offline = request.offline();
+  }
+  if (request.has_ttlt_slo_ms()) {
+    ttlt_slo_ms = request.ttlt_slo_ms();
+  }
+  if (request.has_priority()) {
+    priority = static_cast<xllm::RequestPriority>(request.priority());
+  }
+
+  if (request.has_ttft_slo_ms()) {
+    ttft_slo_ms = request.ttft_slo_ms();
+  }
+  if (request.has_tpot_slo_ms()) {
+    tpot_slo_ms = request.tpot_slo_ms();
+  }
+  if (request.has_tpot_priority_weight()) {
+    tpot_priority_weight = request.tpot_priority_weight();
+  }
+  if (request.has_ttft_priority_weight()) {
+    ttft_priority_weight = request.ttft_priority_weight();
+  }
+  if (request.has_ttlt_priority_weight()) {
+    ttlt_priority_weight = request.ttlt_priority_weight();
+  }
+  if (request.has_priority_weight()) {
+    priority_weight = request.priority_weight();
+  }
+
+  if (request.has_service_request_id()) {
+    service_request_id = request.service_request_id();
+  }
+  if (request.has_source_xservice_addr()) {
+    source_xservice_addr = request.source_xservice_addr();
+  }
+  if (request.has_max_tokens()) {
+    max_tokens = request.max_tokens();
+  }
+  if (request.has_n()) {
+    n = request.n();
+  }
+  if (request.has_best_of()) {
+    best_of = request.best_of();
+  }
+  if (request.has_echo()) {
+    echo = request.echo();
+  }
+  if (request.has_frequency_penalty()) {
+    frequency_penalty = request.frequency_penalty();
+  }
+  if (request.has_presence_penalty()) {
+    presence_penalty = request.presence_penalty();
+  }
+  if (request.has_repetition_penalty()) {
+    repetition_penalty = request.repetition_penalty();
+  }
+  if (request.has_temperature()) {
+    temperature = request.temperature();
+  }
+  if (request.has_top_p()) {
+    top_p = request.top_p();
+  }
+  if (request.has_top_k()) {
+    top_k = request.top_k();
+  }
+  if (request.has_logprobs()) {
+    logprobs = true;
+    top_logprobs = request.logprobs();
+  }
+  if (request.has_skip_special_tokens()) {
+    skip_special_tokens = request.skip_special_tokens();
+  }
+  if (request.has_include_stop_str_in_output()) {
+    include_stop_str_in_output = request.include_stop_str_in_output();
+  }
+  if (request.has_ignore_eos()) {
+    ignore_eos = request.ignore_eos();
+  }
+  if (request.stop_size() > 0) {
+    stop =
+        std::vector<std::string>(request.stop().begin(), request.stop().end());
+  }
+  if (request.stop_token_ids_size() > 0) {
+    stop_token_ids = std::vector<int32_t>(request.stop_token_ids().begin(),
+                                          request.stop_token_ids().end());
+  }
+  if (request.has_stream()) {
+    const size_t best_of_value = best_of.value_or(n);
+    if (request.stream() && best_of_value == n) {
+      streaming = true;
+    } else {
+      streaming = false;
+    }
+  }
+  // beam search
+  if (request.has_beam_width()) {
+    beam_width = request.beam_width();
+  }
+  if (request.has_num_return_sequences()) {
+    num_return_sequences = request.num_return_sequences();
+  }
+  apply_beam_search_logprobs_default(
+      *this, /*probability_params_explicitly_set=*/request.has_logprobs());
+  if (request.has_add_special_tokens()) {
+    add_special_tokens = request.add_special_tokens();
+  } else {
+    add_special_tokens = true;
+  }
+}
+
+namespace {
+
+nlohmann::json proto_value_to_json(const google::protobuf::Value& pb_value);
+
+nlohmann::json proto_struct_to_json(const google::protobuf::Struct& pb_struct) {
+  nlohmann::json result = nlohmann::json::object();
+
+  for (const auto& field : pb_struct.fields()) {
+    result[field.first] = proto_value_to_json(field.second);
+  }
+
+  return result;
+}
+
+nlohmann::json proto_value_to_json(const google::protobuf::Value& pb_value) {
+  switch (pb_value.kind_case()) {
+    case google::protobuf::Value::kNullValue:
+      return nlohmann::json(nullptr);
+
+    case google::protobuf::Value::kNumberValue:
+      return nlohmann::json(pb_value.number_value());
+
+    case google::protobuf::Value::kStringValue:
+      return nlohmann::json(pb_value.string_value());
+
+    case google::protobuf::Value::kBoolValue:
+      return nlohmann::json(pb_value.bool_value());
+
+    case google::protobuf::Value::kStructValue:
+      return proto_struct_to_json(pb_value.struct_value());
+
+    case google::protobuf::Value::kListValue: {
+      nlohmann::json array = nlohmann::json::array();
+      const auto& list = pb_value.list_value();
+      for (const auto& item : list.values()) {
+        array.push_back(proto_value_to_json(item));
+      }
+      return array;
+    }
+
+    case google::protobuf::Value::KIND_NOT_SET:
+    default:
+      return nlohmann::json(nullptr);
+  }
+}
+
+std::vector<xllm::JsonTool> parse_tools_from_proto(
+    const google::protobuf::RepeatedPtrField<proto::Tool>& proto_tools) {
+  std::vector<xllm::JsonTool> tools;
+  tools.clear();
+  tools.reserve(proto_tools.size());
+
+  for (const auto& proto_tool : proto_tools) {
+    xllm::JsonTool json_tool;
+    json_tool.type = proto_tool.type();
+
+    const auto& proto_function = proto_tool.function();
+    json_tool.function.name = proto_function.name();
+    json_tool.function.description = proto_function.description();
+
+    if (proto_function.has_parameters()) {
+      json_tool.function.parameters =
+          proto_struct_to_json(proto_function.parameters());
+    } else {
+      json_tool.function.parameters = nlohmann::json::object();
+    }
+
+    tools.emplace_back(std::move(json_tool));
+  }
+  return tools;
+}
+
+template <typename ChatRequest>
+void init_from_chat_request(RequestParams& params, const ChatRequest& request) {
+  if constexpr (std::is_same_v<ChatRequest, proto::ChatRequest>) {
+    if (request.has_response_format()) {
+      const std::string& type = request.response_format().type();
+      if (type == "json_object") {
+        if (ServiceConfig::get_instance().enable_json_object_output()) {
+          params.response_format = ResponseFormatType::JSON_OBJECT;
+        }
+      } else {
+        params.response_format_error =
+            "Unsupported response_format.type: " + type +
+            "; only json_object is supported";
+      }
+    }
+  }
+  if (request.has_request_id()) {
+    params.request_id = request.request_id();
+  }
+
+  if (request.has_offline()) {
+    params.offline = request.offline();
+  }
+  if (request.has_ttlt_slo_ms()) {
+    params.ttlt_slo_ms = request.ttlt_slo_ms();
+  }
+  if (request.has_priority()) {
+    params.priority = static_cast<xllm::RequestPriority>(request.priority());
+  }
+
+  if (request.has_ttft_slo_ms()) {
+    params.ttft_slo_ms = request.ttft_slo_ms();
+  }
+  if (request.has_tpot_slo_ms()) {
+    params.tpot_slo_ms = request.tpot_slo_ms();
+  }
+  if (request.has_tpot_priority_weight()) {
+    params.tpot_priority_weight = request.tpot_priority_weight();
+  }
+  if (request.has_ttft_priority_weight()) {
+    params.ttft_priority_weight = request.ttft_priority_weight();
+  }
+  if (request.has_ttlt_priority_weight()) {
+    params.ttlt_priority_weight = request.ttlt_priority_weight();
+  }
+  if (request.has_priority_weight()) {
+    params.priority_weight = request.priority_weight();
+  }
+
+  if (request.has_service_request_id()) {
+    params.service_request_id = request.service_request_id();
+  }
+  if (request.has_source_xservice_addr()) {
+    params.source_xservice_addr = request.source_xservice_addr();
+  }
+  if (request.has_max_tokens()) {
+    params.max_tokens = request.max_tokens();
+  }
+  if (request.has_n()) {
+    params.n = request.n();
+  }
+  if (request.has_best_of()) {
+    params.best_of = request.best_of();
+  }
+  if (request.has_frequency_penalty()) {
+    params.frequency_penalty = request.frequency_penalty();
+  }
+  if (request.has_presence_penalty()) {
+    params.presence_penalty = request.presence_penalty();
+  }
+  if (request.has_repetition_penalty()) {
+    params.repetition_penalty = request.repetition_penalty();
+  }
+  if (request.has_temperature()) {
+    params.temperature = request.temperature();
+  }
+  if (request.has_top_p()) {
+    params.top_p = request.top_p();
+  }
+  if (request.has_top_k()) {
+    params.top_k = request.top_k();
+  }
+  if (request.has_logprobs()) {
+    params.logprobs = request.logprobs();
+  }
+  if (request.has_top_logprobs()) {
+    params.top_logprobs = request.top_logprobs();
+  }
+  if (request.has_skip_special_tokens()) {
+    params.skip_special_tokens = request.skip_special_tokens();
+  }
+  if (request.has_include_stop_str_in_output()) {
+    params.include_stop_str_in_output = request.include_stop_str_in_output();
+  }
+  if (request.has_ignore_eos()) {
+    params.ignore_eos = request.ignore_eos();
+  }
+  if (request.stop_size() > 0) {
+    params.stop =
+        std::vector<std::string>(request.stop().begin(), request.stop().end());
+  }
+  if (request.stop_token_ids_size() > 0) {
+    params.stop_token_ids = std::vector<int32_t>(
+        request.stop_token_ids().begin(), request.stop_token_ids().end());
+  }
+  if (request.has_stream()) {
+    const size_t best_of_value = params.best_of.value_or(params.n);
+    if (request.stream() && best_of_value == params.n) {
+      params.streaming = true;
+    } else {
+      params.streaming = false;
+    }
+  }
+
+  // Parse tools from proto request
+  if (request.tools_size() > 0) {
+    if (request.has_tool_choice() && request.tool_choice() == "none") {
+      // Don't pass tools to model when tool_choice is none
+      params.tool_choice = "none";
+    } else {
+      params.tools = parse_tools_from_proto(request.tools());
+      params.tool_choice =
+          request.has_tool_choice() ? request.tool_choice() : "auto";
+    }
+  }
+
+  // beam search
+  if (request.has_beam_width()) {
+    params.beam_width = request.beam_width();
+  }
+  if (request.has_num_return_sequences()) {
+    params.num_return_sequences = request.num_return_sequences();
+  }
+  apply_beam_search_logprobs_default(
+      params,
+      /*probability_params_explicitly_set=*/
+      request.has_logprobs() || request.has_top_logprobs());
+
+  if (request.has_add_special_tokens()) {
+    params.add_special_tokens = request.add_special_tokens();
+  } else {
+    params.add_special_tokens = false;
+  }
+
+  if (request.has_chat_template_kwargs()) {
+    params.chat_template_kwargs =
+        proto_struct_to_json(request.chat_template_kwargs());
+  }
+}
+}  // namespace
+
+RequestParams::RequestParams(const proto::ChatRequest& request,
+                             const std::string& x_rid,
+                             const std::string& x_rtime) {
+  request_id = generate_chat_request_id();
+  x_request_id = x_rid;
+  x_request_time = x_rtime;
+  if (x_request_id.empty() && request.has_x_request_id()) {
+    x_request_id = request.x_request_id();
+  }
+  if (x_request_time.empty() && request.has_x_request_time()) {
+    x_request_time = request.x_request_time();
+  }
+
+  init_from_chat_request(*this, request);
+}
+
+RequestParams::RequestParams(const proto::MMChatRequest& request,
+                             const std::string& x_rid,
+                             const std::string& x_rtime) {
+  request_id = generate_chat_request_id();
+  x_request_id = x_rid;
+  x_request_time = x_rtime;
+
+  init_from_chat_request(*this, request);
+}
+
+RequestParams::RequestParams(const proto::EmbeddingRequest& request,
+                             const std::string& x_rid,
+                             const std::string& x_rtime) {
+  request_id = generate_embedding_request_id();
+  if (request.has_service_request_id()) {
+    service_request_id = request.service_request_id();
+  }
+  if (request.has_add_special_tokens()) {
+    add_special_tokens = request.add_special_tokens();
+  } else {
+    add_special_tokens = true;
+  }
+  x_request_id = x_rid;
+  x_request_time = x_rtime;
+  is_embeddings = true;
+  max_tokens = 1;
+  streaming = false;
+}
+RequestParams::RequestParams(const proto::MMEmbeddingRequest& request,
+                             const std::string& x_rid,
+                             const std::string& x_rtime) {
+  if (request.has_service_request_id()) {
+    service_request_id = request.service_request_id();
+  }
+  x_request_id = x_rid;
+  x_request_time = x_rtime;
+  is_embeddings = true;
+  max_tokens = 1;
+  streaming = false;
+}
+
+RequestParams::RequestParams(const proto::RerankRequest& request,
+                             const std::string& x_rid,
+                             const std::string& x_rtime) {
+  request_id = generate_rerank_request_id();
+  if (request.has_service_request_id()) {
+    service_request_id = request.service_request_id();
+  }
+  x_request_id = x_rid;
+  x_request_time = x_rtime;
+  max_tokens = 1;
+  streaming = false;
+  if (::xllm::ModelConfig::get_instance().enable_qwen3_reranker()) {
+    logprobs = true;
+  } else {
+    is_embeddings = true;
+  }
+}
+
+RequestParams::RequestParams(const proto::AnthropicMessagesRequest& request,
+                             const std::string& x_rid,
+                             const std::string& x_rtime) {
+  request_id = generate_anthropic_chat_request_id();
+  x_request_id = x_rid;
+  x_request_time = x_rtime;
+  if (x_request_id.empty() && request.has_x_request_id()) {
+    x_request_id = request.x_request_id();
+  }
+  if (x_request_time.empty() && request.has_x_request_time()) {
+    x_request_time = request.x_request_time();
+  }
+
+  if (request.has_service_request_id()) {
+    service_request_id = request.service_request_id();
+  }
+  if (request.has_source_xservice_addr()) {
+    source_xservice_addr = request.source_xservice_addr();
+  }
+  max_tokens = static_cast<uint32_t>(request.max_tokens());
+  if (request.has_stream()) {
+    streaming = request.stream();
+  }
+  if (request.has_temperature()) {
+    temperature = request.temperature();
+  }
+  if (request.has_top_p()) {
+    top_p = request.top_p();
+  }
+  if (request.has_top_k()) {
+    top_k = request.top_k();
+  }
+  if (request.stop_sequences_size() > 0) {
+    stop = std::vector<std::string>(request.stop_sequences().begin(),
+                                    request.stop_sequences().end());
+  }
+  if (request.has_ignore_eos()) {
+    ignore_eos = request.ignore_eos();
+  }
+  tool_choice = std::move(handle_tool_choice(request));
+  tools = std::move(handle_tools(request));
+}
+
+bool RequestParams::verify_params(OutputCallback callback) const {
+  if (!response_format_error.empty()) {
+    CALLBACK_WITH_ERROR(StatusCode::INVALID_ARGUMENT,
+                        response_format_error,
+                        service_request_id,
+                        source_xservice_addr);
+    return false;
+  }
+  if (n == 0) {
+    CALLBACK_WITH_ERROR(StatusCode::INVALID_ARGUMENT,
+                        "n should be greater than 0",
+                        service_request_id,
+                        source_xservice_addr);
+    return false;
+  }
+  if (best_of.has_value()) {
+    if (n > best_of.value()) {
+      CALLBACK_WITH_ERROR(StatusCode::INVALID_ARGUMENT,
+                          "n should be less than or equal to best_of",
+                          service_request_id,
+                          source_xservice_addr);
+      return false;
+    }
+  }
+
+  // up to 4 stop sequences
+  if (stop.has_value() && stop.value().size() > 4) {
+    CALLBACK_WITH_ERROR(StatusCode::INVALID_ARGUMENT,
+                        "stop size is too large",
+                        service_request_id,
+                        source_xservice_addr);
+    return false;
+  }
+
+  // temperature between [0.0, 2.0]
+  if (temperature < 0.0 || temperature > 2.0) {
+    CALLBACK_WITH_ERROR(StatusCode::INVALID_ARGUMENT,
+                        "temperature must be between 0.0 and 2.0",
+                        service_request_id,
+                        source_xservice_addr);
+    return false;
+  }
+
+  // top_p between [0.0, 1.0]
+  if (top_p < 0.0 || top_p > 1.0) {
+    CALLBACK_WITH_ERROR(StatusCode::INVALID_ARGUMENT,
+                        "top_p must be between 0.0 and 1.0",
+                        service_request_id,
+                        source_xservice_addr);
+    return false;
+  }
+
+  if (num_return_sequences > 0) {
+    if (beam_width <= 0) {
+      CALLBACK_WITH_ERROR(StatusCode::INVALID_ARGUMENT,
+                          "num_return_sequences requires beam_width > 0",
+                          service_request_id,
+                          source_xservice_addr);
+      return false;
+    }
+    if (num_return_sequences < beam_width) {
+      CALLBACK_WITH_ERROR(
+          StatusCode::INVALID_ARGUMENT,
+          "num_return_sequences must be greater than or equal to beam_width",
+          service_request_id,
+          source_xservice_addr);
+      return false;
+    }
+  }
+
+  if (logprobs && echo) {
+    CALLBACK_WITH_ERROR(StatusCode::INVALID_ARGUMENT,
+                        "logprobs is not supported with echo",
+                        service_request_id,
+                        source_xservice_addr);
+    return false;
+  }
+
+  // top_logprobs becomes the k of torch::topk() whenever logprobs are in
+  // effect. Beam search forces logprobs on downstream
+  // (RequestSamplingParam::enable_beam_search), so a beam request with
+  // logprobs=false must be validated too; otherwise an oversized count would
+  // only surface as a throw inside the sampler at execution time. The raw field
+  // is checked first so that a negative count is reported as a client error
+  // rather than silently repaired by the beam normalization.
+  if (logprobs || beam_width > 1) {
+    if (top_logprobs < 0 || top_logprobs > 2000) {
+      CALLBACK_WITH_ERROR(StatusCode::INVALID_ARGUMENT,
+                          "logprobs must be between 0 and 2000",
+                          service_request_id,
+                          source_xservice_addr);
+      return false;
+    }
+    // Beam search raises top_logprobs to at least beam_width, so also validate
+    // the value that will actually be used. Derive it through the same helper
+    // so the rule is not duplicated here.
+    RequestSamplingParam effective;
+    effective.logprobs = logprobs;
+    effective.top_logprobs = top_logprobs;
+    effective.enable_beam_search(beam_width);
+    if (effective.top_logprobs > 2000) {
+      CALLBACK_WITH_ERROR(StatusCode::INVALID_ARGUMENT,
+                          "beam_width must be at most 2000 (it sets the "
+                          "top_logprobs used for beam expansion)",
+                          service_request_id,
+                          source_xservice_addr);
+      return false;
+    }
+  }
+
+  // presence_penalty between [-2.0, 2.0]
+  if (presence_penalty < -2.0 || presence_penalty > 2.0) {
+    CALLBACK_WITH_ERROR(StatusCode::INVALID_ARGUMENT,
+                        "presence_penalty must be between -2.0 and 2.0",
+                        service_request_id,
+                        source_xservice_addr);
+    return false;
+  }
+
+  // frequency_penalty between [0.0, 2.0]
+  if (frequency_penalty < 0.0 || frequency_penalty > 2.0) {
+    CALLBACK_WITH_ERROR(StatusCode::INVALID_ARGUMENT,
+                        "frequency_penalty must be between 0.0 and 2.0",
+                        service_request_id,
+                        source_xservice_addr);
+    return false;
+  }
+  return true;
+}
+
+RequestSamplingParam RequestParams::to_sampling_param(size_t best_of) const {
+  RequestSamplingParam sampling_param;
+  sampling_param.frequency_penalty = frequency_penalty;
+  sampling_param.presence_penalty = presence_penalty;
+  sampling_param.repetition_penalty = repetition_penalty;
+  sampling_param.temperature = temperature;
+  sampling_param.top_p = top_p;
+  sampling_param.top_k = top_k;
+  sampling_param.logprobs = logprobs;
+  sampling_param.top_logprobs = top_logprobs;
+  sampling_param.is_embeddings = is_embeddings;
+  if (best_of > n) {
+    // enable logprobs for best_of to generate sequence logprob
+    sampling_param.logprobs = true;
+  }
+  // Beam-search fields (beam_width / num_return_sequences) are intentionally
+  // NOT mapped here: they are model-specific. LLM copies beam_width and then
+  // normalizes logprobs/top_logprobs for beam expansion, REC copies both
+  // fields, and VLM omits them entirely. Each factory layers them on as needed.
+  return sampling_param;
+}
+
+SchedulerParam RequestParams::to_scheduler_param() const {
+  SchedulerParam scheduler_param;
+  scheduler_param.offline = offline;
+  scheduler_param.priority = priority;
+  if (!offline) {
+    scheduler_param.ttft_slo_ms = ttft_slo_ms;
+    scheduler_param.tpot_slo_ms = tpot_slo_ms;
+    scheduler_param.ttlt_slo_ms = ttlt_slo_ms;
+    scheduler_param.tpot_priority_weight = tpot_priority_weight;
+    scheduler_param.ttft_priority_weight = ttft_priority_weight;
+    scheduler_param.ttlt_priority_weight = ttlt_priority_weight;
+    scheduler_param.priority_weight = priority_weight;
+  }
+  return scheduler_param;
+}
+
+}  // namespace xllm

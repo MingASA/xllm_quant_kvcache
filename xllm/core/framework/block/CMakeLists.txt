@@ -1,0 +1,53 @@
+include(cc_binary)
+include(cc_library)
+
+cc_library(
+  NAME
+    block_utils
+  HDRS
+    block_utils.h
+  SRCS
+    block_utils.cpp
+  DEPS
+    glog::glog
+)
+
+cc_library(
+  NAME
+    block
+  HDRS
+    block.h
+    block_manager.h
+    embedding_block_manager.h
+    block_manager_pool.h
+    linear_state_block_manager.h
+    block_manager_impl.h
+    concurrent_block_manager_impl.h
+    hierarchy_block_manager_pool.h
+    sliding_window_block_manager.h
+    composite_block_manager.h
+  SRCS
+    block.cpp
+    embedding_block_manager.cpp
+    block_manager_pool.cpp
+    linear_state_block_manager.cpp
+    concurrent_block_manager_impl.cpp
+    block_manager_impl.cpp
+    hierarchy_block_manager_pool.cpp
+    sliding_window_block_manager.cpp
+    composite_block_manager.cpp
+  DEPS
+    :block_utils
+    $<$<BOOL:${USE_NPU}>:torch_npu>
+    $<$<BOOL:${USE_NPU}>:graph>
+    :request
+    :common
+    :prefix_cache
+    :kv_transfer_completion
+    glog::glog
+    Boost::serialization
+    SMHasherSupport
+    torch
+    :xtensor
+)
+target_link_libraries(block PRIVATE Folly::folly)
