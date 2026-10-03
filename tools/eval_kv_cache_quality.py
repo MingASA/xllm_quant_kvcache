@@ -418,8 +418,9 @@ def _load_server_manifest(path: Path, arm: str, model: str, tokenizer_path: Path
         raise ValueError(
             "server manifest server_started must be true after successful startup and readiness verification"
         )
+    quality_modes = {"v-only-int4": "v_only_int4", "int4-rht-g32": "int4_rht_g32"}
     expected_impl = "native" if arm == "native-bf16" else "python"
-    expected_kv = "bf16" if arm == "native-bf16" else arm
+    expected_kv = "bf16" if arm == "native-bf16" else "auto" if arm in quality_modes else arm
     required = (
         "model_impl",
         "graph_mode",
@@ -443,6 +444,11 @@ def _load_server_manifest(path: Path, arm: str, model: str, tokenizer_path: Path
         raise ValueError("quality comparison requires graph_mode off")
     if manifest["kv_cache_mode"] != expected_kv:
         raise ValueError(f"{arm} manifest kv_cache_mode must be {expected_kv!r}")
+    expected_quality_mode = quality_modes.get(arm)
+    if expected_quality_mode is not None and manifest.get("quality_transform_mode") != expected_quality_mode:
+        raise ValueError(f"{arm} manifest quality_transform_mode must be {expected_quality_mode!r}")
+    if expected_quality_mode is None and manifest.get("quality_transform_mode", "none") not in ("none", ""):
+        raise ValueError(f"{arm} manifest must not enable a quality transform")
     if Path(manifest["checkpoint_path"]).resolve() != tokenizer_path.resolve():
         raise ValueError("server manifest checkpoint_path must resolve to the local tokenizer/checkpoint path")
     if manifest["model"] != model:
@@ -475,7 +481,7 @@ def main() -> None:
     parser.add_argument("--model", help="Identical served model id for both API endpoints.")
     parser.add_argument(
         "--arm",
-        choices=("auto", "int8", "int4", "native-bf16"),
+        choices=("auto", "int8", "int4", "native-bf16", "v-only-int4", "int4-rht-g32"),
         help="Run one endpoint then stop its server.",
     )
     parser.add_argument("--url", help="The selected arm's local xLLM API base URL, ending in /v1.")
@@ -596,7 +602,8 @@ def main() -> None:
         "model": args.model,
         "arm": arm,
         "endpoint": args.url,
-        "model_impl": "python" if arm in {"auto", "int8", "int4"} else "native",
+        "model_impl": "python" if arm != "native-bf16" else "native",
+        "quality_transform_mode": server_manifest.get("quality_transform_mode", "none"),
         "tokenizer": str(args.tokenizer.resolve()),
         "sampling": {"temperature": 0, "top_p": 1, "seed": args.seed},
         "generation": {

@@ -77,6 +77,7 @@ class FlashInferBackend(AttentionBackend):
         sliding_window: int,
         device: torch.device,
         dtype: torch.dtype,
+        quality_mode: str = "none",
     ) -> None:
         self.num_heads = num_heads
         self.num_kv_heads = num_kv_heads
@@ -84,6 +85,11 @@ class FlashInferBackend(AttentionBackend):
         self.scale = scale
         self.sliding_window = sliding_window
         self.dtype = dtype
+        self._quality_transform = None
+        if quality_mode != "none":
+            from xllm.python.attention.kv_quality_transform import KVQualityTransform
+
+            self._quality_transform = KVQualityTransform(quality_mode, head_dim, device, dtype)
         self._decode_use_tensor_cores = _should_use_tensor_core_decode(dtype, num_heads, num_kv_heads)
 
         self._decode_workspace = torch.empty(_WORKSPACE_SIZE, dtype=torch.uint8, device=device)
@@ -290,6 +296,9 @@ class FlashInferBackend(AttentionBackend):
         q_3d = q.view(-1, layer.num_heads, layer.head_dim)
         k_3d = _pack_head_axes(k.view(-1, layer.num_kv_heads, layer.head_dim))
         v_3d = _pack_head_axes(v.view(-1, layer.num_kv_heads, layer.head_dim))
+
+        if self._quality_transform is not None:
+            k_3d, v_3d = self._quality_transform.apply(k_3d, v_3d)
 
         _get_runtime_kernels().reshape_paged_cache(metadata.slot_mapping, k_3d, v_3d, k_cache, v_cache)
         return self.execute_attention(q_3d, layer, k_3d, v_3d)

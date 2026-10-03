@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+import os
+
 import torch
 import torch.nn as nn
 
@@ -75,6 +77,19 @@ def _create_attention_backend(
     max_num_reqs: int = 1,
 ) -> AttentionBackend:
     config = config or {}
+    quality_mode = os.environ.get("XLLM_KV_QUALITY_MODE", "none")
+    if quality_mode != "none":
+        if quality_mode not in ("v_only_int4", "int4_rht_g32"):
+            raise ValueError(f"Unknown XLLM_KV_QUALITY_MODE: {quality_mode}")
+        if (
+            not current_platform.is_cuda()
+            or config.get("kv_cache_dtype", "auto") != "auto"
+            or _resolve_graph_backend(config) not in ("", "off", "none", "0")
+            or config.get("enable_graph", False)
+            or config.get("enable_mla", False)
+            or config.get("model_type", "") not in ("qwen2", "qwen2.5")
+        ):
+            raise ValueError("KV quality mode requires Qwen2 CUDA eager with the uncompressed auto cache")
     model_type = config.get("model_type", "")
     cache_dtype = config.get("kv_cache_dtype", "auto")
     if cache_dtype != "auto":
@@ -160,6 +175,7 @@ def _create_attention_backend(
             sliding_window=first_attention.sliding_window,
             device=device,
             dtype=dtype,
+            quality_mode=quality_mode,
         )
     raise NotImplementedError(f"No attention backend available for device type '{device.type}'")
 

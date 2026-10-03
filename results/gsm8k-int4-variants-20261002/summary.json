@@ -1,0 +1,141 @@
+{
+  "date": "2026-10-02",
+  "model": "Qwen2.5-1.5B-Instruct",
+  "model_checkpoint_sha256": "dd924a11b4c220f385b51ffa522daea7c9f3d850e31b162bb5661df483c6d3ee",
+  "data_path": "/mnt/e/AI/xllm-eval-data/int4-model-eval-20261002/gsm8k/data.jsonl",
+  "data_sha256": "93377ddca91b89cfa35e987104ee7b420a1b17d42b91351b70993d57d0159cac",
+  "gsm8k_shots_path": "/mnt/e/AI/xllm-eval-data/gsm8k-3101c7d5072418e28b9008a6636bde82a006892c/prepared/five_train_examples.json",
+  "gsm8k_shots_sha256": "4e076bef9962698cf3df4701f093437c86c925dcfa987556ea4fdb0fbd93a3ce",
+  "sampling": {
+    "temperature": 0,
+    "top_p": 1,
+    "seed": 17,
+    "max_tokens": 512,
+    "stop_strings": [
+      "Question:",
+      "</s>",
+      "<|im_end|>"
+    ],
+    "stop_token_ids": "server/model default [151645]; prior first-50 comparison had additionally passed [151643]"
+  },
+  "execution": {
+    "model_impl": "python",
+    "backend": "FlashInfer eager",
+    "kv_cache_mode": "auto",
+    "persistent_cache_dtype": "bfloat16",
+    "max_seqs_per_batch": 64,
+    "request_concurrency": 64,
+    "max_memory_utilization": 0.87,
+    "max_cache_size": 0,
+    "max_tokens_per_batch": 4096,
+    "graphs": "off"
+  },
+  "arms": {
+    "auto": {
+      "result_path": "/mnt/e/AI/xllm-eval-data/gsm8k-int4-variants-20261002/auto/full/auto.jsonl",
+      "config_path": "/mnt/e/AI/xllm-eval-data/gsm8k-int4-variants-20261002/auto/full/auto.config.json",
+      "manifest_path": "/mnt/e/AI/xllm-eval-data/gsm8k-int4-variants-20261002/auto/server_manifest.json",
+      "manifest_sha256": "d5c13be8809dbdf0e4a803f80925564713173ab5fd2cc165cbac385735b4fd3c",
+      "rows": 1319,
+      "strict_correct": 578,
+      "flexible_correct": 853,
+      "finish_reason_length": 15,
+      "finish_reason_length_rate": 0.011372251705837756,
+      "completion_tokens": 204105,
+      "client_wall_seconds_minstart_maxfinish": 84.90832,
+      "requests_per_second": 15.534402282367617,
+      "generated_tokens_per_second": 2403.8280347556047,
+      "completion_latency_sum_seconds": 4950.285406631869,
+      "request_concurrency": 64,
+      "max_seqs_per_batch": 64,
+      "stop_token_ids": null,
+      "stop_strings": [
+        "Question:",
+        "</s>",
+        "<|im_end|>"
+      ],
+      "quality_transform_mode": "none",
+      "persistent_cache_dtype": "bfloat16"
+    },
+    "v-only-int4": {
+      "result_path": "/mnt/e/AI/xllm-eval-data/gsm8k-int4-variants-20261002/v-only-int4/full/v-only-int4.jsonl",
+      "config_path": "/mnt/e/AI/xllm-eval-data/gsm8k-int4-variants-20261002/v-only-int4/full/v-only-int4.config.json",
+      "manifest_path": "/mnt/e/AI/xllm-eval-data/gsm8k-int4-variants-20261002/v-only-int4/server_manifest.json",
+      "manifest_sha256": "6ce9fe27754d18274a6575a40687e3e710634ecccfea96dc5a401bd87fe406e6",
+      "rows": 1319,
+      "strict_correct": 543,
+      "flexible_correct": 853,
+      "finish_reason_length": 18,
+      "finish_reason_length_rate": 0.013646702047005308,
+      "completion_tokens": 201437,
+      "client_wall_seconds_minstart_maxfinish": 90.330514,
+      "requests_per_second": 14.601931745899288,
+      "generated_tokens_per_second": 2229.999488323514,
+      "completion_latency_sum_seconds": 5255.747399470049,
+      "request_concurrency": 64,
+      "max_seqs_per_batch": 64,
+      "stop_token_ids": null,
+      "stop_strings": [
+        "Question:",
+        "</s>",
+        "<|im_end|>"
+      ],
+      "quality_transform_mode": "v_only_int4",
+      "persistent_cache_dtype": "bfloat16",
+      "paired": {
+        "strict": {
+          "candidate_only_correct": 108,
+          "auto_only_correct": 143,
+          "same_correctness": 1068,
+          "source_record_and_prompt_hashes_identical": true
+        },
+        "flexible": {
+          "candidate_only_correct": 103,
+          "auto_only_correct": 103,
+          "same_correctness": 1113,
+          "source_record_and_prompt_hashes_identical": true
+        }
+      }
+    },
+    "int4-rht-g32": {
+      "result_path": "/mnt/e/AI/xllm-eval-data/gsm8k-int4-variants-20261002/int4-rht-g32/full/int4-rht-g32.jsonl",
+      "config_path": "/mnt/e/AI/xllm-eval-data/gsm8k-int4-variants-20261002/int4-rht-g32/full/int4-rht-g32.config.json",
+      "manifest_path": "/mnt/e/AI/xllm-eval-data/gsm8k-int4-variants-20261002/int4-rht-g32/server_manifest.json",
+      "manifest_sha256": "0fa665a88de4b412ccd782241888df4a436a47eb22f6f3f742ea9fe811e08c44",
+      "rows": 1319,
+      "strict_correct": 0,
+      "flexible_correct": 5,
+      "finish_reason_length": 1318,
+      "finish_reason_length_rate": 0.9992418498862775,
+      "completion_tokens": 675185,
+      "client_wall_seconds_minstart_maxfinish": 295.567139,
+      "requests_per_second": 4.462607055921734,
+      "generated_tokens_per_second": 2284.3709970072146,
+      "completion_latency_sum_seconds": 18480.110200139832,
+      "request_concurrency": 64,
+      "max_seqs_per_batch": 64,
+      "stop_token_ids": null,
+      "stop_strings": [
+        "Question:",
+        "</s>",
+        "<|im_end|>"
+      ],
+      "quality_transform_mode": "int4_rht_g32",
+      "persistent_cache_dtype": "bfloat16",
+      "paired": {
+        "strict": {
+          "candidate_only_correct": 0,
+          "auto_only_correct": 578,
+          "same_correctness": 741,
+          "source_record_and_prompt_hashes_identical": true
+        },
+        "flexible": {
+          "candidate_only_correct": 1,
+          "auto_only_correct": 849,
+          "same_correctness": 469,
+          "source_record_and_prompt_hashes_identical": true
+        }
+      }
+    }
+  }
+}
