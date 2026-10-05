@@ -1,0 +1,459 @@
+[
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/fp8-kv-quality-ablation-gsm8k-20261005/arms/auto/server.log",
+    "bytes": 575328,
+    "sha256": "cd7f1b93a02d1f58b8c5199c59109b76bfbb37f12f6bafef11b874fb7e8d1cf1",
+    "backend_scale_excerpt": [
+      "I20261005 02:27:12.718770 11227 master.cpp:368] ▄█▀ ▄ █▄▄▄▄ █▄▄▄▄ █     █  backend llm",
+      "I20261005 02:27:12.719261 11227 master.cpp:472] Master init options: Options: [model_path: /mnt/e/AI/models/Qwen2.5-1.5B-Instruct, draft_model_path: , backend: llm, limit_image_per_prompt: 8, block_size: 128, max_cache_size: 0, max_memory_utilization: 0.87, enable_prefix_cache: 1, max_encoder_cache_size: 0, max_process",
+      "I20261005 02:27:14.426419 11227 llm_engine.cpp:267] Block info, block_size: 128, n_local_kv_heads: 2, head_dim: 128, n_layers: 28, dtype: BFloat16, kv_cache_dtype: auto",
+      "I20261005 02:27:15.083179 11227 llm_engine.cpp:293] Initializing model with ModelArgs: [model_type: qwen2, encoder_embedding_mode: 0, embedding_mode: 0, dtype: bfloat16, hidden_size: 1536, hidden_act: silu, intermediate_size: 8960, moe_intermediate_size: 0, n_routed_experts: 0, n_activated_experts: 0, num_experts_per_t",
+      "I20261005 02:27:44.302479 11227 llm_engine.cpp:561] kv cache capacity: 8.82 GB, blocks: 2580, slot_size: 1024, index_slot_size: 0, indexer_layers: 0, scale_slot_size: 0, linear_slot_size: 0, linear_blocks: 2, linear_state_slots: 0, max_linear_state_cache_slots: 0, reserved_linear_bytes: 0.00 B, n_layers: 28, kv_cache_d"
+    ]
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/fp8-kv-quality-ablation-gsm8k-20261005/arms/k-only-fp8/server.log",
+    "bytes": 576320,
+    "sha256": "1a0c85585bf060d7b34191989e52396628f65e8710101e5b10ee05e9d54aa886",
+    "backend_scale_excerpt": [
+      "I20261005 02:29:53.136528 11525 master.cpp:368] ▄█▀ ▄ █▄▄▄▄ █▄▄▄▄ █     █  backend llm",
+      "I20261005 02:29:53.137333 11525 master.cpp:472] Master init options: Options: [model_path: /mnt/e/AI/models/Qwen2.5-1.5B-Instruct, draft_model_path: , backend: llm, limit_image_per_prompt: 8, block_size: 128, max_cache_size: 0, max_memory_utilization: 0.87, enable_prefix_cache: 1, max_encoder_cache_size: 0, max_process",
+      "I20261005 02:29:54.849385 11525 llm_engine.cpp:267] Block info, block_size: 128, n_local_kv_heads: 2, head_dim: 128, n_layers: 28, dtype: BFloat16, kv_cache_dtype: auto",
+      "I20261005 02:29:55.499783 11525 llm_engine.cpp:293] Initializing model with ModelArgs: [model_type: qwen2, encoder_embedding_mode: 0, embedding_mode: 0, dtype: bfloat16, hidden_size: 1536, hidden_act: silu, intermediate_size: 8960, moe_intermediate_size: 0, n_routed_experts: 0, n_activated_experts: 0, num_experts_per_t",
+      "W20261005 02:29:59.481660 11525 kv_quality_transform.py:103] FP8 quality transform: format=E4M3 scale=1.0 selected_side=k_only_fp8",
+      "I20261005 02:30:25.000970 11525 llm_engine.cpp:561] kv cache capacity: 8.82 GB, blocks: 2580, slot_size: 1024, index_slot_size: 0, indexer_layers: 0, scale_slot_size: 0, linear_slot_size: 0, linear_blocks: 2, linear_state_slots: 0, max_linear_state_cache_slots: 0, reserved_linear_bytes: 0.00 B, n_layers: 28, kv_cache_d"
+    ]
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/fp8-kv-quality-ablation-gsm8k-20261005/arms/v-only-fp8/server.log",
+    "bytes": 575654,
+    "sha256": "ba057daffc741a2b02b0ee8c1f28b8faa1797fb817657f6ee2db130985babc61",
+    "backend_scale_excerpt": [
+      "I20261005 02:33:03.590006 11849 master.cpp:368] ▄█▀ ▄ █▄▄▄▄ █▄▄▄▄ █     █  backend llm",
+      "I20261005 02:33:03.590572 11849 master.cpp:472] Master init options: Options: [model_path: /mnt/e/AI/models/Qwen2.5-1.5B-Instruct, draft_model_path: , backend: llm, limit_image_per_prompt: 8, block_size: 128, max_cache_size: 0, max_memory_utilization: 0.87, enable_prefix_cache: 1, max_encoder_cache_size: 0, max_process",
+      "I20261005 02:33:05.235097 11849 llm_engine.cpp:267] Block info, block_size: 128, n_local_kv_heads: 2, head_dim: 128, n_layers: 28, dtype: BFloat16, kv_cache_dtype: auto",
+      "I20261005 02:33:05.893750 11849 llm_engine.cpp:293] Initializing model with ModelArgs: [model_type: qwen2, encoder_embedding_mode: 0, embedding_mode: 0, dtype: bfloat16, hidden_size: 1536, hidden_act: silu, intermediate_size: 8960, moe_intermediate_size: 0, n_routed_experts: 0, n_activated_experts: 0, num_experts_per_t",
+      "W20261005 02:33:09.889666 11849 kv_quality_transform.py:103] FP8 quality transform: format=E4M3 scale=1.0 selected_side=v_only_fp8",
+      "I20261005 02:33:30.856062 11849 llm_engine.cpp:561] kv cache capacity: 8.82 GB, blocks: 2580, slot_size: 1024, index_slot_size: 0, indexer_layers: 0, scale_slot_size: 0, linear_slot_size: 0, linear_blocks: 2, linear_state_slots: 0, max_linear_state_cache_slots: 0, reserved_linear_bytes: 0.00 B, n_layers: 28, kv_cache_d"
+    ]
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/fp8-kv-quality-ablation-gsm8k-20261005/runs/gsm8k/auto.run.log",
+    "bytes": 12173,
+    "sha256": "75c04fa53f7f2de88f27687fed3cc7fbdea0360d4bb1cb4fcee6e79fef37f807",
+    "backend_scale_excerpt": []
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/fp8-kv-quality-ablation-gsm8k-20261005/runs/gsm8k/k-only-fp8.run.log",
+    "bytes": 12971,
+    "sha256": "1f0ccc82bdb214563b309cbed8bfbf84dcafe7cf26fd12f9a89b3fbc117c663b",
+    "backend_scale_excerpt": []
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/fp8-kv-quality-ablation-gsm8k-20261005/runs/gsm8k/v-only-fp8.run.log",
+    "bytes": 12971,
+    "sha256": "3ca83fde49404199a86a624f20e60d1a4704ae93c356266e56b46e4bc3b3d9c4",
+    "backend_scale_excerpt": []
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/fp8-kv-quality-ablation-longbench-20261005/arms/auto/server.log",
+    "bytes": 186195,
+    "sha256": "0c7002efb02f144d8434e453ca29382131b158943919f578e353daf240993c37",
+    "backend_scale_excerpt": [
+      "I20261005 02:36:13.120673 12193 master.cpp:368] ▄█▀ ▄ █▄▄▄▄ █▄▄▄▄ █     █  backend llm",
+      "I20261005 02:36:13.121268 12193 master.cpp:472] Master init options: Options: [model_path: /mnt/e/AI/models/Qwen2.5-1.5B-Instruct, draft_model_path: , backend: llm, limit_image_per_prompt: 8, block_size: 128, max_cache_size: 0, max_memory_utilization: 0.87, enable_prefix_cache: 1, max_encoder_cache_size: 0, max_process",
+      "I20261005 02:36:14.818060 12193 llm_engine.cpp:267] Block info, block_size: 128, n_local_kv_heads: 2, head_dim: 128, n_layers: 28, dtype: BFloat16, kv_cache_dtype: auto",
+      "I20261005 02:36:15.469197 12193 llm_engine.cpp:293] Initializing model with ModelArgs: [model_type: qwen2, encoder_embedding_mode: 0, embedding_mode: 0, dtype: bfloat16, hidden_size: 1536, hidden_act: silu, intermediate_size: 8960, moe_intermediate_size: 0, n_routed_experts: 0, n_activated_experts: 0, num_experts_per_t",
+      "I20261005 02:36:38.852455 12193 llm_engine.cpp:561] kv cache capacity: 8.82 GB, blocks: 2580, slot_size: 1024, index_slot_size: 0, indexer_layers: 0, scale_slot_size: 0, linear_slot_size: 0, linear_blocks: 2, linear_state_slots: 0, max_linear_state_cache_slots: 0, reserved_linear_bytes: 0.00 B, n_layers: 28, kv_cache_d"
+    ]
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/fp8-kv-quality-ablation-longbench-20261005/arms/k-only-fp8/server.log",
+    "bytes": 187116,
+    "sha256": "66fac90e129361071a212687b1dc3ea92055faedc80dfc6e9cf4a98dd3b62f7e",
+    "backend_scale_excerpt": [
+      "I20261005 02:46:17.623027 12914 master.cpp:368] ▄█▀ ▄ █▄▄▄▄ █▄▄▄▄ █     █  backend llm",
+      "I20261005 02:46:17.623471 12914 master.cpp:472] Master init options: Options: [model_path: /mnt/e/AI/models/Qwen2.5-1.5B-Instruct, draft_model_path: , backend: llm, limit_image_per_prompt: 8, block_size: 128, max_cache_size: 0, max_memory_utilization: 0.87, enable_prefix_cache: 1, max_encoder_cache_size: 0, max_process",
+      "I20261005 02:46:19.344156 12914 llm_engine.cpp:267] Block info, block_size: 128, n_local_kv_heads: 2, head_dim: 128, n_layers: 28, dtype: BFloat16, kv_cache_dtype: auto",
+      "I20261005 02:46:19.985562 12914 llm_engine.cpp:293] Initializing model with ModelArgs: [model_type: qwen2, encoder_embedding_mode: 0, embedding_mode: 0, dtype: bfloat16, hidden_size: 1536, hidden_act: silu, intermediate_size: 8960, moe_intermediate_size: 0, n_routed_experts: 0, n_activated_experts: 0, num_experts_per_t",
+      "W20261005 02:46:23.963859 12914 kv_quality_transform.py:103] FP8 quality transform: format=E4M3 scale=1.0 selected_side=k_only_fp8",
+      "I20261005 02:46:44.676671 12914 llm_engine.cpp:561] kv cache capacity: 8.82 GB, blocks: 2580, slot_size: 1024, index_slot_size: 0, indexer_layers: 0, scale_slot_size: 0, linear_slot_size: 0, linear_blocks: 2, linear_state_slots: 0, max_linear_state_cache_slots: 0, reserved_linear_bytes: 0.00 B, n_layers: 28, kv_cache_d"
+    ]
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/fp8-kv-quality-ablation-longbench-20261005/arms/v-only-fp8/server.log",
+    "bytes": 186471,
+    "sha256": "26f6c86b366300c00c6a4e01215d49475f2657de601a58212bcd8108d9c6ac19",
+    "backend_scale_excerpt": [
+      "I20261005 02:57:22.265059 13788 master.cpp:368] ▄█▀ ▄ █▄▄▄▄ █▄▄▄▄ █     █  backend llm",
+      "I20261005 02:57:22.265578 13788 master.cpp:472] Master init options: Options: [model_path: /mnt/e/AI/models/Qwen2.5-1.5B-Instruct, draft_model_path: , backend: llm, limit_image_per_prompt: 8, block_size: 128, max_cache_size: 0, max_memory_utilization: 0.87, enable_prefix_cache: 1, max_encoder_cache_size: 0, max_process",
+      "I20261005 02:57:23.941352 13788 llm_engine.cpp:267] Block info, block_size: 128, n_local_kv_heads: 2, head_dim: 128, n_layers: 28, dtype: BFloat16, kv_cache_dtype: auto",
+      "I20261005 02:57:24.649144 13788 llm_engine.cpp:293] Initializing model with ModelArgs: [model_type: qwen2, encoder_embedding_mode: 0, embedding_mode: 0, dtype: bfloat16, hidden_size: 1536, hidden_act: silu, intermediate_size: 8960, moe_intermediate_size: 0, n_routed_experts: 0, n_activated_experts: 0, num_experts_per_t",
+      "W20261005 02:57:28.584249 13788 kv_quality_transform.py:103] FP8 quality transform: format=E4M3 scale=1.0 selected_side=v_only_fp8",
+      "I20261005 02:57:52.311865 13788 llm_engine.cpp:561] kv cache capacity: 8.82 GB, blocks: 2580, slot_size: 1024, index_slot_size: 0, indexer_layers: 0, scale_slot_size: 0, linear_slot_size: 0, linear_blocks: 2, linear_state_slots: 0, max_linear_state_cache_slots: 0, reserved_linear_bytes: 0.00 B, n_layers: 28, kv_cache_d"
+    ]
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/fp8-kv-quality-ablation-longbench-20261005/runs/2wikimqa/auto.run.log",
+    "bytes": 1340,
+    "sha256": "eb33e82f099d1dbc75653ffcd637dc6416a308d3c14fb15b13d89bcfea52c4e6",
+    "backend_scale_excerpt": []
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/fp8-kv-quality-ablation-longbench-20261005/runs/2wikimqa/k-only-fp8.run.log",
+    "bytes": 1376,
+    "sha256": "495b5a97e02072a76aca7f8df3cc2ae673b3cb6cf5e5a18c0a7da3296dff9174",
+    "backend_scale_excerpt": []
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/fp8-kv-quality-ablation-longbench-20261005/runs/2wikimqa/v-only-fp8.run.log",
+    "bytes": 1376,
+    "sha256": "562b7795692cc0ec6f96090521f982b3ac8c96b8b29c397acf162a05fb68cbbf",
+    "backend_scale_excerpt": []
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/fp8-kv-quality-ablation-longbench-20261005/runs/hotpotqa/auto.run.log",
+    "bytes": 1340,
+    "sha256": "2e589b2f1fd8f7ecf78888242fc64a074d0c0434a86f68b8d6c8872ccc7a7f82",
+    "backend_scale_excerpt": []
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/fp8-kv-quality-ablation-longbench-20261005/runs/hotpotqa/k-only-fp8.run.log",
+    "bytes": 1376,
+    "sha256": "b2d7a79d7a13a898287be5dcc3ba8a969b5eb1c6959a4d1c9d983cc9f7451a03",
+    "backend_scale_excerpt": []
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/fp8-kv-quality-ablation-longbench-20261005/runs/hotpotqa/v-only-fp8.run.log",
+    "bytes": 1376,
+    "sha256": "f49107bf2e6c3175e101839c52ee4101c96154d3b0b66af1eaa0b1a9607c7381",
+    "backend_scale_excerpt": []
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/fp8-kv-quality-ablation-longbench-20261005/runs/lcc/auto.run.log",
+    "bytes": 1330,
+    "sha256": "a5f1f81330f6f60ea4b85da33165b36db735ce3796d1c4405b2b0419dea4cb83",
+    "backend_scale_excerpt": []
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/fp8-kv-quality-ablation-longbench-20261005/runs/lcc/k-only-fp8.run.log",
+    "bytes": 1366,
+    "sha256": "2fa9f9f263fc2f95319d899d220eb32fa0cd70a6002d4f40b4c0cb79b99867dc",
+    "backend_scale_excerpt": []
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/fp8-kv-quality-ablation-longbench-20261005/runs/lcc/v-only-fp8.run.log",
+    "bytes": 1366,
+    "sha256": "fce0e146c9336c7619ffc82d8e315da49d2eddb82d521a6f3b1a9011f554a4d9",
+    "backend_scale_excerpt": []
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/fp8-kv-quality-ablation-longbench-20261005/runs/multifieldqa_en/auto.run.log",
+    "bytes": 1354,
+    "sha256": "88187f44f4f48f2ba753434a2065d84b0287a0df9e77047babd28db710df54c2",
+    "backend_scale_excerpt": []
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/fp8-kv-quality-ablation-longbench-20261005/runs/multifieldqa_en/k-only-fp8.run.log",
+    "bytes": 1390,
+    "sha256": "acf1c989198c1e93ce232d57f59b9b87324e97e3375255dfaaa4aa738d9ac98c",
+    "backend_scale_excerpt": []
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/fp8-kv-quality-ablation-longbench-20261005/runs/multifieldqa_en/v-only-fp8.run.log",
+    "bytes": 1390,
+    "sha256": "ba24f98e258ad6196e3442123b356fa7ccecdcbd3e2d8a35a22a1c58ac98bcbd",
+    "backend_scale_excerpt": []
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/fp8-kv-quality-ablation-longbench-20261005/runs/musique/auto.run.log",
+    "bytes": 1338,
+    "sha256": "0374c511d7266f10cc5a7288e251ad635935e49a7302887858a336449656e6cf",
+    "backend_scale_excerpt": []
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/fp8-kv-quality-ablation-longbench-20261005/runs/musique/k-only-fp8.run.log",
+    "bytes": 1374,
+    "sha256": "50b6eff606df382f61c98f17e8c9f2ce46d536625cff9a5f6e020dd3bb91938e",
+    "backend_scale_excerpt": []
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/fp8-kv-quality-ablation-longbench-20261005/runs/musique/v-only-fp8.run.log",
+    "bytes": 1374,
+    "sha256": "eed8100112cdf98c8fcb954a3b2063a20e038cdfad4dc9d0633a5306fff6e6de",
+    "backend_scale_excerpt": []
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/fp8-kv-quality-ablation-longbench-20261005/runs/narrativeqa/auto.run.log",
+    "bytes": 1346,
+    "sha256": "af1315da698596e9cfb4777e88f8007a2b4a2e383b19690f1fe443b7a3b2f6e7",
+    "backend_scale_excerpt": []
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/fp8-kv-quality-ablation-longbench-20261005/runs/narrativeqa/k-only-fp8.run.log",
+    "bytes": 1382,
+    "sha256": "3968537fbe6a479c683fa948721d9deca60223a2d834f5e830b6a36adeb7a8b9",
+    "backend_scale_excerpt": []
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/fp8-kv-quality-ablation-longbench-20261005/runs/narrativeqa/v-only-fp8.run.log",
+    "bytes": 1382,
+    "sha256": "5df075a8a495a3fdd9d0c518b7c9985c4360a74c83082f8de808dd2679d0a0cc",
+    "backend_scale_excerpt": []
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/fp8-kv-quality-ablation-longbench-20261005/runs/qasper/auto.run.log",
+    "bytes": 1336,
+    "sha256": "5ebc7526915386bfe0de55b942e55f6f2a33d622a62cfb3e6caf4cea485a37d2",
+    "backend_scale_excerpt": []
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/fp8-kv-quality-ablation-longbench-20261005/runs/qasper/k-only-fp8.run.log",
+    "bytes": 1372,
+    "sha256": "629edc583064c46dd62a33c711afbe4ec123cc24029cce0b326cbeff7b941659",
+    "backend_scale_excerpt": []
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/fp8-kv-quality-ablation-longbench-20261005/runs/qasper/v-only-fp8.run.log",
+    "bytes": 1372,
+    "sha256": "7a7e4d447416417ad53ac396bc864f0844fb3b09abcf3bc395a3935694ea5b21",
+    "backend_scale_excerpt": []
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/fp8-kv-quality-ablation-longbench-20261005/runs/repobench-p/auto.run.log",
+    "bytes": 1346,
+    "sha256": "4e073170eadde0cf440bfefa2723c73fcd85dc195f3da69e2d3d15ece73d1e0b",
+    "backend_scale_excerpt": []
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/fp8-kv-quality-ablation-longbench-20261005/runs/repobench-p/k-only-fp8.run.log",
+    "bytes": 1382,
+    "sha256": "647b75a026ca4c6c8f207f5ebdf0a274da8abb143f51c950c209dd6f0035402c",
+    "backend_scale_excerpt": []
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/fp8-kv-quality-ablation-longbench-20261005/runs/repobench-p/v-only-fp8.run.log",
+    "bytes": 1382,
+    "sha256": "03707f50c2099f4e8cb01639e2cab6e51451fdac0217fa7ae98fc2dcc4a16f10",
+    "backend_scale_excerpt": []
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/vllm-fp8-reference-20261005/arithmetic-bf16-corrected.log",
+    "bytes": 12297,
+    "sha256": "336c1b9a7c65404a9cf9ef4d423c586327041a254a7bb4a9bfc2e8201869fe9e",
+    "backend_scale_excerpt": [
+      "INFO 10-05 05:59:54 [api_utils.py:286] non-default args: {'trust_remote_code': True, 'dtype': 'bfloat16', 'seed': 20261005, 'max_model_len': 4096, 'enable_prefix_caching': False, 'gpu_memory_utilization': 0.8, 'disable_log_stats': True, 'enforce_eager': True, 'generation_config': 'vllm', 'attention_backend': 'FLASHINFE",
+      "INFO 10-05 05:59:55 [kernel.py:416] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'], gelu_and_mul_sparse=['triton', 'native'])",
+      "(EngineCore pid=19464) INFO 10-05 06:00:04 [core.py:123] Initializing a V1 LLM engine (v0.30.0) with config: model='/mnt/e/AI/models/Qwen2.5-1.5B-Instruct', speculative_config=None, tokenizer='/mnt/e/AI/models/Qwen2.5-1.5B-Instruct', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None",
+      "(EngineCore pid=19464) INFO 10-05 06:00:05 [parallel_state.py:1827] world_size=1 rank=0 local_rank=0 distributed_init_method=file:///tmp/vllm_dist_a3a3692413be45dfa3fd1a98210b7705 backend=nccl",
+      "(EngineCore pid=19464) INFO 10-05 06:00:07 [cuda.py:478] Using AttentionBackendEnum.FLASHINFER backend.",
+      "(EngineCore pid=19464) INFO 10-05 06:00:36 [topk_topp_sampler.py:78] Using FlashInfer for top-p & top-k sampling.",
+      "(EngineCore pid=19464) INFO 10-05 06:00:38 [flashinfer.py:909] FlashInfer resolved query dtypes: prefill=torch.bfloat16, decode=torch.bfloat16, decode_backend=xqa, kv_cache_dtype=torch.bfloat16, arch=sm120",
+      "(EngineCore pid=19464) INFO 10-05 06:00:39 [kernel_warmup.py:438] Using FlashInfer autotune cache file: /home/mingasa/.cache/vllm/flashinfer_autotune_cache/0.6.18.post1/120f/5efc8d2fe673956240b219a8513471e8d7eaca334c9cb1a333707abf923796d0/autotune_configs.json",
+      "(EngineCore pid=19464) 2026-10-05 06:00:39,805 - INFO - autotuner.py:2789 - flashinfer.jit: [Autotuner]: Loaded 0 configs from /home/mingasa/.cache/vllm/flashinfer_autotune_cache/0.6.18.post1/120f/5efc8d2fe673956240b219a8513471e8d7eaca334c9cb1a333707abf923796d0/autotune_configs.json",
+      "(EngineCore pid=19464) 2026-10-05 06:00:39,806 - INFO - autotuner.py:972 - flashinfer.jit: [Autotuner]: Autotuning process starts ...",
+      "(EngineCore pid=19464) INFO 10-05 06:00:39 [kernel_warmup.py:359] Running FlashInfer autotune with 8192 tokens and token buckets (1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 768, 1024, 1280, 1536, 1792, 2048, 2560, 3072, 3584, 4096, 8192).",
+      "(EngineCore pid=19464) 2026-10-05 06:00:39,890 - INFO - autotuner.py:995 - flashinfer.jit: [Autotuner]: Autotuning process ends",
+      "(EngineCore pid=19464) 2026-10-05 06:00:39,895 - INFO - autotuner.py:2652 - flashinfer.jit: [Autotuner]: Saved 0 configs to /home/mingasa/.cache/vllm/flashinfer_autotune_cache/0.6.18.post1/120f/5efc8d2fe673956240b219a8513471e8d7eaca334c9cb1a333707abf923796d0/autotune_configs.json (0 new, 0 from previous config)",
+      "(EngineCore pid=19464) INFO 10-05 06:00:39 [kernel_warmup.py:280] Warming up FlashInfer attention.",
+      "(EngineCore pid=19464) INFO 10-05 06:00:42 [kernel.py:416] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'], gelu_and_mul_sparse=['triton', 'native'])"
+    ]
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/vllm-fp8-reference-20261005/arithmetic-bf16.log",
+    "bytes": 11985,
+    "sha256": "ddc39afdbfe0f1e4fedfca253bbeb9ebb8d0d727bf22e78d2c75c95aa21e2a33",
+    "backend_scale_excerpt": [
+      "INFO 10-05 05:52:22 [api_utils.py:286] non-default args: {'trust_remote_code': True, 'dtype': 'bfloat16', 'seed': 20261005, 'max_model_len': 4096, 'enable_prefix_caching': False, 'gpu_memory_utilization': 0.8, 'disable_log_stats': True, 'enforce_eager': True, 'attention_backend': 'FLASHINFER', 'model': '/mnt/e/AI/model",
+      "INFO 10-05 05:52:22 [kernel.py:416] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'], gelu_and_mul_sparse=['triton', 'native'])",
+      "(EngineCore pid=18235) INFO 10-05 05:52:32 [core.py:123] Initializing a V1 LLM engine (v0.30.0) with config: model='/mnt/e/AI/models/Qwen2.5-1.5B-Instruct', speculative_config=None, tokenizer='/mnt/e/AI/models/Qwen2.5-1.5B-Instruct', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None",
+      "(EngineCore pid=18235) INFO 10-05 05:52:33 [parallel_state.py:1827] world_size=1 rank=0 local_rank=0 distributed_init_method=file:///tmp/vllm_dist_24c1bce83fb740968bb8ecc616b060d2 backend=nccl",
+      "(EngineCore pid=18235) INFO 10-05 05:52:36 [cuda.py:478] Using AttentionBackendEnum.FLASHINFER backend.",
+      "(EngineCore pid=18235) INFO 10-05 05:53:01 [topk_topp_sampler.py:78] Using FlashInfer for top-p & top-k sampling.",
+      "(EngineCore pid=18235) INFO 10-05 05:53:06 [flashinfer.py:909] FlashInfer resolved query dtypes: prefill=torch.bfloat16, decode=torch.bfloat16, decode_backend=xqa, kv_cache_dtype=torch.bfloat16, arch=sm120",
+      "(EngineCore pid=18235) INFO 10-05 05:53:07 [kernel_warmup.py:438] Using FlashInfer autotune cache file: /home/mingasa/.cache/vllm/flashinfer_autotune_cache/0.6.18.post1/120f/741148e4b94874dc661680ae04edad317954deaa04e078670d7dfba84ec881c3/autotune_configs.json",
+      "(EngineCore pid=18235) 2026-10-05 05:53:07,947 - INFO - autotuner.py:972 - flashinfer.jit: [Autotuner]: Autotuning process starts ...",
+      "(EngineCore pid=18235) INFO 10-05 05:53:07 [kernel_warmup.py:359] Running FlashInfer autotune with 8192 tokens and token buckets (1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 768, 1024, 1280, 1536, 1792, 2048, 2560, 3072, 3584, 4096, 8192).",
+      "(EngineCore pid=18235) 2026-10-05 05:53:08,507 - INFO - autotuner.py:995 - flashinfer.jit: [Autotuner]: Autotuning process ends",
+      "(EngineCore pid=18235) 2026-10-05 05:53:08,540 - INFO - autotuner.py:2652 - flashinfer.jit: [Autotuner]: Saved 0 configs to /home/mingasa/.cache/vllm/flashinfer_autotune_cache/0.6.18.post1/120f/741148e4b94874dc661680ae04edad317954deaa04e078670d7dfba84ec881c3/autotune_configs.json (0 new, 0 from previous config)",
+      "(EngineCore pid=18235) INFO 10-05 05:53:08 [kernel_warmup.py:280] Warming up FlashInfer attention.",
+      "(EngineCore pid=18235) INFO 10-05 05:53:33 [kernel.py:416] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'], gelu_and_mul_sparse=['triton', 'native'])"
+    ]
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/vllm-fp8-reference-20261005/arithmetic-fp8.log",
+    "bytes": 12386,
+    "sha256": "83b4ce5df3528de66f6651940a54e73ed9c8d32c53e68c13f9e78618d50e8948",
+    "backend_scale_excerpt": [
+      "INFO 10-05 05:53:46 [api_utils.py:286] non-default args: {'trust_remote_code': True, 'dtype': 'bfloat16', 'kv_cache_dtype': 'fp8', 'seed': 20261005, 'max_model_len': 4096, 'enable_prefix_caching': False, 'gpu_memory_utilization': 0.8, 'disable_log_stats': True, 'enforce_eager': True, 'generation_config': 'vllm', 'atten",
+      "INFO 10-05 05:53:46 [kernel.py:416] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'], gelu_and_mul_sparse=['triton', 'native'])",
+      "(EngineCore pid=18515) INFO 10-05 05:53:55 [core.py:123] Initializing a V1 LLM engine (v0.30.0) with config: model='/mnt/e/AI/models/Qwen2.5-1.5B-Instruct', speculative_config=None, tokenizer='/mnt/e/AI/models/Qwen2.5-1.5B-Instruct', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None",
+      "(EngineCore pid=18515) INFO 10-05 05:53:56 [parallel_state.py:1827] world_size=1 rank=0 local_rank=0 distributed_init_method=file:///tmp/vllm_dist_c4c8a76d2e324243805bc7ce662400c7 backend=nccl",
+      "(EngineCore pid=18515) INFO 10-05 05:53:58 [cuda.py:478] Using AttentionBackendEnum.FLASHINFER backend.",
+      "(EngineCore pid=18515) INFO 10-05 05:54:29 [topk_topp_sampler.py:78] Using FlashInfer for top-p & top-k sampling.",
+      "(EngineCore pid=18515) INFO 10-05 05:54:32 [flashinfer.py:909] FlashInfer resolved query dtypes: prefill=torch.bfloat16, decode=torch.bfloat16, decode_backend=xqa, kv_cache_dtype=torch.float8_e4m3fn, arch=sm120",
+      "(EngineCore pid=18515) INFO 10-05 05:54:34 [kernel_warmup.py:438] Using FlashInfer autotune cache file: /home/mingasa/.cache/vllm/flashinfer_autotune_cache/0.6.18.post1/120f/2ce5fc9b4664455c1637a36cb8942678b6794c4d715d602a374bf144894a9d85/autotune_configs.json",
+      "(EngineCore pid=18515) 2026-10-05 05:54:34,159 - INFO - autotuner.py:972 - flashinfer.jit: [Autotuner]: Autotuning process starts ...",
+      "(EngineCore pid=18515) INFO 10-05 05:54:34 [kernel_warmup.py:359] Running FlashInfer autotune with 8192 tokens and token buckets (1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 768, 1024, 1280, 1536, 1792, 2048, 2560, 3072, 3584, 4096, 8192).",
+      "(EngineCore pid=18515) 2026-10-05 05:54:34,304 - INFO - autotuner.py:995 - flashinfer.jit: [Autotuner]: Autotuning process ends",
+      "(EngineCore pid=18515) 2026-10-05 05:54:34,342 - INFO - autotuner.py:2652 - flashinfer.jit: [Autotuner]: Saved 0 configs to /home/mingasa/.cache/vllm/flashinfer_autotune_cache/0.6.18.post1/120f/2ce5fc9b4664455c1637a36cb8942678b6794c4d715d602a374bf144894a9d85/autotune_configs.json (0 new, 0 from previous config)",
+      "(EngineCore pid=18515) INFO 10-05 05:54:34 [kernel_warmup.py:280] Warming up FlashInfer attention.",
+      "(EngineCore pid=18515) INFO 10-05 05:54:52 [kernel.py:416] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'], gelu_and_mul_sparse=['triton', 'native'])"
+    ]
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/vllm-fp8-reference-20261005/gsm8k-bf16.log",
+    "bytes": 16498,
+    "sha256": "da718e5c98fa92458d95052115d45bb9f09d345634b50bbb6ee2cca717493afa",
+    "backend_scale_excerpt": [
+      "INFO 10-05 05:55:05 [api_utils.py:286] non-default args: {'trust_remote_code': True, 'dtype': 'bfloat16', 'seed': 17, 'max_model_len': 4096, 'enable_prefix_caching': False, 'gpu_memory_utilization': 0.8, 'disable_log_stats': True, 'enforce_eager': True, 'generation_config': 'vllm', 'attention_backend': 'FLASHINFER', 'm",
+      "INFO 10-05 05:55:05 [kernel.py:416] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'], gelu_and_mul_sparse=['triton', 'native'])",
+      "(EngineCore pid=18748) INFO 10-05 05:55:15 [core.py:123] Initializing a V1 LLM engine (v0.30.0) with config: model='/mnt/e/AI/models/Qwen2.5-1.5B-Instruct', speculative_config=None, tokenizer='/mnt/e/AI/models/Qwen2.5-1.5B-Instruct', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None",
+      "(EngineCore pid=18748) INFO 10-05 05:55:15 [parallel_state.py:1827] world_size=1 rank=0 local_rank=0 distributed_init_method=file:///tmp/vllm_dist_e2cbc817679346b096718d6181a2cf2e backend=nccl",
+      "(EngineCore pid=18748) INFO 10-05 05:55:18 [cuda.py:478] Using AttentionBackendEnum.FLASHINFER backend.",
+      "(EngineCore pid=18748) INFO 10-05 05:55:43 [topk_topp_sampler.py:78] Using FlashInfer for top-p & top-k sampling.",
+      "(EngineCore pid=18748) INFO 10-05 05:55:46 [flashinfer.py:909] FlashInfer resolved query dtypes: prefill=torch.bfloat16, decode=torch.bfloat16, decode_backend=xqa, kv_cache_dtype=torch.bfloat16, arch=sm120",
+      "(EngineCore pid=18748) INFO 10-05 05:55:46 [kernel_warmup.py:438] Using FlashInfer autotune cache file: /home/mingasa/.cache/vllm/flashinfer_autotune_cache/0.6.18.post1/120f/5efc8d2fe673956240b219a8513471e8d7eaca334c9cb1a333707abf923796d0/autotune_configs.json",
+      "(EngineCore pid=18748) 2026-10-05 05:55:46,882 - INFO - autotuner.py:972 - flashinfer.jit: [Autotuner]: Autotuning process starts ...",
+      "(EngineCore pid=18748) INFO 10-05 05:55:46 [kernel_warmup.py:359] Running FlashInfer autotune with 8192 tokens and token buckets (1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 768, 1024, 1280, 1536, 1792, 2048, 2560, 3072, 3584, 4096, 8192).",
+      "(EngineCore pid=18748) 2026-10-05 05:55:47,000 - INFO - autotuner.py:995 - flashinfer.jit: [Autotuner]: Autotuning process ends",
+      "(EngineCore pid=18748) 2026-10-05 05:55:47,008 - INFO - autotuner.py:2652 - flashinfer.jit: [Autotuner]: Saved 0 configs to /home/mingasa/.cache/vllm/flashinfer_autotune_cache/0.6.18.post1/120f/5efc8d2fe673956240b219a8513471e8d7eaca334c9cb1a333707abf923796d0/autotune_configs.json (0 new, 0 from previous config)",
+      "(EngineCore pid=18748) INFO 10-05 05:55:47 [kernel_warmup.py:280] Warming up FlashInfer attention.",
+      "(EngineCore pid=18748) INFO 10-05 05:55:49 [kernel.py:416] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'], gelu_and_mul_sparse=['triton', 'native'])"
+    ]
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/vllm-fp8-reference-20261005/gsm8k-fp8.log",
+    "bytes": 16815,
+    "sha256": "cf724af825598a7eb0a47395176f7fc192b6dac8da73f13ba20321512f11f988",
+    "backend_scale_excerpt": [
+      "INFO 10-05 05:56:19 [api_utils.py:286] non-default args: {'trust_remote_code': True, 'dtype': 'bfloat16', 'kv_cache_dtype': 'fp8', 'seed': 17, 'max_model_len': 4096, 'enable_prefix_caching': False, 'gpu_memory_utilization': 0.8, 'disable_log_stats': True, 'enforce_eager': True, 'generation_config': 'vllm', 'attention_b",
+      "INFO 10-05 05:56:19 [kernel.py:416] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'], gelu_and_mul_sparse=['triton', 'native'])",
+      "(EngineCore pid=18917) INFO 10-05 05:56:29 [core.py:123] Initializing a V1 LLM engine (v0.30.0) with config: model='/mnt/e/AI/models/Qwen2.5-1.5B-Instruct', speculative_config=None, tokenizer='/mnt/e/AI/models/Qwen2.5-1.5B-Instruct', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None",
+      "(EngineCore pid=18917) INFO 10-05 05:56:29 [parallel_state.py:1827] world_size=1 rank=0 local_rank=0 distributed_init_method=file:///tmp/vllm_dist_102fa8f61c804781ae9f9966602df5e1 backend=nccl",
+      "(EngineCore pid=18917) INFO 10-05 05:56:31 [cuda.py:478] Using AttentionBackendEnum.FLASHINFER backend.",
+      "(EngineCore pid=18917) INFO 10-05 05:56:56 [topk_topp_sampler.py:78] Using FlashInfer for top-p & top-k sampling.",
+      "(EngineCore pid=18917) INFO 10-05 05:56:59 [flashinfer.py:909] FlashInfer resolved query dtypes: prefill=torch.bfloat16, decode=torch.bfloat16, decode_backend=xqa, kv_cache_dtype=torch.float8_e4m3fn, arch=sm120",
+      "(EngineCore pid=18917) INFO 10-05 05:57:00 [kernel_warmup.py:438] Using FlashInfer autotune cache file: /home/mingasa/.cache/vllm/flashinfer_autotune_cache/0.6.18.post1/120f/2ce5fc9b4664455c1637a36cb8942678b6794c4d715d602a374bf144894a9d85/autotune_configs.json",
+      "(EngineCore pid=18917) 2026-10-05 05:57:00,337 - INFO - autotuner.py:2789 - flashinfer.jit: [Autotuner]: Loaded 0 configs from /home/mingasa/.cache/vllm/flashinfer_autotune_cache/0.6.18.post1/120f/2ce5fc9b4664455c1637a36cb8942678b6794c4d715d602a374bf144894a9d85/autotune_configs.json",
+      "(EngineCore pid=18917) 2026-10-05 05:57:00,338 - INFO - autotuner.py:972 - flashinfer.jit: [Autotuner]: Autotuning process starts ...",
+      "(EngineCore pid=18917) INFO 10-05 05:57:00 [kernel_warmup.py:359] Running FlashInfer autotune with 8192 tokens and token buckets (1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 768, 1024, 1280, 1536, 1792, 2048, 2560, 3072, 3584, 4096, 8192).",
+      "(EngineCore pid=18917) 2026-10-05 05:57:00,434 - INFO - autotuner.py:995 - flashinfer.jit: [Autotuner]: Autotuning process ends",
+      "(EngineCore pid=18917) 2026-10-05 05:57:00,439 - INFO - autotuner.py:2652 - flashinfer.jit: [Autotuner]: Saved 0 configs to /home/mingasa/.cache/vllm/flashinfer_autotune_cache/0.6.18.post1/120f/2ce5fc9b4664455c1637a36cb8942678b6794c4d715d602a374bf144894a9d85/autotune_configs.json (0 new, 0 from previous config)",
+      "(EngineCore pid=18917) INFO 10-05 05:57:00 [kernel_warmup.py:280] Warming up FlashInfer attention.",
+      "(EngineCore pid=18917) INFO 10-05 05:57:03 [kernel.py:416] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'], gelu_and_mul_sparse=['triton', 'native'])"
+    ]
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/xllm-fp8-gsm8k-20261005/arms/auto/server.log",
+    "bytes": 575255,
+    "sha256": "f17a2a27bd7327a327c0eebbef1c850fbc5e454f0cfbf5cb9aa824513887808b",
+    "backend_scale_excerpt": [
+      "I20261005 06:30:01.108968 21893 master.cpp:368] ▄█▀ ▄ █▄▄▄▄ █▄▄▄▄ █     █  backend llm",
+      "I20261005 06:30:01.109411 21893 master.cpp:472] Master init options: Options: [model_path: /mnt/e/AI/models/Qwen2.5-1.5B-Instruct, draft_model_path: , backend: llm, limit_image_per_prompt: 8, block_size: 128, max_cache_size: 0, max_memory_utilization: 0.87, enable_prefix_cache: 1, max_encoder_cache_size: 0, max_process",
+      "I20261005 06:30:02.873034 21893 llm_engine.cpp:267] Block info, block_size: 128, n_local_kv_heads: 2, head_dim: 128, n_layers: 28, dtype: BFloat16, kv_cache_dtype: auto",
+      "I20261005 06:30:03.517292 21893 llm_engine.cpp:293] Initializing model with ModelArgs: [model_type: qwen2, encoder_embedding_mode: 0, embedding_mode: 0, dtype: bfloat16, hidden_size: 1536, hidden_act: silu, intermediate_size: 8960, moe_intermediate_size: 0, n_routed_experts: 0, n_activated_experts: 0, num_experts_per_t",
+      "I20261005 06:30:27.698882 21893 llm_engine.cpp:561] kv cache capacity: 8.82 GB, blocks: 2580, slot_size: 1024, index_slot_size: 0, indexer_layers: 0, scale_slot_size: 0, linear_slot_size: 0, linear_blocks: 2, linear_state_slots: 0, max_linear_state_cache_slots: 0, reserved_linear_bytes: 0.00 B, n_layers: 28, kv_cache_d"
+    ]
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/xllm-fp8-gsm8k-20261005/arms/fp8-e4m3/server.log",
+    "bytes": 576465,
+    "sha256": "5e8f86da5b04101fed16043da65fa2c4e814816e8eb2d40f996760ccadc1007a",
+    "backend_scale_excerpt": [
+      "I20261005 06:33:35.808866 22185 master.cpp:368] ▄█▀ ▄ █▄▄▄▄ █▄▄▄▄ █     █  backend llm",
+      "I20261005 06:33:35.809377 22185 master.cpp:472] Master init options: Options: [model_path: /mnt/e/AI/models/Qwen2.5-1.5B-Instruct, draft_model_path: , backend: llm, limit_image_per_prompt: 8, block_size: 128, max_cache_size: 0, max_memory_utilization: 0.87, enable_prefix_cache: 1, max_encoder_cache_size: 0, max_process",
+      "I20261005 06:33:37.493709 22185 llm_engine.cpp:267] Block info, block_size: 128, n_local_kv_heads: 2, head_dim: 128, n_layers: 28, dtype: BFloat16, kv_cache_dtype: fp8_e4m3",
+      "I20261005 06:33:38.135418 22185 llm_engine.cpp:293] Initializing model with ModelArgs: [model_type: qwen2, encoder_embedding_mode: 0, embedding_mode: 0, dtype: bfloat16, hidden_size: 1536, hidden_act: silu, intermediate_size: 8960, moe_intermediate_size: 0, n_routed_experts: 0, n_activated_experts: 0, num_experts_per_t",
+      "I20261005 06:34:01.257648 22185 llm_engine.cpp:561] kv cache capacity: 9.22 GB, blocks: 5229, slot_size: 512, index_slot_size: 0, indexer_layers: 0, scale_slot_size: 16, linear_slot_size: 0, linear_blocks: 2, linear_state_slots: 0, max_linear_state_cache_slots: 0, reserved_linear_bytes: 0.00 B, n_layers: 28, kv_cache_d",
+      "W20261005 06:34:01.258632 22221 worker_impl.cpp:546] Using experimental quantized KV attention: bounded workspace, eager PyTorch operations, no fused kernel."
+    ]
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/xllm-fp8-gsm8k-20261005/arms/fp8-e5m2/server.log",
+    "bytes": 580004,
+    "sha256": "815835afca3831f0c368ab23271f4da014cc31a725ce608d7efa88796ec33aa0",
+    "backend_scale_excerpt": [
+      "I20261005 06:38:07.243811 22528 master.cpp:368] ▄█▀ ▄ █▄▄▄▄ █▄▄▄▄ █     █  backend llm",
+      "I20261005 06:38:07.244355 22528 master.cpp:472] Master init options: Options: [model_path: /mnt/e/AI/models/Qwen2.5-1.5B-Instruct, draft_model_path: , backend: llm, limit_image_per_prompt: 8, block_size: 128, max_cache_size: 0, max_memory_utilization: 0.87, enable_prefix_cache: 1, max_encoder_cache_size: 0, max_process",
+      "I20261005 06:38:08.926666 22528 llm_engine.cpp:267] Block info, block_size: 128, n_local_kv_heads: 2, head_dim: 128, n_layers: 28, dtype: BFloat16, kv_cache_dtype: fp8_e5m2",
+      "I20261005 06:38:09.603583 22528 llm_engine.cpp:293] Initializing model with ModelArgs: [model_type: qwen2, encoder_embedding_mode: 0, embedding_mode: 0, dtype: bfloat16, hidden_size: 1536, hidden_act: silu, intermediate_size: 8960, moe_intermediate_size: 0, n_routed_experts: 0, n_activated_experts: 0, num_experts_per_t",
+      "I20261005 06:38:34.435527 22528 llm_engine.cpp:561] kv cache capacity: 9.22 GB, blocks: 5229, slot_size: 512, index_slot_size: 0, indexer_layers: 0, scale_slot_size: 16, linear_slot_size: 0, linear_blocks: 2, linear_state_slots: 0, max_linear_state_cache_slots: 0, reserved_linear_bytes: 0.00 B, n_layers: 28, kv_cache_d",
+      "W20261005 06:38:34.436654 22564 worker_impl.cpp:546] Using experimental quantized KV attention: bounded workspace, eager PyTorch operations, no fused kernel."
+    ]
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/xllm-fp8-gsm8k-20261005/runs/auto.run.log",
+    "bytes": 12152,
+    "sha256": "fa30e97275f4b6da84ba64a92b8bed11a20691d0443ba8546a937c95749bfccd",
+    "backend_scale_excerpt": []
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/xllm-fp8-gsm8k-20261005/runs/fp8-e4m3.run.log",
+    "bytes": 12684,
+    "sha256": "bca8419e95154eacddf6cdc9ce5f19263e1902b7200b53b27bea4bc1263c03c4",
+    "backend_scale_excerpt": []
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/xllm-fp8-gsm8k-20261005/runs/fp8-e5m2.run.log",
+    "bytes": 12684,
+    "sha256": "0dbdbad0b85290af19e50bf6e3f8211cdd60932bf4acf59441d3b429ebe5998c",
+    "backend_scale_excerpt": []
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/xllm-fp8-gsm8k-20261005/smoke/arms/auto/server.log",
+    "bytes": 17959,
+    "sha256": "3dd4418d66d59e3956f856979a21bc3533aeafa7027d81f6acb5129625d0358f",
+    "backend_scale_excerpt": [
+      "I20261005 06:26:18.913766 21243 master.cpp:368] ▄█▀ ▄ █▄▄▄▄ █▄▄▄▄ █     █  backend llm",
+      "I20261005 06:26:18.914314 21243 master.cpp:472] Master init options: Options: [model_path: /mnt/e/AI/models/Qwen2.5-1.5B-Instruct, draft_model_path: , backend: llm, limit_image_per_prompt: 8, block_size: 128, max_cache_size: 0, max_memory_utilization: 0.87, enable_prefix_cache: 1, max_encoder_cache_size: 0, max_process",
+      "I20261005 06:26:20.698992 21243 llm_engine.cpp:267] Block info, block_size: 128, n_local_kv_heads: 2, head_dim: 128, n_layers: 28, dtype: BFloat16, kv_cache_dtype: auto",
+      "I20261005 06:26:21.369277 21243 llm_engine.cpp:293] Initializing model with ModelArgs: [model_type: qwen2, encoder_embedding_mode: 0, embedding_mode: 0, dtype: bfloat16, hidden_size: 1536, hidden_act: silu, intermediate_size: 8960, moe_intermediate_size: 0, n_routed_experts: 0, n_activated_experts: 0, num_experts_per_t",
+      "I20261005 06:26:48.557551 21243 llm_engine.cpp:561] kv cache capacity: 8.82 GB, blocks: 2580, slot_size: 1024, index_slot_size: 0, indexer_layers: 0, scale_slot_size: 0, linear_slot_size: 0, linear_blocks: 2, linear_state_slots: 0, max_linear_state_cache_slots: 0, reserved_linear_bytes: 0.00 B, n_layers: 28, kv_cache_d"
+    ]
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/xllm-fp8-gsm8k-20261005/smoke/arms/fp8-e4m3/server.log",
+    "bytes": 18136,
+    "sha256": "3673f353131f13add6c7dee43d838dad711c58346c2d0399f8d2a02a553c4e51",
+    "backend_scale_excerpt": [
+      "I20261005 06:27:26.301277 21451 master.cpp:368] ▄█▀ ▄ █▄▄▄▄ █▄▄▄▄ █     █  backend llm",
+      "I20261005 06:27:26.301710 21451 master.cpp:472] Master init options: Options: [model_path: /mnt/e/AI/models/Qwen2.5-1.5B-Instruct, draft_model_path: , backend: llm, limit_image_per_prompt: 8, block_size: 128, max_cache_size: 0, max_memory_utilization: 0.87, enable_prefix_cache: 1, max_encoder_cache_size: 0, max_process",
+      "I20261005 06:27:28.124390 21451 llm_engine.cpp:267] Block info, block_size: 128, n_local_kv_heads: 2, head_dim: 128, n_layers: 28, dtype: BFloat16, kv_cache_dtype: fp8_e4m3",
+      "I20261005 06:27:28.798830 21451 llm_engine.cpp:293] Initializing model with ModelArgs: [model_type: qwen2, encoder_embedding_mode: 0, embedding_mode: 0, dtype: bfloat16, hidden_size: 1536, hidden_act: silu, intermediate_size: 8960, moe_intermediate_size: 0, n_routed_experts: 0, n_activated_experts: 0, num_experts_per_t",
+      "I20261005 06:27:53.390980 21451 llm_engine.cpp:561] kv cache capacity: 9.22 GB, blocks: 5229, slot_size: 512, index_slot_size: 0, indexer_layers: 0, scale_slot_size: 16, linear_slot_size: 0, linear_blocks: 2, linear_state_slots: 0, max_linear_state_cache_slots: 0, reserved_linear_bytes: 0.00 B, n_layers: 28, kv_cache_d",
+      "W20261005 06:27:53.392088 21487 worker_impl.cpp:546] Using experimental quantized KV attention: bounded workspace, eager PyTorch operations, no fused kernel."
+    ]
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/xllm-fp8-gsm8k-20261005/smoke/arms/fp8-e5m2/server.log",
+    "bytes": 18143,
+    "sha256": "e4971a93b661d1143b628c42693a7d3e0d8858e1719490bac11af3082e99ce47",
+    "backend_scale_excerpt": [
+      "I20261005 06:28:30.738588 21668 master.cpp:368] ▄█▀ ▄ █▄▄▄▄ █▄▄▄▄ █     █  backend llm",
+      "I20261005 06:28:30.739157 21668 master.cpp:472] Master init options: Options: [model_path: /mnt/e/AI/models/Qwen2.5-1.5B-Instruct, draft_model_path: , backend: llm, limit_image_per_prompt: 8, block_size: 128, max_cache_size: 0, max_memory_utilization: 0.87, enable_prefix_cache: 1, max_encoder_cache_size: 0, max_process",
+      "I20261005 06:28:32.432365 21668 llm_engine.cpp:267] Block info, block_size: 128, n_local_kv_heads: 2, head_dim: 128, n_layers: 28, dtype: BFloat16, kv_cache_dtype: fp8_e5m2",
+      "I20261005 06:28:33.083902 21668 llm_engine.cpp:293] Initializing model with ModelArgs: [model_type: qwen2, encoder_embedding_mode: 0, embedding_mode: 0, dtype: bfloat16, hidden_size: 1536, hidden_act: silu, intermediate_size: 8960, moe_intermediate_size: 0, n_routed_experts: 0, n_activated_experts: 0, num_experts_per_t",
+      "I20261005 06:28:57.997754 21668 llm_engine.cpp:561] kv cache capacity: 9.22 GB, blocks: 5229, slot_size: 512, index_slot_size: 0, indexer_layers: 0, scale_slot_size: 16, linear_slot_size: 0, linear_blocks: 2, linear_state_slots: 0, max_linear_state_cache_slots: 0, reserved_linear_bytes: 0.00 B, n_layers: 28, kv_cache_d",
+      "W20261005 06:28:57.998859 21704 worker_impl.cpp:546] Using experimental quantized KV attention: bounded workspace, eager PyTorch operations, no fused kernel."
+    ]
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/xllm-fp8-gsm8k-20261005/smoke/runs/auto.run.log",
+    "bytes": 336,
+    "sha256": "7789dedcc54e72049982f0ca7975a9ceb7761362ebed543e69671853d4e8d96e",
+    "backend_scale_excerpt": []
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/xllm-fp8-gsm8k-20261005/smoke/runs/fp8-e4m3.run.log",
+    "bytes": 344,
+    "sha256": "024c2d4f31c603b6a3d66ebcfd9656a623a0ff91ae628af9e3076e95abd88a2e",
+    "backend_scale_excerpt": []
+  },
+  {
+    "source_path": "/mnt/e/AI/xllm-eval-data/xllm-fp8-gsm8k-20261005/smoke/runs/fp8-e5m2.run.log",
+    "bytes": 344,
+    "sha256": "80d7ed5589b3ce222f15deca56fb3b267e471742f6d8e5badcdfae95d08d677f",
+    "backend_scale_excerpt": []
+  }
+]

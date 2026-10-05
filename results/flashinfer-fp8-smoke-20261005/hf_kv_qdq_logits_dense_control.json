@@ -1,0 +1,93 @@
+{
+  "validity": "INVALID_FOR_CROSS_MODE_INFERENCE_COMPARISON",
+  "invalid_reason": "FP32 dense BF16 control differs materially from native Qwen eager attention; retain as an implementation-path comparison only.",
+  "model": "/mnt/e/AI/models/Qwen2.5-1.5B-Instruct",
+  "prompt": "What is 27 times 43? Answer with the number only.",
+  "answer": "1161",
+  "prompt_tokens": 45,
+  "answer_token_count": 4,
+  "max_new_tokens": 24,
+  "bf16_dense_control_matches_eager": false,
+  "causal_mask_audit_callbacks": 168,
+  "all_future_masked": true,
+  "results": {
+    "bf16_eager": {
+      "vs_eager": {
+        "max_abs": 0.0,
+        "rel_l2": 0.0,
+        "top1_agreement": 1.0
+      },
+      "vs_dense_bf16": {
+        "max_abs": 16.265625,
+        "rel_l2": 0.5207038521766663,
+        "top1_agreement": 0.75
+      },
+      "answer_mean_logprob": -0.7913297414779663
+    },
+    "bf16_dense": {
+      "vs_eager": {
+        "max_abs": 16.265625,
+        "rel_l2": 0.5062932372093201,
+        "top1_agreement": 0.75
+      },
+      "vs_dense_bf16": {
+        "max_abs": 0.0,
+        "rel_l2": 0.0,
+        "top1_agreement": 1.0
+      },
+      "answer_mean_logprob": -0.0007018320029601455
+    },
+    "fixed_both": {
+      "vs_eager": {
+        "max_abs": 22.30078125,
+        "rel_l2": 0.740699827671051,
+        "top1_agreement": 0.0
+      },
+      "vs_dense_bf16": {
+        "max_abs": 22.765625,
+        "rel_l2": 0.7931581139564514,
+        "top1_agreement": 0.0
+      },
+      "answer_mean_logprob": -3.730888843536377
+    },
+    "dynamic_both": {
+      "vs_eager": {
+        "max_abs": 30.765625,
+        "rel_l2": 0.895481288433075,
+        "top1_agreement": 0.0
+      },
+      "vs_dense_bf16": {
+        "max_abs": 31.515625,
+        "rel_l2": 0.9550603032112122,
+        "top1_agreement": 0.0
+      },
+      "answer_mean_logprob": -9.024612426757812
+    },
+    "fixed_k": {
+      "vs_eager": {
+        "max_abs": 21.92578125,
+        "rel_l2": 0.740165114402771,
+        "top1_agreement": 0.0
+      },
+      "vs_dense_bf16": {
+        "max_abs": 22.5,
+        "rel_l2": 0.7946668863296509,
+        "top1_agreement": 0.0
+      },
+      "answer_mean_logprob": -3.6520442962646484
+    },
+    "fixed_v": {
+      "vs_eager": {
+        "max_abs": 15.890625,
+        "rel_l2": 0.4999166429042816,
+        "top1_agreement": 0.75
+      },
+      "vs_dense_bf16": {
+        "max_abs": 1.109375,
+        "rel_l2": 0.03565426543354988,
+        "top1_agreement": 1.0
+      },
+      "answer_mean_logprob": -0.0006232521845959127
+    }
+  }
+}

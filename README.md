@@ -28,7 +28,7 @@ limitations under the License. -->
 
 ## 实现路径
 
-每个新 token 的 K/V 按 token/head 动态计算 scale，随后写入对应物理页；INT4 将两个有符号 4-bit 值打包到一个字节。attention 根据 block table 逐页加载量化值，在计算中即时恢复数值，并在线合并各页 softmax 结果。分页布局使已有页面可保持不变，scale 与 payload 随页面共同管理。当前 CUDA 量化实现限定 Python executor、eager、Qwen2/Qwen2.5 普通 MHA/GQA；MLA、NPU、native CUDA executor、图模式及多种 offload/并行组合不在此路径支持范围内。
+默认 Triton 路径对每个新 token 的 K/V 按 token/head 动态计算 scale，随后写入对应物理页；INT4 将两个有符号 4-bit 值打包到一个字节。attention 根据 block table 逐页加载量化值，在计算中即时恢复数值，并在线合并各页 softmax 结果。分页布局使已有页面可保持不变，scale 与 payload 随页面共同管理。新增 FlashInfer FP8 路径使用固定标量 scale，启用方式见下文。当前 CUDA 量化实现限定 Python executor、eager、Qwen2/Qwen2.5 普通 MHA/GQA；MLA、NPU、native CUDA executor、图模式及多种 offload/并行组合不在此路径支持范围内。
 
 主要修改分布在 `xllm/core/framework/kv_cache` 与 `xllm/core/runtime`（C++ cache 预算、分配和 worker 生命周期）、`xllm/python/attention`、`xllm/python/model_executor`、`xllm/python/models`（Python attention/executor/model 接线），以及 `tools/` 和 `tests/`（基准、评测与回归覆盖）。
 
@@ -45,9 +45,13 @@ limitations under the License. -->
 | GSM8K 全量质量，Qwen2.5-1.5B，RTX 5060 Ti 16GB，C64 | BF16：strict 578/1,319（43.82%），flexible 853/1,319（64.67%） | 基线 |
 | 同上：V-only INT4 G128 / K+V RHT INT4 G32 | V-only：543/1,319（41.17%），853/1,319（64.67%）；RHT：0/1,319（0%），5/1,319（0.38%） | 两个 variant 是 GPU 量化再反量化后写入 BF16 cache 的 FlashInfer 质量对照，未压缩常驻 KV；RHT 有 1,318 题达到 512-token 上限 |
 
-真实压缩 cache 的 plain INT4 全量 serving 评测质量严重退化（GSM8K strict 0/1,319、flexible 14/1,319）；FP8 尚无完整模型质量评测。INT4 诊断确认半整数舍入差异和 decode 读取未写页面 tail scale 两项问题，后者可导致 NaN 传播，均待修复和专项回归。仅 V INT4 若进入真实 cache，按当前 per-token/head scale 开销估算理论节省约 36.7% KV 字节，仍需完整服务实现验证。
+真实压缩 cache 的 plain INT4 全量 serving 评测质量严重退化（GSM8K strict 0/1,319、flexible 14/1,319）；INT4 诊断确认半整数舍入差异和 decode 读取未写页面 tail scale 两项问题，后者可导致 NaN 传播，均待修复和专项回归。仅 V INT4 若进入真实 cache，按当前 per-token/head scale 开销估算理论节省约 36.7% KV 字节，仍需完整服务实现验证。
 
 较早的真实压缩 INT8 serving 评测中，GSM8K strict 从 BF16 43.59% 降至 35.86%，flexible 从 64.90% 降至 59.44%；LongBench 八项各 50 题的混合指标 macro 为 BF16 34.793、INT8 37.509。INT8 服务运行较慢；两次运行并发不同，不能据此作公平速度对比。该组历史服务结果与上表最新的三臂 BF16-cache 质量实验是不同实验。
+
+新增全模型评测补齐了 FP8 质量证据。xLLM 动态 scale 真实 FP8 KV cache 在 GSM8K 1,319 题上，E4M3 strict/flexible 为 2/1,319、27/1,319，E5M2 为 0/1,319、1/1,319；长度上限输出分别为 513 和 1,312。独立 vLLM E4M3 参考的 64 题 strict 为 BF16 27/64、FP8 1/64，样本规模和运行框架均不同。xLLM 的真实 FP8 E4M3/E5M2 目前不推荐直接用于该模型。
+
+单侧 FP8 E4M3 QDQ 实验将量化侧反量化后写回 BF16 cache，用于隔离精度扰动，不代表真实单侧 FP8 cache。GSM8K 上 K-only strict 为 13/1,319，V-only 为 572/1,319；LongBench 八任务 macro 为 BF16 0.34824、K-only 0.09461、V-only 0.35063。K-only 对当前模型敏感；V-only 分数接近基线，但不能据此推断常驻缓存节省、逐题无损或吞吐收益。历史真实压缩 INT8 在 GSM8K 仍能解题，但准确率低于 BF16。
 
 ## 收益与限制
 
@@ -80,8 +84,17 @@ xllm serve --model="$MODEL" --model_impl=python \
 
 `--kv_cache_dtype=auto` 使用模型 BF16 cache。INT4 为实验选项，可替换上面的 `int8`；当前 plain INT4 模型质量明显退化。GSM8K 质量变换对照使用 `XLLM_KV_QUALITY_MODE=v_only_int4` 或 `int4_rht_g32`，并保持 `--kv_cache_dtype=auto`、关闭图模式；该模式量化后反量化并写回 BF16 cache。完整评测配置、manifest 和逐题结果见下列报告。
 
+原生 FlashInfer FP8 路径可显式启用：在上述 eager 启动命令前设置 `XLLM_QUANTIZED_BACKEND=flashinfer`，并将 cache dtype 改为 `fp8_e4m3` 或 `fp8_e5m2`。该路径直接读取分页 FP8 payload，使用固定标量 K/V scale（默认 1，可通过 `XLLM_FP8_K_SCALE` / `XLLM_FP8_V_SCALE` 设置），保留 allocator 的 scale 张量；与现有动态 per-token/head 量化策略分开评估。单层对照增加 `--fp8-backend flashinfer`，可用 `--fp8-k-scale` / `--fp8-v-scale` 设置相同标量。默认量化路径仍为 Triton，当前接入限定 eager。
+
+本次原生 FP8 单层正确性验证通过，长上下文速度接近 BF16；Qwen2.5-1.5B 的配对算术 smoke 却明显退化。原有动态 FP8 路径也出现类似现象，同 attention 数学对照显示 K 量化尤其敏感。当前全 K/V FP8 保留为实验路径，不推荐替代 BF16；数据和诊断边界见 [FlashInfer 接入报告](docs/flashinfer-fp8-integration-20261005.md)。
+
 ## 报告与项目链接
 
+- [xLLM 真实动态 FP8 GSM8K 全量结果](docs/xllm_fp8_gsm8k_20261005_zh.md)
+- [K-only/V-only FP8 QDQ GSM8K 与 LongBench 消融](docs/kv_cache_fp8_kv_ablation_20261005_zh.md)
+- [vLLM FP8 KV cache 64 题参考](docs/vllm_fp8_reference_20261005_zh.md)
+- [FlashInfer 原生 FP8 接入与诊断](docs/flashinfer-fp8-integration-20261005.md)
+- 精简复核证据：[`results/model-fp8-evidence-20261005/`](results/model-fp8-evidence-20261005/)，E 盘原始实验数据保留在 `/mnt/e/AI/xllm-eval-data/` 对应实验目录。
 - [实现审计与接入范围](docs/kv_cache_audit_zh.md)
 - [实验阶段总结与 INT8 kernel 数据](docs/kv_cache_experiment_summary_20261001_zh.md) · [INT8 优化记录](docs/int8-kernel-optimization-20261001.md)
 - [GSM8K INT4 变体全量对照](docs/kv_cache_gsm8k_int4_variants_20261002_zh.md) · [INT4 诊断与已知问题](docs/kv_cache_int4_diagnosis_20261002_zh.md)

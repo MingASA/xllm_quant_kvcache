@@ -1,0 +1,61 @@
+{
+  "created_at_utc": "2026-10-05T09:27:12.053738+00:00",
+  "objective": "FP8 E4M3 scale=1 QDQ precision ablation; persistent cache remains BF16",
+  "task_scope": "gsm8k",
+  "limit": null,
+  "arms": [
+    {
+      "arm": "auto",
+      "quality_mode": "none"
+    },
+    {
+      "arm": "k-only-fp8",
+      "quality_mode": "k_only_fp8"
+    },
+    {
+      "arm": "v-only-fp8",
+      "quality_mode": "v_only_fp8"
+    }
+  ],
+  "execution_protocol": {
+    "request_concurrency_by_dataset": {
+      "gsm8k": 64,
+      "longbench": 8
+    },
+    "max_seqs_per_batch_by_dataset": {
+      "gsm8k": 64,
+      "longbench": 8
+    },
+    "model_impl": "python",
+    "kv_cache_dtype": "auto",
+    "backend": "flashinfer",
+    "enable_graph": false,
+    "max_cache_size": 0,
+    "max_memory_utilization": 0.87,
+    "max_tokens_per_batch": 4096,
+    "fp8_format": "E4M3",
+    "key_scale": 1.0,
+    "value_scale": 1.0,
+    "persistent_cache_dtype": "bfloat16"
+  },
+  "model": {
+    "id": "Qwen2.5-1.5B-Instruct",
+    "path": "/mnt/e/AI/models/Qwen2.5-1.5B-Instruct",
+    "checkpoint_sha256": "dd924a11b4c220f385b51ffa522daea7c9f3d850e31b162bb5661df483c6d3ee",
+    "config_sha256": "98d2ff8cc47488d08a2b0b3acf4eb99ef210779b42bd48605f6b8e36acdbf670",
+    "chat_template_sha256": "2e2d2512cfe46af53dc1eed45368ecaab26ac4461c480e6b69fe571cf0ceaa75"
+  },
+  "source_files": {
+    "runner_sha256": "047b4016680cca12143cef0c1a219f3745a64b6d201beee2b8a418b3c887d697",
+    "evaluator_sha256": "f290c3860c79d16ddbcc19282a8515fcb3fea3fef7ad899a20abed99875cf967",
+    "model_provenance_sha256": "7b97170b67666de97283cd40b0f8bb94c6f457a12a955905838f1bcc09a2ba53"
+  },
+  "output_root": "/mnt/e/AI/xllm-eval-data/fp8-kv-quality-ablation-gsm8k-20261005",
+  "gsm8k": {
+    "data": "/mnt/e/AI/xllm-eval-data/int4-model-eval-20261002/gsm8k/data.jsonl",
+    "data_sha256": "93377ddca91b89cfa35e987104ee7b420a1b17d42b91351b70993d57d0159cac",
+    "shots": "/mnt/e/AI/xllm-eval-data/gsm8k-3101c7d5072418e28b9008a6636bde82a006892c/prepared/five_train_examples.json",
+    "shots_sha256": "4e076bef9962698cf3df4701f093437c86c925dcfa987556ea4fdb0fbd93a3ce",
+    "examples": 1319
+  }
+}

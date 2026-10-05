@@ -355,6 +355,47 @@ def test_cuda_quantized_backend_dispatch(cache_dtype: str) -> None:
     assert isinstance(backend, QuantizedPagedAttentionBackend)
 
 
+@pytest.mark.parametrize("quality_mode", ("k_only_fp8", "v_only_fp8"))
+def test_cuda_fp8_quality_backend_dispatch(monkeypatch, quality_mode: str) -> None:
+    monkeypatch.setenv("XLLM_KV_QUALITY_MODE", quality_mode)
+    module = types.ModuleType("xllm.python.attention.flashinfer")
+    module.FlashInferBackend = StubAttentionBackend
+    with (
+        patch("xllm.python.model_executor.executor.current_platform.is_cuda", return_value=True),
+        patch("xllm.python.model_executor.executor.current_platform.is_npu", return_value=False),
+        patch.dict(sys.modules, {module.__name__: module}),
+    ):
+        backend = _create_attention_backend(
+            _make_attention_layer(),
+            torch.device("cuda"),
+            torch.bfloat16,
+            {"kv_cache_dtype": "auto", "python_graph_backend": "off", "model_type": "qwen2"},
+        )
+    assert isinstance(backend, StubAttentionBackend)
+    assert backend.init_kwargs["quality_mode"] == quality_mode
+
+
+def test_cuda_flashinfer_fp8_backend_dispatch(monkeypatch) -> None:
+    monkeypatch.setenv("XLLM_QUANTIZED_BACKEND", "flashinfer")
+    monkeypatch.setenv("XLLM_FP8_K_SCALE", "0.5")
+    monkeypatch.setenv("XLLM_FP8_V_SCALE", "2.0")
+    module = types.ModuleType("xllm.python.attention.flashinfer_fp8")
+    module.FlashInferFP8Backend = StubAttentionBackend
+    with (
+        patch("xllm.python.model_executor.executor.current_platform.is_cuda", return_value=True),
+        patch.dict(sys.modules, {module.__name__: module}),
+    ):
+        backend = _create_attention_backend(
+            _make_attention_layer(),
+            torch.device("cuda"),
+            torch.bfloat16,
+            {"kv_cache_dtype": "fp8_e4m3", "python_graph_backend": "off"},
+        )
+    assert isinstance(backend, StubAttentionBackend)
+    assert backend.init_kwargs["key_scale"] == 0.5
+    assert backend.init_kwargs["value_scale"] == 2.0
+
+
 @pytest.mark.parametrize(
     "extra_config",
     [

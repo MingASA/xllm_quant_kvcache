@@ -1,0 +1,21 @@
+{
+  "rows_per_arm": {
+    "auto": 1319,
+    "fp8-e4m3": 1319,
+    "fp8-e5m2": 1319
+  },
+  "pair_scores": {
+    "fp8-e4m3": {
+      "auto_strict_em": 0.42987111448066717,
+      "auto_flexible_em": 0.6398786959818044,
+      "fp8-e4m3_strict_em": 0.001516300227445034,
+      "fp8-e4m3_flexible_em": 0.02047005307050796
+    },
+    "fp8-e5m2": {
+      "auto_strict_em": 0.42987111448066717,
+      "auto_flexible_em": 0.6398786959818044,
+      "fp8-e5m2_strict_em": 0.0,
+      "fp8-e5m2_flexible_em": 0.000758150113722517
+    }
+  }
+}

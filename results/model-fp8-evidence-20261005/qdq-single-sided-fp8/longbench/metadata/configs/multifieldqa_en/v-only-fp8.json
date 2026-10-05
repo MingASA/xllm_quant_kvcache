@@ -1,0 +1,77 @@
+{
+  "task": "multifieldqa_en",
+  "data": "/mnt/e/AI/xllm-eval-data/longbench-5e628be450b7e67fb7ae6e201bd6d8f7056f7672/prepared/seed17_n50_contextcap32704/multifieldqa_en.jsonl",
+  "input_sha256": "5938a9444528c6f0c83266e89119e73182839a24f88bdb6574edebd8e9967841",
+  "model": "Qwen2.5-1.5B-Instruct",
+  "arm": "v-only-fp8",
+  "endpoint": "http://127.0.0.1:18994/v1",
+  "model_impl": "python",
+  "quality_transform_mode": "v_only_fp8",
+  "tokenizer": "/mnt/e/AI/models/Qwen2.5-1.5B-Instruct",
+  "sampling": {
+    "temperature": 0,
+    "top_p": 1,
+    "seed": 17
+  },
+  "generation": {
+    "temperature": 0,
+    "top_p": 1,
+    "seed": 17,
+    "max_tokens": 64,
+    "stop_token_ids": [
+      151645,
+      151643
+    ],
+    "stop_strings": []
+  },
+  "max_tokens": 64,
+  "max_prompt_plus_generation_tokens": 32768,
+  "examples": 50,
+  "api_mode": "chat-completions",
+  "execution_protocol": {
+    "request_concurrency": 8,
+    "max_seqs_per_batch": 8
+  },
+  "runtime_versions": {
+    "python": "3.12.13",
+    "transformers": "5.17.0",
+    "fuzzywuzzy": "0.18.0",
+    "jieba": "0.42.1",
+    "numpy": "2.3.5",
+    "rouge": "1.0.1"
+  },
+  "server_manifest": {
+    "server_started": true,
+    "server_mode": "python",
+    "model_impl": "python",
+    "graph_mode": "off",
+    "kv_cache_mode": "auto",
+    "quality_transform_mode": "v_only_fp8",
+    "fp8_backend": "flashinfer",
+    "fp8_format": "E4M3",
+    "fp8_key_scale": 1.0,
+    "fp8_value_scale": 1.0,
+    "persistent_cache_dtype": "bfloat16",
+    "checkpoint_path": "/mnt/e/AI/models/Qwen2.5-1.5B-Instruct",
+    "checkpoint_sha256": "dd924a11b4c220f385b51ffa522daea7c9f3d850e31b162bb5661df483c6d3ee",
+    "model_config_sha256": "98d2ff8cc47488d08a2b0b3acf4eb99ef210779b42bd48605f6b8e36acdbf670",
+    "chat_template_sha256": "2e2d2512cfe46af53dc1eed45368ecaab26ac4461c480e6b69fe571cf0ceaa75",
+    "model": "Qwen2.5-1.5B-Instruct",
+    "runtime_configuration": {
+      "max_cache_size": 0,
+      "max_memory_utilization": 0.87,
+      "max_tokens_per_batch": 4096,
+      "max_seqs_per_batch": 8,
+      "enable_graph": false,
+      "enable_prefill_piecewise_graph": false,
+      "python_graph_backend": "off"
+    },
+    "arm": "v-only-fp8",
+    "verified_at_utc": "2026-10-05T09:57:54.662923+00:00",
+    "server_attestation": "Readiness verified for v-only-fp8 on http://127.0.0.1:18994/v1.",
+    "verified_api_port": 18994,
+    "smoke_response_status": 200
+  },
+  "server_manifest_sha256": "146225396e6607b98cafd986c307d93bcdfb84dc9850aacf3e64c8c16623fa99",
+  "longbench_revision": "2e00731f8d0bff23dc4325161044d0ed8af94c1e"
+}

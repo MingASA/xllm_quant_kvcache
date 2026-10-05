@@ -1,0 +1,47 @@
+{
+  "model": "/mnt/e/AI/models/Qwen2.5-1.5B-Instruct",
+  "dataset": "/mnt/e/AI/xllm-eval-data/int4-model-eval-20261002/gsm8k/data.jsonl",
+  "dataset_sha256": "93377ddca91b89cfa35e987104ee7b420a1b17d42b91351b70993d57d0159cac",
+  "shots": "/mnt/e/AI/xllm-eval-data/gsm8k-3101c7d5072418e28b9008a6636bde82a006892c/prepared/five_train_examples.json",
+  "shots_sha256": "4e076bef9962698cf3df4701f093437c86c925dcfa987556ea4fdb0fbd93a3ce",
+  "prompt_source": "/home/mingasa/projects/xllm_quant_kvcache/results/flashinfer-fp8-smoke-20261005/README.md",
+  "prompt_source_sha256": "4d4adf3427808646ce1e94e10dee1fb0ade2937c0b348537bd93d2c921ffeb50",
+  "flags": [
+    "dtype=bfloat16",
+    "kv_cache_dtype=auto/fp8",
+    "attention_backend=FLASHINFER",
+    "enforce_eager=True",
+    "enable_prefix_caching=False",
+    "gpu_memory_utilization=0.80",
+    "max_model_len=4096"
+  ],
+  "python": "/home/mingasa/venvs/vllm/bin/python",
+  "runtime_versions": {
+    "vllm": "0.30.0",
+    "torch": "2.13.0+cu132",
+    "flashinfer-python": "0.6.18.post1",
+    "transformers": "5.17.0"
+  },
+  "engine_flags": {
+    "dtype": "bfloat16",
+    "kv_cache_dtype": {
+      "bf16": "auto",
+      "fp8": "fp8"
+    },
+    "attention_backend": "FLASHINFER",
+    "enforce_eager": true,
+    "enable_prefix_caching": false,
+    "gpu_memory_utilization": 0.8,
+    "max_model_len": 4096,
+    "generation_config": "vllm",
+    "repetition_penalty": 1.0,
+    "gsm8k_stop": [
+      "Question:",
+      "</s>",
+      "<|im_end|>"
+    ],
+    "arithmetic_stop": null
+  },
+  "reproduction_source_sha256": "015f12ca54fc39646c8e9497f761cb60651e1711a8adf1d00f8a3a833bb1f35f",
+  "source_sha256_status": "not_valid_as_runtime_provenance; only the reproducible current source is hashed"
+}

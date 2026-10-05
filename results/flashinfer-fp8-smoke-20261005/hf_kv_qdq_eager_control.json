@@ -1,0 +1,131 @@
+{
+  "model": "/mnt/e/AI/models/Qwen2.5-1.5B-Instruct",
+  "prompt": "What is 27 times 43? Answer with the number only.",
+  "answer": "1161",
+  "prompt_tokens": 45,
+  "answer_token_count": 4,
+  "max_new_tokens": 24,
+  "attention_math": "Qwen eager_attention_forward identically used in every mode; only K/V QDQ differs",
+  "causal_mask_audit_callbacks": 280,
+  "all_future_masked": true,
+  "results": {
+    "bf16": {
+      "teacher_forced": {
+        "max_abs_vs_bf16": 0.0,
+        "relative_l2_vs_bf16": 0.0,
+        "top1_agreement_vs_bf16": 1.0
+      },
+      "answer_mean_logprob": -0.7913297414779663,
+      "greedy_24": {
+        "token_count": 5,
+        "text": "1131",
+        "ended_with_eos": true,
+        "token_ids": [
+          16,
+          16,
+          18,
+          16,
+          151645
+        ]
+      }
+    },
+    "fixed_both": {
+      "teacher_forced": {
+        "max_abs_vs_bf16": 21.59375,
+        "relative_l2_vs_bf16": 0.8061115741729736,
+        "top1_agreement_vs_bf16": 0.0
+      },
+      "answer_mean_logprob": -5.151645660400391,
+      "greedy_24": {
+        "token_count": 12,
+        "text": "27 times 43 is 83.",
+        "ended_with_eos": true,
+        "token_ids": [
+          17,
+          22,
+          3039,
+          220,
+          19,
+          18,
+          374,
+          220,
+          23,
+          18,
+          13,
+          151645
+        ]
+      }
+    },
+    "dynamic_both": {
+      "teacher_forced": {
+        "max_abs_vs_bf16": 26.890625,
+        "relative_l2_vs_bf16": 0.8658462166786194,
+        "top1_agreement_vs_bf16": 0.0
+      },
+      "answer_mean_logprob": -9.19492244720459,
+      "greedy_24": {
+        "token_count": 7,
+        "text": "\n\n7",
+        "ended_with_eos": true,
+        "token_ids": [
+          198,
+          151644,
+          151644,
+          151644,
+          198,
+          22,
+          151645
+        ]
+      }
+    },
+    "fixed_k": {
+      "teacher_forced": {
+        "max_abs_vs_bf16": 21.21875,
+        "relative_l2_vs_bf16": 0.7812420725822449,
+        "top1_agreement_vs_bf16": 0.0
+      },
+      "answer_mean_logprob": -5.110696315765381,
+      "greedy_24": {
+        "token_count": 14,
+        "text": "27 times 43 is 2743.",
+        "ended_with_eos": true,
+        "token_ids": [
+          17,
+          22,
+          3039,
+          220,
+          19,
+          18,
+          374,
+          220,
+          17,
+          22,
+          19,
+          18,
+          13,
+          151645
+        ]
+      }
+    },
+    "fixed_v": {
+      "teacher_forced": {
+        "max_abs_vs_bf16": 1.4189453125,
+        "relative_l2_vs_bf16": 0.04260838031768799,
+        "top1_agreement_vs_bf16": 1.0
+      },
+      "answer_mean_logprob": -0.9706264734268188,
+      "greedy_24": {
+        "token_count": 5,
+        "text": "1131",
+        "ended_with_eos": true,
+        "token_ids": [
+          16,
+          16,
+          18,
+          16,
+          151645
+        ]
+      }
+    }
+  }
+}

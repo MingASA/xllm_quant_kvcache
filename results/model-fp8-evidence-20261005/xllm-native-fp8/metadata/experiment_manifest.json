@@ -1,0 +1,77 @@
+{
+  "created_at_utc": "2026-10-05T13:30:00.415592+00:00",
+  "benchmark": "GSM8K test split",
+  "input": {
+    "path": "/mnt/e/AI/xllm-eval-data/int4-model-eval-20261002/gsm8k/data.jsonl",
+    "sha256": "93377ddca91b89cfa35e987104ee7b420a1b17d42b91351b70993d57d0159cac",
+    "rows": 1319
+  },
+  "few_shot": {
+    "path": "/mnt/e/AI/xllm-eval-data/gsm8k-3101c7d5072418e28b9008a6636bde82a006892c/prepared/five_train_examples.json",
+    "sha256": "4e076bef9962698cf3df4701f093437c86c925dcfa987556ea4fdb0fbd93a3ce",
+    "examples": 5
+  },
+  "model": {
+    "id": "Qwen2.5-1.5B-Instruct",
+    "path": "/mnt/e/AI/models/Qwen2.5-1.5B-Instruct",
+    "checkpoint_sha256": "dd924a11b4c220f385b51ffa522daea7c9f3d850e31b162bb5661df483c6d3ee",
+    "config_sha256": "98d2ff8cc47488d08a2b0b3acf4eb99ef210779b42bd48605f6b8e36acdbf670",
+    "chat_template_sha256": "2e2d2512cfe46af53dc1eed45368ecaab26ac4461c480e6b69fe571cf0ceaa75"
+  },
+  "generation": {
+    "temperature": 0,
+    "top_p": 1,
+    "seed": 17,
+    "max_tokens": 512,
+    "stop_strings": [
+      "Question:",
+      "</s>",
+      "<|im_end|>"
+    ],
+    "stop_token_ids": [
+      151645,
+      151643
+    ]
+  },
+  "runtime": {
+    "model_impl": "python",
+    "graph_mode": "off",
+    "max_cache_size": 0,
+    "max_memory_utilization": 0.87,
+    "max_tokens_per_batch": 4096,
+    "backend_by_arm": {
+      "auto": "flashinfer",
+      "fp8-e4m3": "triton",
+      "fp8-e5m2": "triton"
+    },
+    "kv_cache_dtype_by_arm": {
+      "auto": "auto",
+      "fp8-e4m3": "fp8_e4m3",
+      "fp8-e5m2": "fp8_e5m2"
+    },
+    "request_concurrency_by_arm": {
+      "auto": 32,
+      "fp8-e4m3": 50,
+      "fp8-e5m2": 50
+    },
+    "max_seqs_per_batch_by_arm": {
+      "auto": 32,
+      "fp8-e4m3": 50,
+      "fp8-e5m2": 50
+    },
+    "quality_transform_mode": "none"
+  },
+  "limit": null,
+  "source_snapshot_sha256": {
+    "tools/run_xllm_fp8_gsm8k.py": "c6f0b13db847e6bab1ce90e496e487bfcf2a5981c0b1afce85f24706f210815e",
+    "tools/eval_kv_cache_quality.py": "c3e32a6a2b5ff681cec006bd3988d7d4a0ea78ff1c9434683dde81d605678475",
+    "tools/test_eval_kv_cache_quality_resume.py": "606fcec9972ec682ff463f801ebfa1284e8481df6e295db47375a1b4a0ab16a3",
+    "xllm/python/attention/quantized_triton.py": "98d85f646a1b02cf2659444189e8309354bab5d1a6ea7a654178dbf11a47675d",
+    "xllm/python/attention/quantized.py": "b748801dfe65dee29216ccd90f4677d83a752413fcc2a4eb5de7bc25408bae3d",
+    "xllm/python/attention/flashinfer.py": "dcf6adb555bca557f0fbe752c0b110edbc1acefae76e698875459daf4a277bf4",
+    "xllm/python/attention/backend.py": "e70e99143c527739ffa8f03a393ce6e46d2e4606f9fba91e8a78c2e10a950ff1",
+    "xllm/python/model_executor/executor.py": "7cb70930568ff501149951bdb718f375db905fa849ac5794ddafc8be95996c1c",
+    "xllm/python/layers/attention.py": "28ea045a7fe66de33326374b251dab4c191ad29f5cd4386f0919b9960f10b884"
+  },
+  "output_root": "/mnt/e/AI/xllm-eval-data/xllm-fp8-gsm8k-20261005"
+}

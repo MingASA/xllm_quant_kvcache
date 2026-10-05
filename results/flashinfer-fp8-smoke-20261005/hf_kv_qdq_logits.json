@@ -1,0 +1,98 @@
+{
+  "validity": "INVALID_FOR_CROSS_MODE_INFERENCE_COMPARISON",
+  "invalid_reason": "FP8 modes used FP32 dense attention while BF16 used Qwen eager_attention_forward; use hf_kv_qdq_eager_control.json instead.",
+  "model": "/mnt/e/AI/models/Qwen2.5-1.5B-Instruct",
+  "prompt": "What is 27 times 43? Answer with the number only.",
+  "answer": "1161",
+  "prompt_tokens": 45,
+  "answer_token_count": 4,
+  "max_new_tokens": 24,
+  "causal_mask_audit_callbacks": 168,
+  "all_future_masked": true,
+  "results": {
+    "bf16": {
+      "teacher_forced_logits": {
+        "max_abs_vs_bf16": 0.0,
+        "relative_l2_vs_bf16": 0.0,
+        "top1_agreement_vs_bf16": 1.0,
+        "answer_mean_logprob": -0.7913297414779663,
+        "native_eager_max_abs": 0.0
+      },
+      "greedy_24": {
+        "token_ids": [
+          16,
+          16,
+          18,
+          16,
+          151645
+        ],
+        "text": "1131",
+        "tokens": 5,
+        "ended_with_eos": true
+      }
+    },
+    "fixed_scale1": {
+      "teacher_forced_logits": {
+        "max_abs_vs_bf16": 22.30078125,
+        "relative_l2_vs_bf16": 0.740699827671051,
+        "top1_agreement_vs_bf16": 0.0,
+        "answer_mean_logprob": -3.730888843536377
+      },
+      "greedy_24": {
+        "token_ids": [
+          17,
+          23,
+          353,
+          220,
+          19,
+          18,
+          284,
+          220,
+          16,
+          15,
+          21,
+          21,
+          151645
+        ],
+        "text": "28 * 43 = 1066",
+        "tokens": 13,
+        "ended_with_eos": true
+      }
+    },
+    "dynamic_per_token_head": {
+      "teacher_forced_logits": {
+        "max_abs_vs_bf16": 30.765625,
+        "relative_l2_vs_bf16": 0.895481288433075,
+        "top1_agreement_vs_bf16": 0.0,
+        "answer_mean_logprob": -9.024612426757812
+      },
+      "greedy_24": {
+        "token_ids": [
+          198,
+          151644,
+          198,
+          151644,
+          872,
+          198,
+          17,
+          22,
+          3039,
+          220,
+          19,
+          18,
+          18,
+          16819,
+          220,
+          23,
+          22,
+          19,
+          16,
+          151645
+        ],
+        "text": "\n\nuser\n27 times 433 equals 8741",
+        "tokens": 20,
+        "ended_with_eos": true
+      }
+    }
+  }
+}

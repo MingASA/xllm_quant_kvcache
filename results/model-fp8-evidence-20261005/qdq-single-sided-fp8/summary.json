@@ -1,0 +1,129 @@
+{
+  "gsm8k_rows_per_arm": {
+    "auto": 1319,
+    "k-only-fp8": 1319,
+    "v-only-fp8": 1319
+  },
+  "gsm8k_pair_scores": {
+    "k-only-fp8": {
+      "auto_strict_em": 0.4351781652767248,
+      "auto_flexible_em": 0.6474601971190296,
+      "k-only-fp8_strict_em": 0.009855951478392721,
+      "k-only-fp8_flexible_em": 0.01819560272934041
+    },
+    "v-only-fp8": {
+      "auto_strict_em": 0.4351781652767248,
+      "auto_flexible_em": 0.6474601971190296,
+      "v-only-fp8_strict_em": 0.4336618650492798,
+      "v-only-fp8_flexible_em": 0.645185746777862
+    }
+  },
+  "longbench_rows": {
+    "narrativeqa": {
+      "auto": 50,
+      "k-only-fp8": 50,
+      "v-only-fp8": 50
+    },
+    "qasper": {
+      "auto": 50,
+      "k-only-fp8": 50,
+      "v-only-fp8": 50
+    },
+    "multifieldqa_en": {
+      "auto": 50,
+      "k-only-fp8": 50,
+      "v-only-fp8": 50
+    },
+    "2wikimqa": {
+      "auto": 50,
+      "k-only-fp8": 50,
+      "v-only-fp8": 50
+    },
+    "hotpotqa": {
+      "auto": 50,
+      "k-only-fp8": 50,
+      "v-only-fp8": 50
+    },
+    "musique": {
+      "auto": 50,
+      "k-only-fp8": 50,
+      "v-only-fp8": 50
+    },
+    "lcc": {
+      "auto": 50,
+      "k-only-fp8": 50,
+      "v-only-fp8": 50
+    },
+    "repobench-p": {
+      "auto": 50,
+      "k-only-fp8": 50,
+      "v-only-fp8": 50
+    }
+  },
+  "longbench_pair_scores": {
+    "narrativeqa/k-only-fp8": {
+      "auto": 0.18912103099103716,
+      "k-only-fp8": 0.002370027633185528
+    },
+    "narrativeqa/v-only-fp8": {
+      "auto": 0.18912103099103716,
+      "v-only-fp8": 0.19419874413736304
+    },
+    "qasper/k-only-fp8": {
+      "auto": 0.3641582484590559,
+      "k-only-fp8": 0.03722226294821576
+    },
+    "qasper/v-only-fp8": {
+      "auto": 0.3641582484590559,
+      "v-only-fp8": 0.3590586817210275
+    },
+    "multifieldqa_en/k-only-fp8": {
+      "auto": 0.4393882605407658,
+      "k-only-fp8": 0.05417487977717432
+    },
+    "multifieldqa_en/v-only-fp8": {
+      "auto": 0.4393882605407658,
+      "v-only-fp8": 0.4654626857610715
+    },
+    "2wikimqa/k-only-fp8": {
+      "auto": 0.3276717317769949,
+      "k-only-fp8": 0.006404761904761904
+    },
+    "2wikimqa/v-only-fp8": {
+      "auto": 0.3276717317769949,
+      "v-only-fp8": 0.30944488844488843
+    },
+    "hotpotqa/k-only-fp8": {
+      "auto": 0.40088878652494214,
+      "k-only-fp8": 0.015344393592677346
+    },
+    "hotpotqa/v-only-fp8": {
+      "auto": 0.40088878652494214,
+      "v-only-fp8": 0.4034212045264677
+    },
+    "musique/k-only-fp8": {
+      "auto": 0.15853139258402416,
+      "k-only-fp8": 0.00857142857142857
+    },
+    "musique/v-only-fp8": {
+      "auto": 0.15853139258402416,
+      "v-only-fp8": 0.16541425241425242
+    },
+    "lcc/k-only-fp8": {
+      "auto": 0.4476,
+      "k-only-fp8": 0.335
+    },
+    "lcc/v-only-fp8": {
+      "auto": 0.4476,
+      "v-only-fp8": 0.4524
+    },
+    "repobench-p/k-only-fp8": {
+      "auto": 0.4586,
+      "k-only-fp8": 0.2978
+    },
+    "repobench-p/v-only-fp8": {
+      "auto": 0.4586,
+      "v-only-fp8": 0.4556
+    }
+  }
+}

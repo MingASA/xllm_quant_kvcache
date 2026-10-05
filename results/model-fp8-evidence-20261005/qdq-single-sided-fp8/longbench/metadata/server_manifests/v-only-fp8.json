@@ -1,0 +1,32 @@
+{
+  "server_started": true,
+  "server_mode": "python",
+  "model_impl": "python",
+  "graph_mode": "off",
+  "kv_cache_mode": "auto",
+  "quality_transform_mode": "v_only_fp8",
+  "fp8_backend": "flashinfer",
+  "fp8_format": "E4M3",
+  "fp8_key_scale": 1.0,
+  "fp8_value_scale": 1.0,
+  "persistent_cache_dtype": "bfloat16",
+  "checkpoint_path": "/mnt/e/AI/models/Qwen2.5-1.5B-Instruct",
+  "checkpoint_sha256": "dd924a11b4c220f385b51ffa522daea7c9f3d850e31b162bb5661df483c6d3ee",
+  "model_config_sha256": "98d2ff8cc47488d08a2b0b3acf4eb99ef210779b42bd48605f6b8e36acdbf670",
+  "chat_template_sha256": "2e2d2512cfe46af53dc1eed45368ecaab26ac4461c480e6b69fe571cf0ceaa75",
+  "model": "Qwen2.5-1.5B-Instruct",
+  "runtime_configuration": {
+    "max_cache_size": 0,
+    "max_memory_utilization": 0.87,
+    "max_tokens_per_batch": 4096,
+    "max_seqs_per_batch": 8,
+    "enable_graph": false,
+    "enable_prefill_piecewise_graph": false,
+    "python_graph_backend": "off"
+  },
+  "arm": "v-only-fp8",
+  "verified_at_utc": "2026-10-05T09:57:54.662923+00:00",
+  "server_attestation": "Readiness verified for v-only-fp8 on http://127.0.0.1:18994/v1.",
+  "verified_api_port": 18994,
+  "smoke_response_status": 200
+}

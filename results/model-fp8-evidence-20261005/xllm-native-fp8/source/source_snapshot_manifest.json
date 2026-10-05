@@ -1,0 +1,15 @@
+{
+  "created_at_utc": "2026-10-05T13:30:00.391499+00:00",
+  "git_head": "2c00f80fc9c56834404345e9afc477a716616f9a",
+  "sha256": {
+    "tools/run_xllm_fp8_gsm8k.py": "c6f0b13db847e6bab1ce90e496e487bfcf2a5981c0b1afce85f24706f210815e",
+    "tools/eval_kv_cache_quality.py": "c3e32a6a2b5ff681cec006bd3988d7d4a0ea78ff1c9434683dde81d605678475",
+    "tools/test_eval_kv_cache_quality_resume.py": "606fcec9972ec682ff463f801ebfa1284e8481df6e295db47375a1b4a0ab16a3",
+    "xllm/python/attention/quantized_triton.py": "98d85f646a1b02cf2659444189e8309354bab5d1a6ea7a654178dbf11a47675d",
+    "xllm/python/attention/quantized.py": "b748801dfe65dee29216ccd90f4677d83a752413fcc2a4eb5de7bc25408bae3d",
+    "xllm/python/attention/flashinfer.py": "dcf6adb555bca557f0fbe752c0b110edbc1acefae76e698875459daf4a277bf4",
+    "xllm/python/attention/backend.py": "e70e99143c527739ffa8f03a393ce6e46d2e4606f9fba91e8a78c2e10a950ff1",
+    "xllm/python/model_executor/executor.py": "7cb70930568ff501149951bdb718f375db905fa849ac5794ddafc8be95996c1c",
+    "xllm/python/layers/attention.py": "28ea045a7fe66de33326374b251dab4c191ad29f5cd4386f0919b9960f10b884"
+  }
+}

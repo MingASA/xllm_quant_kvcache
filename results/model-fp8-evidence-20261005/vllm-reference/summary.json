@@ -1,0 +1,14 @@
+{
+  "bf16": {
+    "n": 64,
+    "strict_correct": 27.0,
+    "flexible_correct": 38.0,
+    "length": 0
+  },
+  "fp8-e4m3": {
+    "n": 64,
+    "strict_correct": 1.0,
+    "flexible_correct": 1.0,
+    "length": 12
+  }
+}

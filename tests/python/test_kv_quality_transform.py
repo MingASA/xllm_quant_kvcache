@@ -52,6 +52,26 @@ def test_v_only_writer_uses_exact_division_at_half_integer_boundary() -> None:
     torch.testing.assert_close(actual, codec.decode(*codec.encode(values)).to(values.dtype), rtol=0, atol=0)
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="Requires CUDA")
+@pytest.mark.parametrize("mode", ("k_only_fp8", "v_only_fp8"))
+@pytest.mark.parametrize("tokens", (0, 1, 17, 257))
+def test_fp8_quality_transform_matches_fixed_scale_reference(mode: str, tokens: int) -> None:
+    torch.manual_seed(702)
+    source = torch.randn(tokens, 2, 2, 128, device="cuda", dtype=torch.bfloat16)
+    # Include outliers and subnormals; inputs are noncontiguous projection views.
+    source[..., :4] = torch.tensor([512.0, -512.0, 0.001, -0.001], device="cuda")
+    before = source.clone()
+    key, value = source[..., 0, :], source[..., 1, :]
+    transform = KVQualityTransform(mode, 128, torch.device("cuda"), torch.bfloat16)
+    actual_key, actual_value = transform.apply(key, value)
+    selected = key if mode == "k_only_fp8" else value
+    expected = selected.float().clamp(-448, 448).to(torch.float8_e4m3fn).to(torch.bfloat16)
+    actual = actual_key if mode == "k_only_fp8" else actual_value
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    assert (actual_value is value) if mode == "k_only_fp8" else (actual_key is key)
+    torch.testing.assert_close(source, before, rtol=0, atol=0)
+
+
 @pytest.mark.parametrize("mode", ("unknown", "int4", ""))
 def test_unknown_quality_mode_rejected(mode: str) -> None:
     with pytest.raises(ValueError, match="Unknown"):

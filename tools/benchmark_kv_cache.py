@@ -155,14 +155,23 @@ def _attention_metadata(
     )
 
 
-def _flashinfer_backend(cache: LayerCache, metadata: SimpleNamespace, args: argparse.Namespace):
+def _flashinfer_backend(
+    cache: LayerCache, metadata: SimpleNamespace, args: argparse.Namespace, fp8_format: str | None = None
+):
     os.environ.setdefault(
         "FLASHINFER_WORKSPACE_BASE",
         str(Path(tempfile.gettempdir()) / "xllm-flashinfer-workspace"),
     )
     from xllm.python.attention.flashinfer import FlashInferBackend
 
-    backend = FlashInferBackend(
+    backend_type = FlashInferBackend
+    options = {}
+    if fp8_format is not None:
+        from xllm.python.attention.flashinfer_fp8 import FlashInferFP8Backend
+
+        backend_type = FlashInferFP8Backend
+        options = dict(cache_dtype=fp8_format, key_scale=args.fp8_k_scale, value_scale=args.fp8_v_scale)
+    backend = backend_type(
         args.heads,
         args.kv_heads,
         args.head_dim,
@@ -170,6 +179,7 @@ def _flashinfer_backend(cache: LayerCache, metadata: SimpleNamespace, args: argp
         -1,
         torch.device(args.device),
         torch.bfloat16,
+        **options,
     )
     backend.bind_kv_caches([cache])
     backend.prepare(metadata)
@@ -226,9 +236,7 @@ def _paged_attention(
             tile = query[offset + start : offset + stop]
             positions = torch.arange(start, stop, device=q.device) + context_len - query_len
             tile_q = tile.float().reshape(-1, layer.num_kv_heads, groups, layer.head_dim)
-            running_max = torch.full(
-                (layer.num_kv_heads, groups, tile_q.shape[0], 1), -torch.inf, device=q.device
-            )
+            running_max = torch.full((layer.num_kv_heads, groups, tile_q.shape[0], 1), -torch.inf, device=q.device)
             denominator = torch.zeros_like(running_max)
             accumulator = torch.zeros_like(tile_q)
             for page_index, block_id in enumerate(pages):
@@ -242,8 +250,10 @@ def _paged_attention(
                     key = codec.decode(key_payload, cache.key_scale[block_id, :valid])
                     value = codec.decode(value_payload, cache.value_scale[block_id, :valid])
                 key_positions = torch.arange(valid, device=q.device) + page_index * page_size
-                visible = key_positions[None, :] <= positions[:, None] if layer.causal else torch.ones(
-                    (tile_q.shape[0], valid), device=q.device, dtype=torch.bool
+                visible = (
+                    key_positions[None, :] <= positions[:, None]
+                    if layer.causal
+                    else torch.ones((tile_q.shape[0], valid), device=q.device, dtype=torch.bool)
                 )
                 if layer.sliding_window > 0:
                     visible &= key_positions[None, :] > positions[:, None] - layer.sliding_window
@@ -259,8 +269,8 @@ def _paged_attention(
                 denominator = denominator * correction + weights.sum(-1, keepdim=True)
                 running_max = next_max
             output[offset + start : offset + stop] = (
-                accumulator / denominator.permute(2, 0, 1, 3)
-            ).reshape_as(tile).to(tile.dtype)
+                (accumulator / denominator.permute(2, 0, 1, 3)).reshape_as(tile).to(tile.dtype)
+            )
     return output.flatten(1)
 
 
@@ -302,12 +312,8 @@ def _case(args: argparse.Namespace, length: int, fmt: str, batch: int, queries: 
     }
     if fmt == "bf16":
         cache = LayerCache(
-            key=torch.zeros(
-                (blocks, args.page_size, args.kv_heads, dim), device=args.device, dtype=torch.bfloat16
-            ),
-            value=torch.zeros(
-                (blocks, args.page_size, args.kv_heads, dim), device=args.device, dtype=torch.bfloat16
-            ),
+            key=torch.zeros((blocks, args.page_size, args.kv_heads, dim), device=args.device, dtype=torch.bfloat16),
+            value=torch.zeros((blocks, args.page_size, args.kv_heads, dim), device=args.device, dtype=torch.bfloat16),
         )
         codec = None
     else:
@@ -319,11 +325,34 @@ def _case(args: argparse.Namespace, length: int, fmt: str, batch: int, queries: 
             key_scale=torch.ones(shape[:-1], device=args.device),
             value_scale=torch.ones(shape[:-1], device=args.device),
         )
+    native_fp8 = args.device == "cuda" and fmt.startswith("fp8") and args.fp8_backend == "flashinfer"
     write_kv = (
         (lambda key, value, mapping: _write_bf16_kv(cache, key, value, mapping))
         if codec is None
         else (lambda key, value, mapping: write_quantized_kv(cache, key, value, mapping, codec))
     )
+    if native_fp8:
+        from xllm.python.attention.quantized_triton import write_quantized_kv as write_fixed_fp8
+
+        def write_kv(key, value, mapping):
+            write_fixed_fp8(
+                key.contiguous(),
+                value.contiguous(),
+                mapping.contiguous(),
+                cache.key,
+                cache.value,
+                cache.key_scale,
+                cache.value_scale,
+                fmt,
+                dim,
+                fixed_scales=(args.fp8_k_scale, args.fp8_v_scale),
+            )
+
+        row["quantization_scale_policy"] = "fixed_scalar"
+        row["fp8_k_scale"] = args.fp8_k_scale
+        row["fp8_v_scale"] = args.fp8_v_scale
+    elif codec is not None:
+        row["quantization_scale_policy"] = "dynamic_per_token_head"
     write_kv(k.flatten(0, 1), v.flatten(0, 1), slots.flatten())
     metadata = SimpleNamespace(
         block_table=pages.to(device=args.device, dtype=torch.int32),
@@ -357,24 +386,40 @@ def _case(args: argparse.Namespace, length: int, fmt: str, batch: int, queries: 
             from xllm.python.attention.quantized_triton import quantized_paged_attention
 
             query_to_sequence = torch.arange(batch, device=args.device, dtype=torch.int32).repeat_interleave(queries)
-            query_positions = torch.arange(length - queries, length, device=args.device, dtype=torch.int32).repeat(batch)
+            query_positions = torch.arange(length - queries, length, device=args.device, dtype=torch.int32).repeat(
+                batch
+            )
             context_lengths = torch.full((batch,), length, device=args.device, dtype=torch.int32)
             query_offsets = torch.arange(batch + 1, device=args.device, dtype=torch.int32) * queries
 
             def triton_attention(query: torch.Tensor, layer: SimpleNamespace) -> torch.Tensor:
                 return quantized_paged_attention(
-                    query, cache.key, cache.value, cache.key, cache.value,
-                    metadata.block_table, query_to_sequence, query_positions,
-                    context_lengths, "bf16", layer.scale, layer.sliding_window,
-                    layer.causal, query_offsets, queries,
+                    query,
+                    cache.key,
+                    cache.value,
+                    cache.key,
+                    cache.value,
+                    metadata.block_table,
+                    query_to_sequence,
+                    query_positions,
+                    context_lengths,
+                    "bf16",
+                    layer.scale,
+                    layer.sliding_window,
+                    layer.causal,
+                    query_offsets,
+                    queries,
                 ).flatten(1)
 
             flashinfer_reference = backend.execute_attention(q_flat, layer)
             backend = SimpleNamespace(execute_attention=triton_attention)
         if codec is not None:
-            backend = QuantizedPagedAttentionBackend(fmt, dim, args.kv_heads)
-            backend.bind_kv_caches([cache])
-            backend.prepare(metadata)
+            if native_fp8:
+                backend = _flashinfer_backend(cache, metadata, args, fp8_format=fmt)
+            else:
+                backend = QuantizedPagedAttentionBackend(fmt, dim, args.kv_heads)
+                backend.bind_kv_caches([cache])
+                backend.prepare(metadata)
         write_kv(new_k, new_v, metadata.slot_mapping)
         actual = backend.execute_attention(q_flat, layer)
         if codec is None and args.bf16_backend == "triton":
@@ -394,8 +439,11 @@ def _case(args: argparse.Namespace, length: int, fmt: str, batch: int, queries: 
             implementation_max_abs = (actual.float() - quant_reference).abs().max().item()
             del quant_reference, decoded_key, decoded_value
         bf16_reference = (
-            flashinfer_reference if codec is None and args.bf16_backend == "triton"
-            else actual if codec is None else None
+            flashinfer_reference
+            if codec is None and args.bf16_backend == "triton"
+            else actual
+            if codec is None
+            else None
         )
     else:
         backend = None
@@ -407,12 +455,8 @@ def _case(args: argparse.Namespace, length: int, fmt: str, batch: int, queries: 
 
     if codec is not None:
         bf16_cache = LayerCache(
-            key=torch.zeros(
-                (blocks, args.page_size, args.kv_heads, dim), device=args.device, dtype=torch.bfloat16
-            ),
-            value=torch.zeros(
-                (blocks, args.page_size, args.kv_heads, dim), device=args.device, dtype=torch.bfloat16
-            ),
+            key=torch.zeros((blocks, args.page_size, args.kv_heads, dim), device=args.device, dtype=torch.bfloat16),
+            value=torch.zeros((blocks, args.page_size, args.kv_heads, dim), device=args.device, dtype=torch.bfloat16),
         )
         _write_bf16_kv(bf16_cache, k.flatten(0, 1), v.flatten(0, 1), slots.flatten())
         if args.device == "cuda":
@@ -428,7 +472,7 @@ def _case(args: argparse.Namespace, length: int, fmt: str, batch: int, queries: 
     row["output_max_abs_vs_bf16"] = error.abs().max().item()
     row["implementation_max_abs"] = implementation_max_abs
     row["baseline_kind"] = "flashinfer_paged" if args.device == "cuda" else "eager_cpu_reference"
-    row["attention_backend"] = args.bf16_backend if fmt == "bf16" else "triton"
+    row["attention_backend"] = args.bf16_backend if fmt == "bf16" else "flashinfer" if native_fp8 else "triton"
     row["kv_budget_mib"] = args.kv_budget_mib
     cache_tensors = [cache.key, cache.value]
     if cache.key_scale is not None:
@@ -439,6 +483,7 @@ def _case(args: argparse.Namespace, length: int, fmt: str, batch: int, queries: 
     row["compression_vs_bf16"] = row["bf16_cache_bytes"] / row["kv_cache_bytes"]
 
     if backend is None:
+
         def full_call() -> torch.Tensor:
             full_plans = _prepare_plans(metadata, args.page_size, blocks)
             write_kv(new_k, new_v, metadata.slot_mapping)
@@ -446,6 +491,7 @@ def _case(args: argparse.Namespace, length: int, fmt: str, batch: int, queries: 
 
         attention = lambda: _paged_attention(q_flat, cache, codec, plans, layer, args.page_size)
     else:
+
         def full_call() -> torch.Tensor:
             write_kv(new_k, new_v, metadata.slot_mapping)
             return backend.execute_attention(q_flat, layer)
@@ -463,16 +509,10 @@ def _case(args: argparse.Namespace, length: int, fmt: str, batch: int, queries: 
     _sync(args.device)
     if args.device == "cuda":
         row["allocated_before_timing_bytes"] = torch.cuda.memory_allocated()
-    row["timings"] = {
-        name: _measure(fn, args, row["processed_tokens_per_call"]) for name, fn in stages.items()
-    }
+    row["timings"] = {name: _measure(fn, args, row["processed_tokens_per_call"]) for name, fn in stages.items()}
     if args.device == "cuda":
-        row["runtime_peak_allocated_bytes"] = max(
-            timing["peak_allocated_bytes"] for timing in row["timings"].values()
-        )
-        row["runtime_peak_increment_bytes"] = max(
-            timing["peak_increment_bytes"] for timing in row["timings"].values()
-        )
+        row["runtime_peak_allocated_bytes"] = max(timing["peak_allocated_bytes"] for timing in row["timings"].values())
+        row["runtime_peak_increment_bytes"] = max(timing["peak_increment_bytes"] for timing in row["timings"].values())
         row["runtime_peak_reserved_bytes"] = max(timing["peak_reserved_bytes"] for timing in row["timings"].values())
     return row
 
@@ -506,11 +546,22 @@ def _main() -> int:
     parser.add_argument("--output-dir", type=Path, default=Path("kv_benchmark_results"))
     parser.add_argument("--preflight-only", action="store_true")
     parser.add_argument("--bf16-backend", choices=("flashinfer", "triton"), default="flashinfer")
-    parser.add_argument("--kv-budget-mib", type=float, default=None,
-                        help="Single-layer KV-only budget; choose each format's maximum batch at each context")
+    parser.add_argument("--fp8-backend", choices=("triton", "flashinfer"), default="triton")
+    parser.add_argument("--fp8-k-scale", type=float, default=1.0)
+    parser.add_argument("--fp8-v-scale", type=float, default=1.0)
+    parser.add_argument(
+        "--kv-budget-mib",
+        type=float,
+        default=None,
+        help="Single-layer KV-only budget; choose each format's maximum batch at each context",
+    )
     args = parser.parse_args()
     if args.kv_budget_mib is not None and (not math.isfinite(args.kv_budget_mib) or args.kv_budget_mib <= 0):
         parser.error("KV budget must be finite and positive")
+    if not all(math.isfinite(scale) and scale > 0 for scale in (args.fp8_k_scale, args.fp8_v_scale)):
+        parser.error("FP8 scalar scales must be finite and positive")
+    if args.fp8_backend == "flashinfer" and args.device != "cuda":
+        parser.error("FlashInfer FP8 requires CUDA")
     if args.device != "cuda" and args.bf16_backend != "flashinfer":
         parser.error("Triton BF16 requires CUDA")
     batches = args.batches if args.batches is not None else [args.batch or 1]
@@ -557,6 +608,7 @@ def _main() -> int:
             for path in (
                 "tools/benchmark_kv_cache.py",
                 "xllm/python/attention/flashinfer.py",
+                "xllm/python/attention/flashinfer_fp8.py",
                 "xllm/python/attention/quantized.py",
                 "xllm/python/attention/quantized_triton.py",
                 "xllm/python/attention/backend.py",
@@ -627,12 +679,17 @@ def _main() -> int:
                                 for fmt in args.formats:
                                     case_batch = batch
                                     if args.kv_budget_mib is not None:
-                                        storage_bytes = args.head_dim * 2 if fmt == "bf16" else (
-                                            KVCacheCodec(fmt, args.head_dim).storage_dim + 4
+                                        storage_bytes = (
+                                            args.head_dim * 2
+                                            if fmt == "bf16"
+                                            else (KVCacheCodec(fmt, args.head_dim).storage_dim + 4)
                                         )
                                         sequence_bytes = (
-                                            math.ceil(length / args.page_size) * args.page_size
-                                            * args.kv_heads * 2 * storage_bytes
+                                            math.ceil(length / args.page_size)
+                                            * args.page_size
+                                            * args.kv_heads
+                                            * 2
+                                            * storage_bytes
                                         )
                                         case_batch = int(args.kv_budget_mib * 1024**2) // sequence_bytes
                                         if case_batch < 1:

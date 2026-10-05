@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy at https://www.apache.org/licenses/LICENSE-2.0
-"""Explicit quality-only INT4 experiments on the BF16 FlashInfer cache.
+"""Explicit quality-only quantization experiments on the BF16 FlashInfer cache.
 
 Only newly projected, post-RoPE K/V are transformed. Persistent cache storage
 remains BF16: this is not a compressed-cache or performance implementation.
@@ -24,7 +24,21 @@ def _hadamard(values: tl.tensor, dims: tl.tensor, WIDTH: tl.constexpr, LOG_WIDTH
         stride = 1 << stage
         peer = tl.gather(values, dims ^ stride, axis=0)
         values = tl.where((dims & stride) == 0, values + peer, peer - values)
-    return values * (WIDTH ** -0.5)
+    return values * (WIDTH**-0.5)
+
+
+@triton.jit
+def _fp8_qdq_kernel(
+    source_ptr: tl.tensor,
+    output_ptr: tl.tensor,
+    WIDTH: tl.constexpr,
+) -> None:
+    """Match fixed-scale E4M3 storage, then reconstruct into model dtype."""
+    row = tl.program_id(0)
+    dims = tl.arange(0, WIDTH)
+    values = tl.load(source_ptr + row * WIDTH + dims).to(tl.float32)
+    encoded = tl.clamp(values, -448.0, 448.0).to(tl.float8e4nv)
+    tl.store(output_ptr + row * WIDTH + dims, encoded.to(tl.float32))
 
 
 @triton.jit
@@ -65,7 +79,7 @@ class KVQualityTransform:
         dtype: torch.dtype,
         seed: int = 17,
     ) -> None:
-        if mode not in ("v_only_int4", "int4_rht_g32"):
+        if mode not in ("v_only_int4", "int4_rht_g32", "k_only_fp8", "v_only_fp8"):
             raise ValueError(f"Unknown KV quality mode: {mode}")
         if device.type != "cuda" or dtype != torch.bfloat16:
             raise ValueError("KV quality experiments require CUDA and BF16 model/cache tensors")
@@ -73,18 +87,20 @@ class KVQualityTransform:
             raise ValueError("KV quality experiments require a power-of-two head_dim >= 32")
         self.mode = mode
         self._head_dim = head_dim
-        self._group_size = head_dim if mode == "v_only_int4" else 32
+        self._group_size = 32 if mode == "int4_rht_g32" else head_dim
         self._rotation = mode == "int4_rht_g32"
+        self._fp8 = mode in ("k_only_fp8", "v_only_fp8")
         generator = torch.Generator(device="cpu").manual_seed(seed)
         self._signs = (torch.randint(0, 2, (head_dim,), generator=generator).float() * 2 - 1).to(device)
         self._device = self._signs.device
         logger.warning(
-            "KV quality experiment: mode=%s group_size=%d rotation_seed=%d "
-            "persistent_cache=BF16 (not compressed)",
+            "KV quality experiment: mode=%s group_size=%d rotation_seed=%d persistent_cache=BF16 (not compressed)",
             mode,
             self._group_size,
             seed,
         )
+        if self._fp8:
+            logger.warning("FP8 quality transform: format=E4M3 scale=1.0 selected_side=%s", mode)
 
     def _transform(self, values: torch.Tensor) -> torch.Tensor:
         if (
@@ -98,20 +114,24 @@ class KVQualityTransform:
         output = torch.empty_like(values)
         rows = values.shape[0] * values.shape[1]
         if rows:
-            _int4_qdq_kernel[(rows,)](
-                values,
-                output,
-                self._signs,
-                self._head_dim,
-                self._group_size,
-                self._rotation,
-                self._head_dim.bit_length() - 1,
-                num_warps=4,
-            )
+            if self._fp8:
+                _fp8_qdq_kernel[(rows,)](values, output, self._head_dim, num_warps=4)
+            else:
+                _int4_qdq_kernel[(rows,)](
+                    values,
+                    output,
+                    self._signs,
+                    self._head_dim,
+                    self._group_size,
+                    self._rotation,
+                    self._head_dim.bit_length() - 1,
+                    num_warps=4,
+                )
         return output
 
     def apply(self, key: torch.Tensor, value: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         if key.shape != value.shape or key.dtype != value.dtype or key.device != value.device:
             raise ValueError("KV quality experiments require matching K/V shapes, dtypes and devices")
-        reconstructed_key = self._transform(key) if self._rotation else key
-        return reconstructed_key, self._transform(value)
+        reconstructed_key = self._transform(key) if self._rotation or self.mode == "k_only_fp8" else key
+        reconstructed_value = value if self.mode == "k_only_fp8" else self._transform(value)
+        return reconstructed_key, reconstructed_value
