@@ -50,12 +50,13 @@ def _telemetry(path: Path) -> dict[str, Any]:
     return {name: {"mean": float(np.mean(v)), "peak": max(v), "samples": len(v)} for name, v in values.items() if v}
 
 
-def _quality(root: Path, report: Path) -> dict[str, Any]:
+def _quality_repetition(root: Path, report: Path, repetition: int) -> dict[str, Any]:
     traces = evaluator._jsonl(root / "trace_quality.jsonl")
     _, _, metrics, _ = evaluator._longbench_assets(assets.LONG_BENCH_REPO)
     predictions: dict[str, dict[str, Any]] = {}
     for arm in ARMS:
-        files = list((root / arm / "quality").glob("c*_r0/responses.jsonl"))
+        files = list((root / arm / "quality").glob(f"c*_r{repetition}/responses.jsonl"))
+        files = [path for path in files if (path.parent / "summary.json").exists()]
         if files:
             responses = evaluator._jsonl(files[0])
             if len(responses) == len(traces):
@@ -72,7 +73,7 @@ def _quality(root: Path, report: Path) -> dict[str, Any]:
             metrics,
         )
         result["tasks"][task] = summary
-        _write_json(report / f"paired_{task}.json", pairs)
+        _write_json(report / f"paired_{task}_r{repetition}.json", pairs)
         result["paired"][task] = {}
         if "auto" in predictions:
             for arm in predictions:
@@ -91,8 +92,47 @@ def _quality(root: Path, report: Path) -> dict[str, Any]:
         arm: sum(r["finish_reason"] == "length" for r in outputs.values() if r["task"] == "gsm8k")
         for arm, outputs in predictions.items()
     }
-    _write_json(report / "quality.json", result)
     return result
+
+
+def _quality(root: Path, report: Path) -> dict[str, Any]:
+    from statistics import mean, pstdev
+
+    repetitions = sorted(
+        {
+            int(path.parent.name.split("_r")[1])
+            for arm in ARMS
+            for path in (root / arm / "quality").glob("c*_r*/summary.json")
+        }
+    )
+    results = {str(r): result for r in repetitions if (result := _quality_repetition(root, report, r))}
+    if not results:
+        return {}
+    arms = [arm for arm in ARMS if any(arm in result["arms"] for result in results.values())]
+    aggregate: dict[str, Any] = {"arms": arms, "tasks": {}, "longbench_macro": {}, "length_exhaustion": {}}
+    stats: dict[str, Any] = {}
+    for task in ("gsm8k", *assets.TASKS):
+        aggregate["tasks"][task] = {}
+        stats[task] = {}
+        for arm in arms:
+            keys = [f"{arm}_strict_em", f"{arm}_flexible_em"] if task == "gsm8k" else [arm]
+            for key in keys:
+                values = [result["tasks"][task][key] for result in results.values() if key in result["tasks"][task]]
+                aggregate["tasks"][task][key] = mean(values)
+                stats[task][key] = {"mean": mean(values), "std": pstdev(values), "repetitions": len(values)}
+    for arm in arms:
+        selected = [result for result in results.values() if arm in result["arms"]]
+        aggregate["longbench_macro"][arm] = mean(result["longbench_macro"][arm] for result in selected)
+        aggregate["length_exhaustion"][arm] = [result["length_exhaustion"][arm] for result in selected]
+        stats.setdefault("longbench_macro", {})[arm] = {
+            "mean": aggregate["longbench_macro"][arm],
+            "std": pstdev(result["longbench_macro"][arm] for result in selected),
+            "repetitions": len(selected),
+        }
+    aggregate["repetitions"] = results
+    aggregate["statistics"] = stats
+    _write_json(report / "quality.json", aggregate)
+    return aggregate
 
 
 def _scan_summary(runs: list[dict[str, Any]]) -> dict[str, Any]:
@@ -270,7 +310,13 @@ def _report(root: Path) -> None:
                 ("LongBench 8-task macro", quality["longbench_macro"]),
             )
         ):
-            axs[i].bar(arms, [100 * scores[arm] for arm in arms])
+            score_stats = quality["statistics"]["gsm8k" if i == 0 else "longbench_macro"]
+            axs[i].bar(
+                arms,
+                [100 * scores[arm] for arm in arms],
+                yerr=[100 * score_stats[f"{arm}_flexible_em" if i == 0 else arm]["std"] for arm in arms],
+                capsize=4,
+            )
             axs[i].set_title(title)
             axs[i].set_ylabel("Score (%)")
             axs[i].tick_params(axis="x", rotation=25)
@@ -330,7 +376,7 @@ def _report(root: Path) -> None:
     if quality:
         lines += [
             "",
-            "## Separate quality results (full trace, repetition 0)",
+            "## Separate quality results (full trace, mean across completed repetitions)",
             "",
             "| Arm | GSM8K strict EM | GSM8K flexible EM | GSM8K length exhaustion | LongBench macro |",
             "|---|---:|---:|---:|---:|",
@@ -354,7 +400,8 @@ def _report(root: Path) -> None:
         "extend the common trace/concurrency scan before claiming capacity-to-throughput benefit.",
         "",
         "Quality is scored only when the separate full quality trace completes. Per-task scores and paired "
-        "improvement/regression counts are in quality.json and paired_*.json. Missing cells remain pending.",
+        "improvement/regression counts and repetition counts are in quality.json and paired_*_r*.json. "
+        "Length exhaustion lists retain each repetition; missing cells remain pending.",
     ]
     (output / "README.md").write_text("\n".join(lines) + "\n")
     logger.info("Report written to %s (%d performance runs)", output, len(runs))

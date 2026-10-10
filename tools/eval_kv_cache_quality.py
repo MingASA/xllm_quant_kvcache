@@ -373,6 +373,8 @@ def _score_pair(
 
 
 def _score_flip(scores: dict[str, float], arm_names: list[str]) -> str:
+    if len(arm_names) < 2:
+        return "unpaired"
     if scores[arm_names[1]] > scores[arm_names[0]]:
         return "up"
     if scores[arm_names[1]] < scores[arm_names[0]]:

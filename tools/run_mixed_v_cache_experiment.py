@@ -277,6 +277,9 @@ def _run(args: argparse.Namespace) -> None:
         raise ValueError("Correctness gate does not attest the current server binary")
     source_paths = [
         ROOT / "tools/run_mixed_v_cache_experiment.py",
+        ROOT / "tools/report_mixed_v_cache_experiment.py",
+        ROOT / "tools/eval_kv_cache_quality.py",
+        ROOT / "tools/run_kv_fp8_quality_ablation.py",
         *[
             ROOT / path
             for path in subprocess.check_output(
@@ -317,6 +320,7 @@ def _run(args: argparse.Namespace) -> None:
         "tools/run_mixed_v_cache_experiment.py",
         "tools/report_mixed_v_cache_experiment.py",
         "tools/eval_kv_cache_quality.py",
+        "tools/run_kv_fp8_quality_ablation.py",
     ):
         (snapshot / Path(relative).name).write_bytes((ROOT / relative).read_bytes())
     for arm in args.arms:
