@@ -202,6 +202,13 @@ async def _sample(session: Any, url: str, output: Path, stop: asyncio.Event) -> 
                 pass
 
 
+async def _bootstrap(url: str, row: dict[str, Any]) -> dict[str, Any]:
+    import aiohttp
+
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=300)) as session:
+        return await _request(session, url, row, 0)
+
+
 def _percentiles(values: list[float]) -> dict[str, float] | None:
     import numpy as np
 
@@ -367,13 +374,6 @@ def _run(args: argparse.Namespace) -> None:
             )
             try:
                 deadline = time.monotonic() + 300
-                while "KV_ALLOCATION " not in log_path.read_text(errors="replace"):
-                    if process.poll() is not None or time.monotonic() > deadline:
-                        raise RuntimeError(f"Server allocation/readiness failed: {log_path}")
-                    time.sleep(1)
-                text = log_path.read_text(errors="replace")
-                allocation = json.loads(text.split("KV_ALLOCATION ", 1)[1].splitlines()[0])
-                _write_json(arm_root / "allocation.json", allocation)
                 while time.monotonic() < deadline:
                     if process.poll() is not None:
                         raise RuntimeError(f"Server exited before API readiness: {log_path}")
@@ -386,6 +386,24 @@ def _run(args: argparse.Namespace) -> None:
                         time.sleep(1)
                 else:
                     raise TimeoutError(f"API readiness timed out: {log_path}")
+                # Python caches bind lazily on the first forward, after API readiness.
+                probe_trace = args.output / f"trace_{args.workloads[0]}.jsonl"
+                if _hash_file(probe_trace) != manifest["traces"][args.workloads[0]]["sha256"]:
+                    raise ValueError(f"Trace was modified: {probe_trace}")
+                probe_row = evaluator._jsonl(probe_trace)[0]
+                probe_result = asyncio.run(_bootstrap(url, probe_row))
+                _write_json(
+                    arm_root / "startup_probe.json",
+                    {"trace_id": probe_row["id"], "measured": False, "response": probe_result},
+                )
+                deadline = time.monotonic() + 30
+                while "KV_ALLOCATION " not in log_path.read_text(errors="replace"):
+                    if process.poll() is not None or time.monotonic() > deadline:
+                        raise RuntimeError(f"Server allocation inspection failed after first forward: {log_path}")
+                    time.sleep(1)
+                text = log_path.read_text(errors="replace")
+                allocation = json.loads(text.split("KV_ALLOCATION ", 1)[1].splitlines()[0])
+                _write_json(arm_root / "allocation.json", allocation)
                 for workload in args.workloads:
                     trace = args.output / f"trace_{workload}.jsonl"
                     if _hash_file(trace) != manifest["traces"][workload]["sha256"]:

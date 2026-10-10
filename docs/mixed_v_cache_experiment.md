@@ -21,6 +21,8 @@ Use the CUDA-capable runtime `/home/mingasa/venvs/vllm/bin/python`. The `xllm` v
 
 ```bash
 source build/cmake.cuda-x86/resume-env.sh
+export PATH="/usr/lib/wsl/lib:$PATH"
+export LD_LIBRARY_PATH="/usr/lib/wsl/lib:$LD_LIBRARY_PATH"
 export PYTHONPATH="$PWD:$PYTHONPATH"
 /home/mingasa/venvs/vllm/bin/python tools/run_mixed_v_cache_experiment.py prepare \
   --output results/mixed-v-cache-20261009/suite --performance-samples 64
@@ -34,7 +36,7 @@ export PYTHONPATH="$PWD:$PYTHONPATH"
 
 `prepare` freezes and hashes the trace and checks every prompt against the checkpoint's context limit. Existing GSM8K five-shot prompts, the full 1319 test questions, and the fixed LongBench 8-task n50 protocol are reused. Performance samples retain benchmark generation limits and EOS; no fixed token length, output padding, or truncation is introduced. The LongBench performance trace interleaves tasks in their existing fixed order. Performance and quality journals are separate. All runs default to three repetitions after warmup; quality replays all 1719 benchmark requests.
 
-The runner checks correctness gates before starting each arm. First establish the BF16/V-INT8 server chain, then run `--arms bf16_fp8_e4m3` and finally `--arms bf16_int4` using the same traces, levels, and scheduler settings. Each group warms up at its tested concurrency with at least one full wave of requests, before starting measurement. The default scan is concurrency 1, 2, 4, 8, 16, 32, 64, 128, 256. The scheduler's limit remains 128 in all runs, including overloaded client concurrency. If throughput is still growing at the highest level, extend the common scan and replay length. After bracketing saturation, replay the union of all arms' approximate 80%, 100%, and overload concurrency levels so that absolute-load comparisons remain available. Closed-loop request timing depends on completion times; offered arrival rates are not inferred from concurrency.
+The runner checks correctness gates before starting each arm. After API readiness it sends one unmeasured startup probe, because the Python backend binds and reports actual cache tensors on its first forward. First establish the BF16/V-INT8 server chain, then run `--arms bf16_fp8_e4m3` and finally `--arms bf16_int4` using the same traces, levels, and scheduler settings. Each group warms up at its tested concurrency with at least one full wave of requests, before starting measurement. The default scan is concurrency 1, 2, 4, 8, 16, 32, 64, 128, 256. The scheduler's limit remains 128 in all runs, including overloaded client concurrency. If throughput is still growing at the highest level, extend the common scan and replay length. After bracketing saturation, replay the union of all arms' approximate 80%, 100%, and overload concurrency levels so that absolute-load comparisons remain available. Closed-loop request timing depends on completion times; offered arrival rates are not inferred from concurrency.
 
 The fair BF16 baseline explicitly sets `XLLM_QUANTIZED_BACKEND=triton`, which selects the same paged algorithm for `auto` as for the compressed modes. All four modes use identical GQA grouping, dot strategy, tiling, and split policies. The ordinary optimized BF16 backend is available by leaving that environment variable unset; its results must be labeled separately. All arms disable graphs and prefix caching, use `max_memory_utilization=0.87`, and use the same 4096-token batching limit. Disabling prefix caching makes repeated traces exercise prefill rather than retained shared prefixes.
 
