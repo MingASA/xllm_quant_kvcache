@@ -50,11 +50,40 @@ def _telemetry(path: Path) -> dict[str, Any]:
     return {name: {"mean": float(np.mean(v)), "peak": max(v), "samples": len(v)} for name, v in values.items() if v}
 
 
-def _quality_repetition(root: Path, report: Path, repetition: int) -> dict[str, Any]:
+def _full_cycle_responses(run: Path, trace: list[dict[str, Any]], cycle: int) -> dict[str, Any]:
+    if not (run / "summary.json").exists():
+        return {}
+    config = json.loads((run / "run_config.json").read_text())
+    cycles = config["replay_cycles"]
+    if cycle >= cycles:
+        return {}
+    responses = evaluator._jsonl(run / "responses.jsonl")
+    indexed = {row["index"]: row for row in responses}
+    if len(responses) != len(trace) * cycles or set(indexed) != set(range(len(trace) * cycles)):
+        raise ValueError(f"Completed joint run has incomplete or duplicate response indices: {run}")
+    for index, row in indexed.items():
+        expected = trace[index % len(trace)]
+        if row["id"] != expected["id"] or row["prompt_sha256"] != expected["prompt_sha256"]:
+            raise ValueError(f"Joint response does not match immutable trace: {run}/{index}")
+    return {indexed[i]["id"]: indexed[i] for i in range(cycle * len(trace), (cycle + 1) * len(trace))}
+
+
+def _quality_repetition(
+    root: Path, report: Path, repetition: int, concurrency: int | None = None, cycle: int = 0
+) -> dict[str, Any]:
     traces = evaluator._jsonl(root / "trace_quality.jsonl")
     _, _, metrics, _ = evaluator._longbench_assets(assets.LONG_BENCH_REPO)
     predictions: dict[str, dict[str, Any]] = {}
     for arm in ARMS:
+        if concurrency is not None:
+            outputs = {}
+            for workload in ("gsm8k", "longbench"):
+                run = root / arm / workload / f"c{concurrency}_r{repetition}"
+                trace = evaluator._jsonl(root / f"trace_{workload}.jsonl")
+                outputs.update(_full_cycle_responses(run, trace, cycle))
+            if set(outputs) == {row["id"] for row in traces}:
+                predictions[arm] = outputs
+            continue
         files = list((root / arm / "quality").glob(f"c*_r{repetition}/responses.jsonl"))
         files = [path for path in files if (path.parent / "summary.json").exists()]
         if files:
@@ -73,7 +102,8 @@ def _quality_repetition(root: Path, report: Path, repetition: int) -> dict[str, 
             metrics,
         )
         result["tasks"][task] = summary
-        _write_json(report / f"paired_{task}_r{repetition}.json", pairs)
+        suffix = f"r{repetition}" if concurrency is None else f"c{concurrency}_r{repetition}_cycle{cycle}"
+        _write_json(report / f"paired_{task}_{suffix}.json", pairs)
         result["paired"][task] = {}
         if "auto" in predictions:
             for arm in predictions:
@@ -95,17 +125,9 @@ def _quality_repetition(root: Path, report: Path, repetition: int) -> dict[str, 
     return result
 
 
-def _quality(root: Path, report: Path) -> dict[str, Any]:
+def _aggregate_quality(results: dict[str, Any]) -> dict[str, Any]:
     from statistics import mean, pstdev
 
-    repetitions = sorted(
-        {
-            int(path.parent.name.split("_r")[1])
-            for arm in ARMS
-            for path in (root / arm / "quality").glob("c*_r*/summary.json")
-        }
-    )
-    results = {str(r): result for r in repetitions if (result := _quality_repetition(root, report, r))}
     if not results:
         return {}
     arms = [arm for arm in ARMS if any(arm in result["arms"] for result in results.values())]
@@ -119,7 +141,7 @@ def _quality(root: Path, report: Path) -> dict[str, Any]:
             for key in keys:
                 values = [result["tasks"][task][key] for result in results.values() if key in result["tasks"][task]]
                 aggregate["tasks"][task][key] = mean(values)
-                stats[task][key] = {"mean": mean(values), "std": pstdev(values), "repetitions": len(values)}
+                stats[task][key] = {"mean": mean(values), "std": pstdev(values), "observations": len(values)}
     for arm in arms:
         selected = [result for result in results.values() if arm in result["arms"]]
         aggregate["longbench_macro"][arm] = mean(result["longbench_macro"][arm] for result in selected)
@@ -127,10 +149,55 @@ def _quality(root: Path, report: Path) -> dict[str, Any]:
         stats.setdefault("longbench_macro", {})[arm] = {
             "mean": aggregate["longbench_macro"][arm],
             "std": pstdev(result["longbench_macro"][arm] for result in selected),
-            "repetitions": len(selected),
+            "observations": len(selected),
         }
-    aggregate["repetitions"] = results
+    aggregate["observations"] = results
     aggregate["statistics"] = stats
+    return aggregate
+
+
+def _quality(root: Path, report: Path) -> dict[str, Any]:
+    joint_cells = set()
+    for arm in ARMS:
+        for path in (root / arm).glob("*/c*_r*/run_config.json"):
+            config = json.loads(path.read_text())
+            if config.get("quality_protocol") == "joint_full_trace":
+                for cycle in range(config["replay_cycles"]):
+                    joint_cells.add((config["concurrency"], config["repetition"], cycle))
+    if joint_cells:
+        by_concurrency: dict[str, Any] = {}
+        for concurrency in sorted({cell[0] for cell in joint_cells}):
+            results = {}
+            for c, repetition, cycle in sorted(joint_cells):
+                if c == concurrency:
+                    result = _quality_repetition(root, report, repetition, c, cycle)
+                    if result:
+                        results[f"r{repetition}_cycle{cycle}"] = result
+            if results:
+                by_concurrency[str(concurrency)] = _aggregate_quality(results)
+        if not by_concurrency:
+            return {}
+        reference = min(map(int, by_concurrency))
+        aggregate = dict(by_concurrency[str(reference)])
+        aggregate.update(
+            protocol="joint_full_trace",
+            reference_concurrency=reference,
+            by_concurrency=by_concurrency,
+            observation_definition="one full benchmark cycle at a fixed concurrency and repetition",
+        )
+    else:
+        repetitions = sorted(
+            {
+                int(path.parent.name.split("_r")[1])
+                for arm in ARMS
+                for path in (root / arm / "quality").glob("c*_r*/summary.json")
+            }
+        )
+        results = {str(r): result for r in repetitions if (result := _quality_repetition(root, report, r))}
+        aggregate = _aggregate_quality(results)
+        if not aggregate:
+            return {}
+        aggregate["protocol"] = "separate"
     _write_json(report / "quality.json", aggregate)
     return aggregate
 
@@ -320,6 +387,8 @@ def _report(root: Path) -> None:
             axs[i].set_title(title)
             axs[i].set_ylabel("Score (%)")
             axs[i].tick_params(axis="x", rotation=25)
+        if quality.get("protocol") == "joint_full_trace":
+            fig.suptitle(f"Quality from timed full traces, concurrency={quality['reference_concurrency']}")
         fig.tight_layout()
         fig.savefig(output / "quality.png", dpi=180)
         plt.close(fig)
@@ -336,6 +405,8 @@ def _report(root: Path) -> None:
         "Token counts are API generated tokens; normal EOS and original generation "
         "caps apply. TTFT measures the first nonempty streamed text. TPOT uses first-to-last text time divided by "
         "generated token intervals. Text buffering can affect both. Mean curves and error bars summarize repetitions.",
+        "Joint runs score these same timed responses at every concurrency, separately for each full replay cycle; "
+        "replayed IDs are never collapsed. Quality standard deviations describe cycle/repetition variation.",
         "",
         "| Arm | KV bytes/token/layer | Relative bytes | KV token capacity | Resident KV bytes |",
         "|---|---:|---:|---:|---:|",
@@ -366,8 +437,9 @@ def _report(root: Path) -> None:
                 vals = [r[name]["p95"] for r in tail_rows if r.get(name)]
                 return f"{np.mean(vals):.4f}" if vals else "unavailable"
 
-            gsm = quality.get("tasks", {}).get("gsm8k", {}).get(f"{arm}_flexible_em", "pending")
-            long = quality.get("longbench_macro", {}).get(arm, "pending")
+            load_quality = quality["by_concurrency"].get(str(c), {}) if "by_concurrency" in quality else quality
+            gsm = load_quality.get("tasks", {}).get("gsm8k", {}).get(f"{arm}_flexible_em", "pending")
+            long = load_quality.get("longbench_macro", {}).get(arm, "pending")
             lines.append(
                 f"| {arm} | {workload} | {c} | {max(p['request_throughput'] for p in scan[workload][arm]['points']):.3f} | "
                 f"{max(p['token_throughput'] for p in scan[workload][arm]['points']):.3f} | {_avg_tail('ttft_s')} | "
@@ -376,7 +448,7 @@ def _report(root: Path) -> None:
     if quality:
         lines += [
             "",
-            "## Separate quality results (full trace, mean across completed repetitions)",
+            "## Full-trace quality (mean across completed cycles/repetitions)",
             "",
             "| Arm | GSM8K strict EM | GSM8K flexible EM | GSM8K length exhaustion | LongBench macro |",
             "|---|---:|---:|---:|---:|",
@@ -393,15 +465,32 @@ def _report(root: Path) -> None:
             lines.append(
                 "| " + task + " | " + " | ".join(f"{quality['tasks'][task][arm]:.6f}" for arm in quality["arms"]) + " |"
             )
+        if quality.get("protocol") == "joint_full_trace":
+            lines += [
+                "",
+                f"The quality figure above uses concurrency {quality['reference_concurrency']}. "
+                "The following table retains each load; one observation is one full replay cycle.",
+                "",
+                "| Concurrency | Arm | Full cycles scored | GSM8K strict EM | GSM8K flexible EM | LongBench macro |",
+                "|---:|---|---:|---:|---:|---:|",
+            ]
+            for c, scores in quality["by_concurrency"].items():
+                for arm in scores["arms"]:
+                    gsm = scores["tasks"]["gsm8k"]
+                    count = scores["statistics"]["longbench_macro"][arm]["observations"]
+                    lines.append(
+                        f"| {c} | {arm} | {count} | {gsm[f'{arm}_strict_em']:.6f} | "
+                        f"{gsm[f'{arm}_flexible_em']:.6f} | {scores['longbench_macro'][arm]:.6f} |"
+                    )
     lines += [
         "",
         "Max tested concurrency is not a certified stability limit. Saturation requires a plateau in "
-        "throughput, scheduler waiting evidence and rising tail latency. If the scan does not bracket it, "
-        "extend the common trace/concurrency scan before claiming capacity-to-throughput benefit.",
+        "throughput, scheduler waiting evidence and rising tail latency. If the permitted scan does not bracket it, "
+        "report saturation as unconfirmed; this protocol is capped at concurrency 128.",
         "",
-        "Quality is scored only when the separate full quality trace completes. Per-task scores and paired "
-        "improvement/regression counts and repetition counts are in quality.json and paired_*_r*.json. "
-        "Length exhaustion lists retain each repetition; missing cells remain pending.",
+        "Joint quality is scored from complete timed full-benchmark cycles at matching load/repetition/cycle. "
+        "Per-task scores, paired improvement/regression counts and observation counts are in quality.json "
+        "and paired_*.json. Length exhaustion lists retain each cycle/repetition; missing cells remain pending.",
     ]
     (output / "README.md").write_text("\n".join(lines) + "\n")
     logger.info("Report written to %s (%d performance runs)", output, len(runs))

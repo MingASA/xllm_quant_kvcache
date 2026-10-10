@@ -72,11 +72,12 @@ def _prepare(output: Path, performance_samples: int) -> None:
             )
     traces = {"quality": quality}
     # Fixed benchmark rows, with original prompts and generation caps. Equal per-task representation.
-    traces["gsm8k"] = [row for row in quality if row["task"] == "gsm8k"][:performance_samples]
+    limit = performance_samples or None
+    traces["gsm8k"] = [row for row in quality if row["task"] == "gsm8k"][:limit]
     long_rows = {task: [row for row in quality if row["task"] == task] for task in assets.TASKS}
     traces["longbench"] = [
         long_rows[task][i] for i in range(min(len(rows) for rows in long_rows.values())) for task in assets.TASKS
-    ][:performance_samples]
+    ][:limit]
     output.mkdir(parents=True, exist_ok=True)
     for name, rows in traces.items():
         path = output / f"trace_{name}.jsonl"
@@ -96,7 +97,8 @@ def _prepare(output: Path, performance_samples: int) -> None:
                 for name, rows in traces.items()
             },
             "protocol": "temperature=0, top_p=1, seed=17, normal EOS, original benchmark max_tokens/stop strings",
-            "performance_order": "fixed prefixes; LongBench round robin in existing eight-task order",
+            "performance_scope": "full" if not performance_samples else "prefix",
+            "performance_order": "benchmark order; LongBench round robin in existing eight-task order",
         },
     )
 
@@ -280,6 +282,23 @@ def _run(args: argparse.Namespace) -> None:
     if "XLLM_KV_QUALITY_MODE" in os.environ and os.environ["XLLM_KV_QUALITY_MODE"] != "none":
         raise ValueError("QDQ quality modes must be disabled for real compressed-cache experiments")
     manifest = json.loads((args.output / "trace_manifest.json").read_text())
+    if args.joint_quality:
+        if min(args.concurrency) < 8 or max(args.concurrency) > 128:
+            raise ValueError("Joint full-trace protocol requires concurrency between 8 and 128")
+        if "quality" in args.workloads:
+            raise ValueError("Joint quality scores measured workload responses; no separate quality replay")
+        reference_path = args.output / "trace_quality.jsonl"
+        if _hash_file(reference_path) != manifest["traces"]["quality"]["sha256"]:
+            raise ValueError(f"Trace was modified: {reference_path}")
+        reference = evaluator._jsonl(reference_path)
+        for workload in args.workloads:
+            expected = {
+                r["id"]: r["prompt_sha256"] for r in reference if (r["task"] == "gsm8k") == (workload == "gsm8k")
+            }
+            actual_rows = evaluator._jsonl(args.output / f"trace_{workload}.jsonl")
+            actual = {r["id"]: r["prompt_sha256"] for r in actual_rows}
+            if actual != expected or len(actual_rows) != len(expected):
+                raise ValueError(f"Joint quality requires the full {workload} benchmark trace")
     gates = json.loads(args.gates.read_text())
     for arm in args.arms:
         if not gates.get(arm, {}).get("passed"):
@@ -421,6 +440,7 @@ def _run(args: argparse.Namespace) -> None:
                                 "concurrency": concurrency,
                                 "repetition": repetition,
                                 "replay_cycles": args.replay_cycles if workload != "quality" else 1,
+                                "quality_protocol": "joint_full_trace" if args.joint_quality else "separate",
                                 "trace_sha256": _hash_file(trace),
                                 "warmup": args.warmup,
                                 "warmup_requests": min(len(rows), max(args.warmup, concurrency)),
@@ -462,24 +482,26 @@ def main() -> None:
     parser.add_argument("action", choices=("prepare", "run"))
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--gates", type=Path)
-    parser.add_argument("--performance-samples", type=int, default=64)
+    parser.add_argument("--performance-samples", type=int, default=0, help="0 selects the full benchmark traces")
     parser.add_argument("--arms", nargs="+", choices=ARMS, default=list(ARMS))
     parser.add_argument(
-        "--workloads", nargs="+", choices=("gsm8k", "longbench", "quality"), default=["gsm8k", "longbench", "quality"]
+        "--workloads", nargs="+", choices=("gsm8k", "longbench", "quality"), default=["gsm8k", "longbench"]
     )
-    parser.add_argument("--concurrency", nargs="+", type=int, default=[1, 2, 4, 8, 16, 32, 64, 128, 256])
+    parser.add_argument("--joint-quality", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--concurrency", nargs="+", type=int, default=[8, 16, 32, 64, 128])
     parser.add_argument("--repetitions", type=int, default=3)
-    parser.add_argument("--replay-cycles", type=int, default=4)
+    parser.add_argument("--replay-cycles", type=int, default=2)
     parser.add_argument("--quality-concurrency", type=int, default=16)
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--port", type=int, default=18995)
     args = parser.parse_args()
     if (
-        args.performance_samples < 8
+        args.performance_samples < 0
+        or 0 < args.performance_samples < 8
         or min(args.concurrency) <= 0
         or min(args.repetitions, args.replay_cycles, args.quality_concurrency, args.warmup) <= 0
     ):
-        parser.error("Counts must be positive; performance trace needs at least eight samples")
+        parser.error("Counts must be positive; performance samples must be 0 (full) or at least 8")
     if args.action == "prepare":
         _prepare(args.output, args.performance_samples)
     else:
