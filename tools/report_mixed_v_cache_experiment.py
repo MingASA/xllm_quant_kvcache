@@ -109,13 +109,14 @@ def _scan_summary(runs: list[dict[str, Any]]) -> dict[str, Any]:
             points = []
             for c in levels:
                 repeats = [row for row in rows if row["concurrency"] == c]
+                ttfts = [row["ttft_s"]["p95"] for row in repeats if row.get("ttft_s")]
                 points.append(
                     {
                         "concurrency": c,
                         "repetitions": len(repeats),
                         "request_throughput": mean(row["request_throughput"] for row in repeats),
                         "token_throughput": mean(row["token_throughput"] for row in repeats),
-                        "ttft_p95_s": mean(row["ttft_s"]["p95"] for row in repeats if row.get("ttft_s")),
+                        "ttft_p95_s": mean(ttfts) if ttfts else None,
                         "waiting_peak": max(
                             (row["gpu"].get("num_waiting_requests", {}).get("peak", 0) for row in repeats), default=0
                         ),
@@ -128,11 +129,12 @@ def _scan_summary(runs: list[dict[str, Any]]) -> dict[str, Any]:
                 abs(point["request_throughput"] - candidate["request_throughput"]) <= 0.05 * peak for point in beyond
             )
             queue = any(point["waiting_peak"] > 0 for point in points)
-            tail_ratio = points[-1]["ttft_p95_s"] / max(points[0]["ttft_p95_s"], 1e-12)
+            low_ttft, high_ttft = points[0]["ttft_p95_s"], points[-1]["ttft_p95_s"]
+            tail_ratio = high_ttft / max(low_ttft, 1e-12) if low_ttft is not None and high_ttft is not None else None
             output[workload][arm] = {
                 "points": points,
                 "saturation_candidate": candidate["concurrency"],
-                "confirmed": plateau and queue and tail_ratio >= 2,
+                "confirmed": plateau and queue and tail_ratio is not None and tail_ratio >= 2,
                 "queue_observed": queue,
                 "high_to_low_ttft_ratio": tail_ratio,
                 "criteria": "95% of peak mean req/s, plateau within 5% at a higher load, waiting>0, tail ratio>=2",
