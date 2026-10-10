@@ -1,0 +1,74 @@
+{
+  "checkpoint": "/mnt/e/AI/models/Qwen2.5-1.5B-Instruct",
+  "model_provenance": {
+    "verified_at_utc": "2026-10-01T09:16:37Z",
+    "model": "Qwen/Qwen2.5-1.5B-Instruct",
+    "local_model_path": "/mnt/e/AI/models/Qwen2.5-1.5B-Instruct",
+    "snapshot_revision": "989aa7980e4cf806f80c7fef2b1adb7bc71aa306",
+    "snapshot_revision_source": "local Hugging Face cache tree metadata",
+    "weights": {
+      "file": "model.safetensors",
+      "size_bytes": 3087467144,
+      "sha256": "dd924a11b4c220f385b51ffa522daea7c9f3d850e31b162bb5661df483c6d3ee",
+      "official_hf_sha256": "dd924a11b4c220f385b51ffa522daea7c9f3d850e31b162bb5661df483c6d3ee",
+      "official_hf_size_bytes": 3087467144,
+      "matches_official": true,
+      "official_metadata_url": "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct/blob/989aa7980e4cf806f80c7fef2b1adb7bc71aa306/model.safetensors"
+    },
+    "metadata_files_match_pinned_hf_revision": [
+      "config.json",
+      "generation_config.json",
+      "tokenizer_config.json"
+    ],
+    "notable_config": {
+      "model_type": "qwen2",
+      "architectures": [
+        "Qwen2ForCausalLM"
+      ],
+      "transformers_version": "4.43.1",
+      "tie_word_embeddings": true,
+      "config_eos_token_id": 151645,
+      "generation_config_eos_token_ids": [
+        151645,
+        151643
+      ],
+      "tokenizer_eos_token": "<|im_end|>",
+      "tokenizer_pad_token": "<|endoftext|>",
+      "tokenizer_pad_token_id": 151643,
+      "generation_config_transformers_version": "4.37.0",
+      "version_note": "The differing Transformers version labels are present in the official files at this exact revision; metadata contents match and this is not a local file mismatch."
+    },
+    "runtime_note": "xLLM Qwen2 registration currently populates stop_token_ids from config eos_token_id only (151645); generation_config also lists 151643. For parity with HF generation stopping, pass both stop IDs explicitly at request time if supported.",
+    "server_started": false
+  },
+  "longbench_revision": "2e00731f8d0bff23dc4325161044d0ed8af94c1e",
+  "sources": {
+    "/mnt/e/AI/xllm-eval-data/int4-model-eval-20261002/gsm8k/data.jsonl": "93377ddca91b89cfa35e987104ee7b420a1b17d42b91351b70993d57d0159cac",
+    "/mnt/e/AI/xllm-eval-data/longbench-5e628be450b7e67fb7ae6e201bd6d8f7056f7672/prepared/seed17_n50_contextcap32704/narrativeqa.jsonl": "b4cceceeadc8d4d50c39d5a06b5bf11ca2a58cd18889d32569f6e3be09838b1f",
+    "/mnt/e/AI/xllm-eval-data/longbench-5e628be450b7e67fb7ae6e201bd6d8f7056f7672/prepared/seed17_n50_contextcap32704/qasper.jsonl": "013ec1ab730a90bbf91a5071b0359365350d7ddced61618fad5d40c85a684897",
+    "/mnt/e/AI/xllm-eval-data/longbench-5e628be450b7e67fb7ae6e201bd6d8f7056f7672/prepared/seed17_n50_contextcap32704/multifieldqa_en.jsonl": "5938a9444528c6f0c83266e89119e73182839a24f88bdb6574edebd8e9967841",
+    "/mnt/e/AI/xllm-eval-data/longbench-5e628be450b7e67fb7ae6e201bd6d8f7056f7672/prepared/seed17_n50_contextcap32704/2wikimqa.jsonl": "32de77778edb6cf9572eee6da8900c59081d14321ce19653cd74125dd818f2cf",
+    "/mnt/e/AI/xllm-eval-data/longbench-5e628be450b7e67fb7ae6e201bd6d8f7056f7672/prepared/seed17_n50_contextcap32704/hotpotqa.jsonl": "f45b4468a0e07ad0d0bc5f544c17cc3e954aa978a48136d331dfa1093dfc29b5",
+    "/mnt/e/AI/xllm-eval-data/longbench-5e628be450b7e67fb7ae6e201bd6d8f7056f7672/prepared/seed17_n50_contextcap32704/musique.jsonl": "356b2b93f501d71eec51e5cb70f6cf5369876651cc9315e8c7b62da62ce13f4c",
+    "/mnt/e/AI/xllm-eval-data/longbench-5e628be450b7e67fb7ae6e201bd6d8f7056f7672/prepared/seed17_n50_contextcap32704/lcc.jsonl": "3b043fa41798bb0b4bd469116c2be54eb76d2c544a9bd2503fc6aad395414fe8",
+    "/mnt/e/AI/xllm-eval-data/longbench-5e628be450b7e67fb7ae6e201bd6d8f7056f7672/prepared/seed17_n50_contextcap32704/repobench-p.jsonl": "f476dad58a5d2504b4300d5c8ddde183afb8f30f50d2305094ba12cd98ec9665"
+  },
+  "shots_sha256": "4e076bef9962698cf3df4701f093437c86c925dcfa987556ea4fdb0fbd93a3ce",
+  "traces": {
+    "quality": {
+      "requests": 1719,
+      "sha256": "abf931bb2a03b120d50d471ace2d0161633428e7110a4678c06be7f958e717f4"
+    },
+    "gsm8k": {
+      "requests": 8,
+      "sha256": "648c9675013103bd1afbb6712ba26002752ddb331e16b2666df683fe311540f8"
+    },
+    "longbench": {
+      "requests": 8,
+      "sha256": "2b48aca7d5b7be7a02d59abd9b8c5c54f14962609222e275911c19e43f739af5"
+    }
+  },
+  "protocol": "temperature=0, top_p=1, seed=17, normal EOS, original benchmark max_tokens/stop strings",
+  "performance_scope": "prefix",
+  "performance_order": "benchmark order; LongBench round robin in existing eight-task order"
+}

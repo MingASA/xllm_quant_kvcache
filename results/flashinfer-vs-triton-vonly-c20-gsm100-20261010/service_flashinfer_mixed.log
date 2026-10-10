@@ -1,0 +1,6 @@
+I20261010 06:37:37.959596 68561 run_mixed_v_cache_experiment.py:625] Replay bf16_int8 gsm8k c=20 repetition=0 (100 real queries)
+I20261010 06:38:15.225075 68561 run_mixed_v_cache_experiment.py:625] Replay bf16_int8 gsm8k c=20 repetition=1 (100 real queries)
+I20261010 06:38:51.420838 68561 run_mixed_v_cache_experiment.py:625] Replay bf16_int8 gsm8k c=20 repetition=2 (100 real queries)
+I20261010 06:40:30.968976 68561 run_mixed_v_cache_experiment.py:625] Replay bf16_int4 gsm8k c=20 repetition=0 (100 real queries)
+I20261010 06:41:08.665797 68561 run_mixed_v_cache_experiment.py:625] Replay bf16_int4 gsm8k c=20 repetition=1 (100 real queries)
+I20261010 06:41:44.911208 68561 run_mixed_v_cache_experiment.py:625] Replay bf16_int4 gsm8k c=20 repetition=2 (100 real queries)

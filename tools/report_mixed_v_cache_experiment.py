@@ -256,6 +256,16 @@ def _report(root: Path) -> None:
     import matplotlib.pyplot as plt
     import numpy as np
 
+    environment_path = root / "environment.json"
+    attention_backend = (
+        json.loads(environment_path.read_text()).get("attention_backend", "triton")
+        if environment_path.exists()
+        else "triton"
+    )
+    backend_label = {
+        "triton": "Triton paged attention",
+        "flashinfer_mixed": "FlashInfer FA2 paged Tensor Core attention (independent mixed-V extension)",
+    }[attention_backend]
     output = root / "report"
     output.mkdir(exist_ok=True)
     allocations = {
@@ -272,10 +282,14 @@ def _report(root: Path) -> None:
             summary = json.loads(path.read_text())
             if summary.get("measurement_version") != 2:
                 raise ValueError(f"Outdated measurement protocol; keep archived and rerun in a new directory: {path}")
+            config = json.loads((path.parent / "run_config.json").read_text())
+            if config.get("attention_backend", "triton") != attention_backend:
+                raise ValueError(f"Mixed attention backends in one experiment: {path}")
             gpu = _telemetry(path.parent / "telemetry.jsonl")
             runs.append(
                 {
                     "arm": arm,
+                    "attention_backend": attention_backend,
                     "workload": path.parent.parent.name,
                     "repetition": int(path.parent.name.split("_r")[1]),
                     **summary,
@@ -288,6 +302,7 @@ def _report(root: Path) -> None:
     if runs:
         fields = (
             "arm",
+            "attention_backend",
             "workload",
             "concurrency",
             "repetition",
@@ -404,7 +419,7 @@ def _report(root: Path) -> None:
         "# Mixed-precision V cache experiment",
         "",
         "Fair baseline: all arms use Python eager, graph off, "
-        "the same Triton paged-attention algorithm, scheduler and memory budget (server_command.json). Prefix caching is off.",
+        f"the same {backend_label}, scheduler and memory budget (server_command.json). Prefix caching is off.",
         "",
         "GPU: RTX 5060 Ti 16GB GDDR7 VRAM. NVIDIA memory utilization is sampled memory-controller activity; "
         "it is not a measured percentage of peak VRAM bandwidth. No memory-traffic or dequant-cost claim is made "

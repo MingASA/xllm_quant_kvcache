@@ -1,0 +1,31 @@
+{
+  "measurement_version": 2,
+  "attention_backend": "triton",
+  "arm": "bf16_int8",
+  "workload": "gsm8k",
+  "concurrency": 20,
+  "repetition": 2,
+  "replay_cycles": 1,
+  "quality_protocol": "separate",
+  "trace_sha256": "82069ab008d4ef451cf3076f094c8d93aaa92382a08d713a6a7af9c4c2d54405",
+  "warmup": 2,
+  "warmup_requests": 20,
+  "warmup_concurrency": 20,
+  "server_command": [
+    "/home/mingasa/projects/xllm_quant_kvcache/build/cmake.cuda-x86/xllm/xllm",
+    "--model=/mnt/e/AI/models/Qwen2.5-1.5B-Instruct",
+    "--model_impl=python",
+    "--python_model_path=/home/mingasa/projects/xllm_quant_kvcache",
+    "--host=127.0.0.1",
+    "--port=18997",
+    "--max_cache_size=0",
+    "--enable_prefix_cache=false",
+    "--max_memory_utilization=0.93",
+    "--max_tokens_per_batch=4096",
+    "--max_seqs_per_batch=128",
+    "--kv_cache_dtype=bf16_int8",
+    "--enable_graph=false",
+    "--enable_prefill_piecewise_graph=false",
+    "--python_graph_backend=off"
+  ]
+}

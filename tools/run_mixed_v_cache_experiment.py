@@ -245,7 +245,10 @@ def _attention_compiles_between(start_unix: float, end_unix: float) -> list[dict
     if not cache.is_dir():
         raise ValueError(f"Triton compilation cache is unavailable for measurement audit: {cache}")
     records = []
-    for path in cache.glob("*/_quantized_paged*kernel.json"):
+    artifacts = set(cache.glob("*/_quantized_paged*kernel.json"))
+    artifacts.update(cache.glob("*/_quantize_and_scatter_kv_kernel.json"))
+    artifacts.update(cache.glob("*/_scatter_bf16_kv_kernel.json"))
+    for path in sorted(artifacts):
         modified = path.stat().st_mtime
         if start_unix <= modified <= end_unix:
             records.append({"path": str(path), "modified_unix_s": modified})
@@ -322,9 +325,9 @@ async def _replay(url: str, rows: list[dict[str, Any]], concurrency: int, output
         if compiles:
             _write_json(
                 output / "invalid_measurement.json",
-                {"reason": "attention JIT during timed requests", "compiles": compiles},
+                {"reason": "attention/cache-writer JIT during timed requests", "compiles": compiles},
             )
-            raise ValueError(f"Attention JIT contaminated timed replay; preserved raw data: {output}")
+            raise ValueError(f"Attention/cache-writer JIT contaminated timed replay; preserved raw data: {output}")
         generated = sum(row["usage"]["completion_tokens"] for row in results)
         _write_json(
             output / "summary.json",
@@ -430,6 +433,8 @@ def _run(args: argparse.Namespace) -> None:
             if actual != expected or len(actual_rows) != len(expected):
                 raise ValueError(f"Joint quality requires the full {workload} benchmark trace")
     gates = json.loads(args.gates.read_text())
+    if gates.get("attention_backend", "triton") != args.attention_backend:
+        raise ValueError("Correctness gate does not attest the selected attention backend")
     for arm in args.arms:
         if not gates.get(arm, {}).get("passed"):
             raise ValueError(f"Correctness gate not passed for {arm}")
@@ -450,7 +455,20 @@ def _run(args: argparse.Namespace) -> None:
             ).splitlines()
         ],
     ]
+    if args.attention_backend == "flashinfer_mixed":
+        source_paths.extend(
+            [
+                ROOT / "xllm/python/attention/flashinfer_mixed.py",
+                ROOT / "xllm/python/attention/flashinfer_mixed_build.py",
+                *[
+                    path
+                    for path in (ROOT / "xllm/python/kernels_cuda/flashinfer_mixed").rglob("*")
+                    if path.is_file() and "__pycache__" not in path.parts
+                ],
+            ]
+        )
     environment = {
+        "attention_backend": args.attention_backend,
         "git_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
         "git_diff": subprocess.check_output(["git", "diff"], cwd=ROOT, text=True),
         "source_sha256": {str(path.relative_to(ROOT)): _hash_file(path) for path in source_paths},
@@ -465,6 +483,10 @@ def _run(args: argparse.Namespace) -> None:
             ["nvidia-smi", "--query-gpu=name,driver_version,memory.total", "--format=csv,noheader,nounits"], text=True
         ),
     }
+    if args.attention_backend == "flashinfer_mixed":
+        import flashinfer
+
+        environment["packages"]["flashinfer"] = flashinfer.__version__
     env_path = args.output / "environment.json"
     if env_path.exists() and json.loads(env_path.read_text()) != environment:
         raise ValueError("Source/environment changed; use a new output directory")
@@ -507,7 +529,7 @@ def _run(args: argparse.Namespace) -> None:
             "--enable_prefill_piecewise_graph=false",
             "--python_graph_backend=off",
         ]
-        env = dict(os.environ, XLLM_QUANTIZED_BACKEND="triton", XLLM_KV_QUALITY_MODE="none")
+        env = dict(os.environ, XLLM_QUANTIZED_BACKEND=args.attention_backend, XLLM_KV_QUALITY_MODE="none")
         _write_json(
             arm_root / "server_command.json",
             {
@@ -554,6 +576,14 @@ def _run(args: argparse.Namespace) -> None:
                 text = log_path.read_text(errors="replace")
                 allocation = json.loads(text.split("KV_ALLOCATION ", 1)[1].splitlines()[0])
                 _validate_allocation(arm, allocation)
+                if args.attention_backend == "flashinfer_mixed":
+                    if "FLASHINFER_MIXED_BUILD " not in text:
+                        raise ValueError("Server did not load the mixed-V FlashInfer backend")
+                    native = json.loads(text.split("FLASHINFER_MIXED_BUILD ", 1)[1].splitlines()[0])
+                    for field in ("build_key", "artifact_sha256"):
+                        if native[field] != gates.get("native_build", {}).get(field):
+                            raise ValueError(f"Correctness gate is stale for the native kernel: {field}")
+                    _write_json(arm_root / "native_build.json", native)
                 _write_json(arm_root / "allocation.json", allocation)
                 for workload in args.workloads:
                     trace = args.output / f"trace_{workload}.jsonl"
@@ -568,6 +598,7 @@ def _run(args: argparse.Namespace) -> None:
                             run_path = arm_root / workload / f"c{concurrency}_r{repetition}"
                             run_config = {
                                 "measurement_version": 2,
+                                "attention_backend": args.attention_backend,
                                 "arm": arm,
                                 "workload": workload,
                                 "concurrency": concurrency,
@@ -615,6 +646,7 @@ def main() -> None:
     parser.add_argument("action", choices=("prepare", "run"))
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--gates", type=Path)
+    parser.add_argument("--attention-backend", choices=("triton", "flashinfer_mixed"), default="triton")
     parser.add_argument("--performance-samples", type=int, default=0, help="0 selects the full benchmark traces")
     parser.add_argument("--arms", nargs="+", choices=ARMS, default=list(ARMS))
     parser.add_argument(

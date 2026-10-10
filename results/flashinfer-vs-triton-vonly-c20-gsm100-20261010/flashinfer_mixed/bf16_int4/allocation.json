@@ -1,0 +1,1042 @@
+{
+  "layers": [
+    {
+      "tensors": {
+        "key": {
+          "dtype": "torch.bfloat16",
+          "shape": [
+            4644,
+            128,
+            2,
+            128
+          ],
+          "bytes": 304349184
+        },
+        "value": {
+          "dtype": "torch.uint8",
+          "shape": [
+            4644,
+            128,
+            2,
+            64
+          ],
+          "bytes": 76087296
+        },
+        "value_scale": {
+          "dtype": "torch.float32",
+          "shape": [
+            4644,
+            128,
+            2
+          ],
+          "bytes": 4755456
+        }
+      },
+      "key_format": "bf16",
+      "value_format": "int4",
+      "resident_bytes": 385191936,
+      "bytes_per_token": 648
+    },
+    {
+      "tensors": {
+        "key": {
+          "dtype": "torch.bfloat16",
+          "shape": [
+            4644,
+            128,
+            2,
+            128
+          ],
+          "bytes": 304349184
+        },
+        "value": {
+          "dtype": "torch.uint8",
+          "shape": [
+            4644,
+            128,
+            2,
+            64
+          ],
+          "bytes": 76087296
+        },
+        "value_scale": {
+          "dtype": "torch.float32",
+          "shape": [
+            4644,
+            128,
+            2
+          ],
+          "bytes": 4755456
+        }
+      },
+      "key_format": "bf16",
+      "value_format": "int4",
+      "resident_bytes": 385191936,
+      "bytes_per_token": 648
+    },
+    {
+      "tensors": {
+        "key": {
+          "dtype": "torch.bfloat16",
+          "shape": [
+            4644,
+            128,
+            2,
+            128
+          ],
+          "bytes": 304349184
+        },
+        "value": {
+          "dtype": "torch.uint8",
+          "shape": [
+            4644,
+            128,
+            2,
+            64
+          ],
+          "bytes": 76087296
+        },
+        "value_scale": {
+          "dtype": "torch.float32",
+          "shape": [
+            4644,
+            128,
+            2
+          ],
+          "bytes": 4755456
+        }
+      },
+      "key_format": "bf16",
+      "value_format": "int4",
+      "resident_bytes": 385191936,
+      "bytes_per_token": 648
+    },
+    {
+      "tensors": {
+        "key": {
+          "dtype": "torch.bfloat16",
+          "shape": [
+            4644,
+            128,
+            2,
+            128
+          ],
+          "bytes": 304349184
+        },
+        "value": {
+          "dtype": "torch.uint8",
+          "shape": [
+            4644,
+            128,
+            2,
+            64
+          ],
+          "bytes": 76087296
+        },
+        "value_scale": {
+          "dtype": "torch.float32",
+          "shape": [
+            4644,
+            128,
+            2
+          ],
+          "bytes": 4755456
+        }
+      },
+      "key_format": "bf16",
+      "value_format": "int4",
+      "resident_bytes": 385191936,
+      "bytes_per_token": 648
+    },
+    {
+      "tensors": {
+        "key": {
+          "dtype": "torch.bfloat16",
+          "shape": [
+            4644,
+            128,
+            2,
+            128
+          ],
+          "bytes": 304349184
+        },
+        "value": {
+          "dtype": "torch.uint8",
+          "shape": [
+            4644,
+            128,
+            2,
+            64
+          ],
+          "bytes": 76087296
+        },
+        "value_scale": {
+          "dtype": "torch.float32",
+          "shape": [
+            4644,
+            128,
+            2
+          ],
+          "bytes": 4755456
+        }
+      },
+      "key_format": "bf16",
+      "value_format": "int4",
+      "resident_bytes": 385191936,
+      "bytes_per_token": 648
+    },
+    {
+      "tensors": {
+        "key": {
+          "dtype": "torch.bfloat16",
+          "shape": [
+            4644,
+            128,
+            2,
+            128
+          ],
+          "bytes": 304349184
+        },
+        "value": {
+          "dtype": "torch.uint8",
+          "shape": [
+            4644,
+            128,
+            2,
+            64
+          ],
+          "bytes": 76087296
+        },
+        "value_scale": {
+          "dtype": "torch.float32",
+          "shape": [
+            4644,
+            128,
+            2
+          ],
+          "bytes": 4755456
+        }
+      },
+      "key_format": "bf16",
+      "value_format": "int4",
+      "resident_bytes": 385191936,
+      "bytes_per_token": 648
+    },
+    {
+      "tensors": {
+        "key": {
+          "dtype": "torch.bfloat16",
+          "shape": [
+            4644,
+            128,
+            2,
+            128
+          ],
+          "bytes": 304349184
+        },
+        "value": {
+          "dtype": "torch.uint8",
+          "shape": [
+            4644,
+            128,
+            2,
+            64
+          ],
+          "bytes": 76087296
+        },
+        "value_scale": {
+          "dtype": "torch.float32",
+          "shape": [
+            4644,
+            128,
+            2
+          ],
+          "bytes": 4755456
+        }
+      },
+      "key_format": "bf16",
+      "value_format": "int4",
+      "resident_bytes": 385191936,
+      "bytes_per_token": 648
+    },
+    {
+      "tensors": {
+        "key": {
+          "dtype": "torch.bfloat16",
+          "shape": [
+            4644,
+            128,
+            2,
+            128
+          ],
+          "bytes": 304349184
+        },
+        "value": {
+          "dtype": "torch.uint8",
+          "shape": [
+            4644,
+            128,
+            2,
+            64
+          ],
+          "bytes": 76087296
+        },
+        "value_scale": {
+          "dtype": "torch.float32",
+          "shape": [
+            4644,
+            128,
+            2
+          ],
+          "bytes": 4755456
+        }
+      },
+      "key_format": "bf16",
+      "value_format": "int4",
+      "resident_bytes": 385191936,
+      "bytes_per_token": 648
+    },
+    {
+      "tensors": {
+        "key": {
+          "dtype": "torch.bfloat16",
+          "shape": [
+            4644,
+            128,
+            2,
+            128
+          ],
+          "bytes": 304349184
+        },
+        "value": {
+          "dtype": "torch.uint8",
+          "shape": [
+            4644,
+            128,
+            2,
+            64
+          ],
+          "bytes": 76087296
+        },
+        "value_scale": {
+          "dtype": "torch.float32",
+          "shape": [
+            4644,
+            128,
+            2
+          ],
+          "bytes": 4755456
+        }
+      },
+      "key_format": "bf16",
+      "value_format": "int4",
+      "resident_bytes": 385191936,
+      "bytes_per_token": 648
+    },
+    {
+      "tensors": {
+        "key": {
+          "dtype": "torch.bfloat16",
+          "shape": [
+            4644,
+            128,
+            2,
+            128
+          ],
+          "bytes": 304349184
+        },
+        "value": {
+          "dtype": "torch.uint8",
+          "shape": [
+            4644,
+            128,
+            2,
+            64
+          ],
+          "bytes": 76087296
+        },
+        "value_scale": {
+          "dtype": "torch.float32",
+          "shape": [
+            4644,
+            128,
+            2
+          ],
+          "bytes": 4755456
+        }
+      },
+      "key_format": "bf16",
+      "value_format": "int4",
+      "resident_bytes": 385191936,
+      "bytes_per_token": 648
+    },
+    {
+      "tensors": {
+        "key": {
+          "dtype": "torch.bfloat16",
+          "shape": [
+            4644,
+            128,
+            2,
+            128
+          ],
+          "bytes": 304349184
+        },
+        "value": {
+          "dtype": "torch.uint8",
+          "shape": [
+            4644,
+            128,
+            2,
+            64
+          ],
+          "bytes": 76087296
+        },
+        "value_scale": {
+          "dtype": "torch.float32",
+          "shape": [
+            4644,
+            128,
+            2
+          ],
+          "bytes": 4755456
+        }
+      },
+      "key_format": "bf16",
+      "value_format": "int4",
+      "resident_bytes": 385191936,
+      "bytes_per_token": 648
+    },
+    {
+      "tensors": {
+        "key": {
+          "dtype": "torch.bfloat16",
+          "shape": [
+            4644,
+            128,
+            2,
+            128
+          ],
+          "bytes": 304349184
+        },
+        "value": {
+          "dtype": "torch.uint8",
+          "shape": [
+            4644,
+            128,
+            2,
+            64
+          ],
+          "bytes": 76087296
+        },
+        "value_scale": {
+          "dtype": "torch.float32",
+          "shape": [
+            4644,
+            128,
+            2
+          ],
+          "bytes": 4755456
+        }
+      },
+      "key_format": "bf16",
+      "value_format": "int4",
+      "resident_bytes": 385191936,
+      "bytes_per_token": 648
+    },
+    {
+      "tensors": {
+        "key": {
+          "dtype": "torch.bfloat16",
+          "shape": [
+            4644,
+            128,
+            2,
+            128
+          ],
+          "bytes": 304349184
+        },
+        "value": {
+          "dtype": "torch.uint8",
+          "shape": [
+            4644,
+            128,
+            2,
+            64
+          ],
+          "bytes": 76087296
+        },
+        "value_scale": {
+          "dtype": "torch.float32",
+          "shape": [
+            4644,
+            128,
+            2
+          ],
+          "bytes": 4755456
+        }
+      },
+      "key_format": "bf16",
+      "value_format": "int4",
+      "resident_bytes": 385191936,
+      "bytes_per_token": 648
+    },
+    {
+      "tensors": {
+        "key": {
+          "dtype": "torch.bfloat16",
+          "shape": [
+            4644,
+            128,
+            2,
+            128
+          ],
+          "bytes": 304349184
+        },
+        "value": {
+          "dtype": "torch.uint8",
+          "shape": [
+            4644,
+            128,
+            2,
+            64
+          ],
+          "bytes": 76087296
+        },
+        "value_scale": {
+          "dtype": "torch.float32",
+          "shape": [
+            4644,
+            128,
+            2
+          ],
+          "bytes": 4755456
+        }
+      },
+      "key_format": "bf16",
+      "value_format": "int4",
+      "resident_bytes": 385191936,
+      "bytes_per_token": 648
+    },
+    {
+      "tensors": {
+        "key": {
+          "dtype": "torch.bfloat16",
+          "shape": [
+            4644,
+            128,
+            2,
+            128
+          ],
+          "bytes": 304349184
+        },
+        "value": {
+          "dtype": "torch.uint8",
+          "shape": [
+            4644,
+            128,
+            2,
+            64
+          ],
+          "bytes": 76087296
+        },
+        "value_scale": {
+          "dtype": "torch.float32",
+          "shape": [
+            4644,
+            128,
+            2
+          ],
+          "bytes": 4755456
+        }
+      },
+      "key_format": "bf16",
+      "value_format": "int4",
+      "resident_bytes": 385191936,
+      "bytes_per_token": 648
+    },
+    {
+      "tensors": {
+        "key": {
+          "dtype": "torch.bfloat16",
+          "shape": [
+            4644,
+            128,
+            2,
+            128
+          ],
+          "bytes": 304349184
+        },
+        "value": {
+          "dtype": "torch.uint8",
+          "shape": [
+            4644,
+            128,
+            2,
+            64
+          ],
+          "bytes": 76087296
+        },
+        "value_scale": {
+          "dtype": "torch.float32",
+          "shape": [
+            4644,
+            128,
+            2
+          ],
+          "bytes": 4755456
+        }
+      },
+      "key_format": "bf16",
+      "value_format": "int4",
+      "resident_bytes": 385191936,
+      "bytes_per_token": 648
+    },
+    {
+      "tensors": {
+        "key": {
+          "dtype": "torch.bfloat16",
+          "shape": [
+            4644,
+            128,
+            2,
+            128
+          ],
+          "bytes": 304349184
+        },
+        "value": {
+          "dtype": "torch.uint8",
+          "shape": [
+            4644,
+            128,
+            2,
+            64
+          ],
+          "bytes": 76087296
+        },
+        "value_scale": {
+          "dtype": "torch.float32",
+          "shape": [
+            4644,
+            128,
+            2
+          ],
+          "bytes": 4755456
+        }
+      },
+      "key_format": "bf16",
+      "value_format": "int4",
+      "resident_bytes": 385191936,
+      "bytes_per_token": 648
+    },
+    {
+      "tensors": {
+        "key": {
+          "dtype": "torch.bfloat16",
+          "shape": [
+            4644,
+            128,
+            2,
+            128
+          ],
+          "bytes": 304349184
+        },
+        "value": {
+          "dtype": "torch.uint8",
+          "shape": [
+            4644,
+            128,
+            2,
+            64
+          ],
+          "bytes": 76087296
+        },
+        "value_scale": {
+          "dtype": "torch.float32",
+          "shape": [
+            4644,
+            128,
+            2
+          ],
+          "bytes": 4755456
+        }
+      },
+      "key_format": "bf16",
+      "value_format": "int4",
+      "resident_bytes": 385191936,
+      "bytes_per_token": 648
+    },
+    {
+      "tensors": {
+        "key": {
+          "dtype": "torch.bfloat16",
+          "shape": [
+            4644,
+            128,
+            2,
+            128
+          ],
+          "bytes": 304349184
+        },
+        "value": {
+          "dtype": "torch.uint8",
+          "shape": [
+            4644,
+            128,
+            2,
+            64
+          ],
+          "bytes": 76087296
+        },
+        "value_scale": {
+          "dtype": "torch.float32",
+          "shape": [
+            4644,
+            128,
+            2
+          ],
+          "bytes": 4755456
+        }
+      },
+      "key_format": "bf16",
+      "value_format": "int4",
+      "resident_bytes": 385191936,
+      "bytes_per_token": 648
+    },
+    {
+      "tensors": {
+        "key": {
+          "dtype": "torch.bfloat16",
+          "shape": [
+            4644,
+            128,
+            2,
+            128
+          ],
+          "bytes": 304349184
+        },
+        "value": {
+          "dtype": "torch.uint8",
+          "shape": [
+            4644,
+            128,
+            2,
+            64
+          ],
+          "bytes": 76087296
+        },
+        "value_scale": {
+          "dtype": "torch.float32",
+          "shape": [
+            4644,
+            128,
+            2
+          ],
+          "bytes": 4755456
+        }
+      },
+      "key_format": "bf16",
+      "value_format": "int4",
+      "resident_bytes": 385191936,
+      "bytes_per_token": 648
+    },
+    {
+      "tensors": {
+        "key": {
+          "dtype": "torch.bfloat16",
+          "shape": [
+            4644,
+            128,
+            2,
+            128
+          ],
+          "bytes": 304349184
+        },
+        "value": {
+          "dtype": "torch.uint8",
+          "shape": [
+            4644,
+            128,
+            2,
+            64
+          ],
+          "bytes": 76087296
+        },
+        "value_scale": {
+          "dtype": "torch.float32",
+          "shape": [
+            4644,
+            128,
+            2
+          ],
+          "bytes": 4755456
+        }
+      },
+      "key_format": "bf16",
+      "value_format": "int4",
+      "resident_bytes": 385191936,
+      "bytes_per_token": 648
+    },
+    {
+      "tensors": {
+        "key": {
+          "dtype": "torch.bfloat16",
+          "shape": [
+            4644,
+            128,
+            2,
+            128
+          ],
+          "bytes": 304349184
+        },
+        "value": {
+          "dtype": "torch.uint8",
+          "shape": [
+            4644,
+            128,
+            2,
+            64
+          ],
+          "bytes": 76087296
+        },
+        "value_scale": {
+          "dtype": "torch.float32",
+          "shape": [
+            4644,
+            128,
+            2
+          ],
+          "bytes": 4755456
+        }
+      },
+      "key_format": "bf16",
+      "value_format": "int4",
+      "resident_bytes": 385191936,
+      "bytes_per_token": 648
+    },
+    {
+      "tensors": {
+        "key": {
+          "dtype": "torch.bfloat16",
+          "shape": [
+            4644,
+            128,
+            2,
+            128
+          ],
+          "bytes": 304349184
+        },
+        "value": {
+          "dtype": "torch.uint8",
+          "shape": [
+            4644,
+            128,
+            2,
+            64
+          ],
+          "bytes": 76087296
+        },
+        "value_scale": {
+          "dtype": "torch.float32",
+          "shape": [
+            4644,
+            128,
+            2
+          ],
+          "bytes": 4755456
+        }
+      },
+      "key_format": "bf16",
+      "value_format": "int4",
+      "resident_bytes": 385191936,
+      "bytes_per_token": 648
+    },
+    {
+      "tensors": {
+        "key": {
+          "dtype": "torch.bfloat16",
+          "shape": [
+            4644,
+            128,
+            2,
+            128
+          ],
+          "bytes": 304349184
+        },
+        "value": {
+          "dtype": "torch.uint8",
+          "shape": [
+            4644,
+            128,
+            2,
+            64
+          ],
+          "bytes": 76087296
+        },
+        "value_scale": {
+          "dtype": "torch.float32",
+          "shape": [
+            4644,
+            128,
+            2
+          ],
+          "bytes": 4755456
+        }
+      },
+      "key_format": "bf16",
+      "value_format": "int4",
+      "resident_bytes": 385191936,
+      "bytes_per_token": 648
+    },
+    {
+      "tensors": {
+        "key": {
+          "dtype": "torch.bfloat16",
+          "shape": [
+            4644,
+            128,
+            2,
+            128
+          ],
+          "bytes": 304349184
+        },
+        "value": {
+          "dtype": "torch.uint8",
+          "shape": [
+            4644,
+            128,
+            2,
+            64
+          ],
+          "bytes": 76087296
+        },
+        "value_scale": {
+          "dtype": "torch.float32",
+          "shape": [
+            4644,
+            128,
+            2
+          ],
+          "bytes": 4755456
+        }
+      },
+      "key_format": "bf16",
+      "value_format": "int4",
+      "resident_bytes": 385191936,
+      "bytes_per_token": 648
+    },
+    {
+      "tensors": {
+        "key": {
+          "dtype": "torch.bfloat16",
+          "shape": [
+            4644,
+            128,
+            2,
+            128
+          ],
+          "bytes": 304349184
+        },
+        "value": {
+          "dtype": "torch.uint8",
+          "shape": [
+            4644,
+            128,
+            2,
+            64
+          ],
+          "bytes": 76087296
+        },
+        "value_scale": {
+          "dtype": "torch.float32",
+          "shape": [
+            4644,
+            128,
+            2
+          ],
+          "bytes": 4755456
+        }
+      },
+      "key_format": "bf16",
+      "value_format": "int4",
+      "resident_bytes": 385191936,
+      "bytes_per_token": 648
+    },
+    {
+      "tensors": {
+        "key": {
+          "dtype": "torch.bfloat16",
+          "shape": [
+            4644,
+            128,
+            2,
+            128
+          ],
+          "bytes": 304349184
+        },
+        "value": {
+          "dtype": "torch.uint8",
+          "shape": [
+            4644,
+            128,
+            2,
+            64
+          ],
+          "bytes": 76087296
+        },
+        "value_scale": {
+          "dtype": "torch.float32",
+          "shape": [
+            4644,
+            128,
+            2
+          ],
+          "bytes": 4755456
+        }
+      },
+      "key_format": "bf16",
+      "value_format": "int4",
+      "resident_bytes": 385191936,
+      "bytes_per_token": 648
+    },
+    {
+      "tensors": {
+        "key": {
+          "dtype": "torch.bfloat16",
+          "shape": [
+            4644,
+            128,
+            2,
+            128
+          ],
+          "bytes": 304349184
+        },
+        "value": {
+          "dtype": "torch.uint8",
+          "shape": [
+            4644,
+            128,
+            2,
+            64
+          ],
+          "bytes": 76087296
+        },
+        "value_scale": {
+          "dtype": "torch.float32",
+          "shape": [
+            4644,
+            128,
+            2
+          ],
+          "bytes": 4755456
+        }
+      },
+      "key_format": "bf16",
+      "value_format": "int4",
+      "resident_bytes": 385191936,
+      "bytes_per_token": 648
+    }
+  ],
+  "resident_bytes": 10785374208,
+  "token_capacity": 594432
+}

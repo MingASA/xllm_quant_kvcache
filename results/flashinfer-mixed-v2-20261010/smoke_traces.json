@@ -1,0 +1,22 @@
+{
+  "gsm8k": [
+    "gsm8k/0",
+    "gsm8k/1",
+    "gsm8k/2",
+    "gsm8k/3",
+    "gsm8k/4",
+    "gsm8k/5",
+    "gsm8k/6",
+    "gsm8k/7"
+  ],
+  "longbench": [
+    "narrativeqa/0",
+    "qasper/0",
+    "multifieldqa_en/0",
+    "2wikimqa/0",
+    "hotpotqa/0",
+    "musique/0",
+    "lcc/0",
+    "repobench-p/0"
+  ]
+}

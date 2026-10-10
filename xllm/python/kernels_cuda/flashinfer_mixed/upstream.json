@@ -1,0 +1,14 @@
+{
+  "flashinfer_version": "0.6.18.post1",
+  "upstream_sha256": {
+    "decode.cuh": "bd699c64cff0af922305e532de587ff4db8bc377c198bd653db1d48aa74c2942",
+    "prefill.cuh": "f93cbea96e3a723254c15f5a52d6dd4c13e3892e88eb9b9fed1c0c0048c7d710"
+  },
+  "architecture": "sm_120",
+  "head_dim": 128,
+  "num_qo_heads": 12,
+  "num_kv_heads": 2,
+  "license": "LICENSE.flashinfer",
+  "source": "https://github.com/flashinfer-ai/flashinfer",
+  "modifications": "Independent namespace. BF16 K; resident INT8/FP8 E4M3/packed signed INT4 V, per-token/head FP32 scales; async compressed V loads, in-place shared-memory BF16 tile for stock FA2 MMA. BF16 V path unchanged. Original scheduler and merge."
+}

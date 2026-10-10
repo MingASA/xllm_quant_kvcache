@@ -1,0 +1,101 @@
+{
+  "auto": {
+    "passed": true,
+    "evidence": [
+      {
+        "path": "results/mixed-v-cache-20261010/runtime_stride_correctness.log",
+        "result": "215 passed; all four formats, dense references, prefill/decode, dynamic-stride compiled-kernel reuse"
+      },
+      {
+        "path": "results/mixed-v-cache-20261009/kv_cache_estimation_test.log",
+        "result": "25 passed"
+      },
+      {
+        "path": "results/mixed-v-cache-20261009/kv_cache_test.log",
+        "result": "26 passed, 1 MLU-only skipped"
+      },
+      {
+        "path": "results/flashinfer-mixed-v2-20261010/triton_correctness.log",
+        "result": "60 mixed/BF16 GPU and CPU reference tests passed on current source"
+      }
+    ]
+  },
+  "bf16_int8": {
+    "passed": true,
+    "evidence": [
+      {
+        "path": "results/mixed-v-cache-20261010/runtime_stride_correctness.log",
+        "result": "215 passed; all four formats, dense references, prefill/decode, dynamic-stride compiled-kernel reuse"
+      },
+      {
+        "path": "results/mixed-v-cache-20261009/kv_cache_estimation_test.log",
+        "result": "25 passed"
+      },
+      {
+        "path": "results/mixed-v-cache-20261009/kv_cache_test.log",
+        "result": "26 passed, 1 MLU-only skipped"
+      },
+      {
+        "path": "results/flashinfer-mixed-v2-20261010/triton_correctness.log",
+        "result": "60 mixed/BF16 GPU and CPU reference tests passed on current source"
+      }
+    ]
+  },
+  "bf16_fp8_e4m3": {
+    "passed": true,
+    "evidence": [
+      {
+        "path": "results/mixed-v-cache-20261010/runtime_stride_correctness.log",
+        "result": "215 passed; all four formats, dense references, prefill/decode, dynamic-stride compiled-kernel reuse"
+      },
+      {
+        "path": "results/mixed-v-cache-20261009/kv_cache_estimation_test.log",
+        "result": "25 passed"
+      },
+      {
+        "path": "results/mixed-v-cache-20261009/kv_cache_test.log",
+        "result": "26 passed, 1 MLU-only skipped"
+      },
+      {
+        "path": "results/flashinfer-mixed-v2-20261010/triton_correctness.log",
+        "result": "60 mixed/BF16 GPU and CPU reference tests passed on current source"
+      }
+    ]
+  },
+  "bf16_int4": {
+    "passed": true,
+    "evidence": [
+      {
+        "path": "results/mixed-v-cache-20261010/runtime_stride_correctness.log",
+        "result": "215 passed; all four formats, dense references, prefill/decode, dynamic-stride compiled-kernel reuse"
+      },
+      {
+        "path": "results/mixed-v-cache-20261009/kv_cache_estimation_test.log",
+        "result": "25 passed"
+      },
+      {
+        "path": "results/mixed-v-cache-20261009/kv_cache_test.log",
+        "result": "26 passed, 1 MLU-only skipped"
+      },
+      {
+        "path": "results/flashinfer-mixed-v2-20261010/triton_correctness.log",
+        "result": "60 mixed/BF16 GPU and CPU reference tests passed on current source"
+      }
+    ]
+  },
+  "binary_sha256": "d40a5d5622c3f04e9eaf2bc2a43cd74b888451463d6c6f1ac34f5c3c7522cd87",
+  "source_sha256": {
+    "xllm/python/attention/quantized.py": "44879acc8b6d0af83e1494a0a4a8726ad430bfd6ad5af5b49d34a5f3c3b380c8",
+    "xllm/python/attention/quantized_triton.py": "98cec576320f50886c72c0ecb1a9125d561175f894975dccb4a761490a53f1f6",
+    "xllm/python/model_executor/executor.py": "76ff7153b4aa6f11c14b602d6430338f7f6e7e48512f424489de8ac6d1350d07",
+    "xllm/core/framework/kv_cache/kv_cache_dtype.h": "6684d4a48eaa1e17667d87290169b70b4645b3464abdee5572ea7d31e17629a7",
+    "xllm/core/framework/kv_cache/kv_cache_utils.cpp": "585bb0a248fe316d2179b12077b5cf9b92aeaec048954067114cb2f20a3fd79b",
+    "xllm/core/framework/kv_cache/kv_cache_estimation.cpp": "c277e52942ada6c714e67d69dfcf11fb0994fc62a6a467c2f8ce9a61e73e9781",
+    "tests/python/test_quantized_attention.py": "476da94e2d8b864660d125f8101c475ad289fe7e14c2f6b3ae2fb41b9ef106fc"
+  },
+  "measurement_evidence": {
+    "path": "results/mixed-v-cache-20261010/measurement_tests.log",
+    "result": "23 passed"
+  },
+  "attention_backend": "triton"
+}

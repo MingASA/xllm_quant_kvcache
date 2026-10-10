@@ -1,0 +1,7 @@
+{
+  "PATH": "/usr/lib/wsl/lib:/mnt/e/AI/xllm-build-tools/cargo/bin:/home/mingasa/venvs/xllm/build-tools/usr/bin:/home/mingasa/venvs/vllm/bin:/home/mingasa/venvs/xllm/bin:/usr/local/cuda-13.2/bin:/usr/bin:/bin",
+  "PYTHONPATH": "/home/mingasa/projects/xllm_quant_kvcache:/home/mingasa/venvs/vllm/lib/python3.12/site-packages",
+  "LD_LIBRARY_PATH": "/usr/lib/wsl/lib:/home/mingasa/projects/xllm_quant_kvcache/build/cmake.cuda-x86/local-deps/msgpack/root/usr/lib/x86_64-linux-gnu:/home/mingasa/venvs/vllm/lib/python3.12/site-packages/nvidia/nccl/lib:/home/mingasa/venvs/vllm/lib/python3.12/site-packages/tvm_ffi/lib:/home/mingasa/projects/xllm_quant_kvcache/build/cmake.cuda-x86/local-deps/rdma/usr/lib/x86_64-linux-gnu:/home/mingasa/projects/xllm_quant_kvcache/build/cmake.cuda-x86/local-deps/rdma/lib/x86_64-linux-gnu:/home/mingasa/projects/xllm_quant_kvcache/build/cmake.cuda-x86/local-deps/zstd/usr/lib/x86_64-linux-gnu:/home/mingasa/projects/xllm_quant_kvcache/build/cmake.cuda-x86/local-deps/xxhash/usr/lib/x86_64-linux-gnu:/home/mingasa/projects/xllm_quant_kvcache/build/cmake.cuda-x86/local-deps/numa/usr/lib/x86_64-linux-gnu:/home/mingasa/venvs/xllm/build-tools/usr/lib/x86_64-linux-gnu:/usr/local/cuda-13.2/lib64",
+  "CUDA_VISIBLE_DEVICES": null,
+  "TRITON_CACHE_DIR": null
+}

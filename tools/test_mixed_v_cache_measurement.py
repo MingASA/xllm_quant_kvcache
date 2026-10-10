@@ -221,11 +221,16 @@ def test_resident_allocation_accounting(arm: str) -> None:
         runner._validate_allocation(arm, invalid)
 
 
-def test_compilation_audit_detects_timed_metadata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    "kernel_name", ("_quantized_paged_attention_kernel", "_quantize_and_scatter_kv_kernel", "_scatter_bf16_kv_kernel")
+)
+def test_compilation_audit_detects_timed_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kernel_name: str
+) -> None:
     import os
 
     cache = tmp_path / "cache"
-    artifact = cache / "hash" / "_quantized_paged_attention_kernel.json"
+    artifact = cache / "hash" / f"{kernel_name}.json"
     artifact.parent.mkdir(parents=True)
     artifact.write_text("{}")
     os.utime(artifact, (101.0, 101.0))

@@ -82,7 +82,7 @@ def _create_attention_backend(
         if quality_mode not in ("v_only_int4", "int4_rht_g32", "k_only_fp8", "v_only_fp8"):
             raise ValueError(f"Unknown XLLM_KV_QUALITY_MODE: {quality_mode}")
         if (
-            os.environ.get("XLLM_QUANTIZED_BACKEND") == "triton"
+            os.environ.get("XLLM_QUANTIZED_BACKEND") in ("triton", "flashinfer_mixed")
             or not current_platform.is_cuda()
             or config.get("kv_cache_dtype", "auto") != "auto"
             or _resolve_graph_backend(config) not in ("", "off", "none", "0")
@@ -93,7 +93,7 @@ def _create_attention_backend(
             raise ValueError("KV quality mode requires Qwen2 CUDA eager with the uncompressed auto cache")
     model_type = config.get("model_type", "")
     cache_dtype = config.get("kv_cache_dtype", "auto")
-    if cache_dtype != "auto" or os.environ.get("XLLM_QUANTIZED_BACKEND") == "triton":
+    if cache_dtype != "auto" or os.environ.get("XLLM_QUANTIZED_BACKEND") in ("triton", "flashinfer_mixed"):
         if not current_platform.is_cuda():
             raise ValueError("Python quantized KV attention currently requires CUDA")
         if _resolve_graph_backend(config) not in ("", "off", "none", "0") or config.get("enable_graph", False):
@@ -112,6 +112,19 @@ def _create_attention_backend(
         ):
             raise ValueError("Quantized reference attention supports ordinary MHA/GQA without CP, PD or speculation")
         quantized_backend = os.environ.get("XLLM_QUANTIZED_BACKEND", "triton")
+        if quantized_backend == "flashinfer_mixed":
+            from xllm.python.attention.flashinfer_mixed import FlashInferMixedVBackend
+
+            return FlashInferMixedVBackend(
+                cache_dtype,
+                first_attention.num_heads,
+                first_attention.num_kv_heads,
+                first_attention.head_dim,
+                first_attention.scale,
+                first_attention.sliding_window,
+                device,
+                dtype,
+            )
         if quantized_backend == "flashinfer":
             from xllm.python.attention.flashinfer_fp8 import FlashInferFP8Backend
 

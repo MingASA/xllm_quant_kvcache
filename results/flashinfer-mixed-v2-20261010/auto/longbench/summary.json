@@ -1,0 +1,48 @@
+{
+  "measurement_version": 2,
+  "attention_compiles_during_measurement": [],
+  "requests": 8,
+  "measurement_start_unix_s": 1791637561.966974,
+  "measurement_start_monotonic_s": 35328.013385757,
+  "measurement_end_monotonic_s": 35338.54042795,
+  "peak_client_inflight": 8,
+  "client_cpu_s": 0.07024980000000003,
+  "client_cpu_fraction_one_core": 0.006673270488716914,
+  "event_loop_lag_s": {
+    "p50": 0.00031413749820785597,
+    "p95": 0.001535172106014215,
+    "p99": 0.0020860417834774126
+  },
+  "event_loop_lag_max_s": 0.002107051004713867,
+  "event_loop_lag_samples": 104,
+  "event_loop_stalls_over_20ms": [],
+  "metric_samples": {
+    "ttft_s": 8,
+    "tpot_s": 8,
+    "e2e_s": 8
+  },
+  "elapsed_s": 10.527042192996305,
+  "request_throughput": 0.7599475572846512,
+  "generated_tokens": 229,
+  "token_throughput": 21.75349882727314,
+  "concurrency": 8,
+  "length_exhaustion": 2,
+  "ttft_s": {
+    "p50": 2.0245778815005906,
+    "p95": 7.916182406402729,
+    "p99": 9.055980359683526
+  },
+  "tpot_s": {
+    "p50": 0.2550365549046121,
+    "p95": 0.35747399395058893,
+    "p99": 0.3610691331909402
+  },
+  "e2e_s": {
+    "p50": 9.62858749100269,
+    "p95": 10.514181176798592,
+    "p99": 10.519475616156997
+  },
+  "tpot_definition": "(stream completion - first nonempty text)/(API generated tokens - 1); client metric",
+  "latency_boundary": "from HTTP submission after client semaphore acquisition; excludes client slot waiting",
+  "ttft_definition": "time to first nonempty text event; includes detokenization buffering"
+}

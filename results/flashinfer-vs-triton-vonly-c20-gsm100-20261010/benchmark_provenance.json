@@ -1,0 +1,9 @@
+{
+  "description": "Source hashes of the measured kernel/service programs and report generator; native sources/artifact are attested in gates-final.",
+  "sha256": {
+    "tools/benchmark_vonly_backends.py": "3a0cee218347393e654933df30b946e0cfc9358c5e4541fa58fc2c7d6f9b072e",
+    "tools/benchmark_flashinfer_mixed_v.py": "d21f0b2bdf7b32ddd51a9d1178eefcbc41cecc14090cdc406703cfee93970cbf",
+    "tools/run_mixed_v_cache_experiment.py": "be507d3318a96145ae9d4cd5a0572d73b7fd5f07f78b5e38cead7ca0957bda28",
+    "tools/report_vonly_backend_comparison.py": "a444cb28e80a1df57125e6f23ca0cf6e8acee166daa161acfcd6fff590cae4a0"
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "arguments": {
+    "action": "run",
+    "output": "/home/mingasa/projects/xllm_quant_kvcache/results/flashinfer-mixed-v2-20261010/runner-smoke",
+    "gates": "/home/mingasa/projects/xllm_quant_kvcache/results/flashinfer-mixed-v2-20261010/gates-final/correctness_gates.json",
+    "attention_backend": "flashinfer_mixed",
+    "performance_samples": 0,
+    "arms": [
+      "auto"
+    ],
+    "workloads": [
+      "gsm8k"
+    ],
+    "joint_quality": false,
+    "concurrency": [
+      8
+    ],
+    "repetitions": 1,
+    "replay_cycles": 1,
+    "quality_concurrency": 16,
+    "max_memory_utilization": 0.93,
+    "warmup": 2,
+    "port": 18996
+  },
+  "argv": [
+    "/home/mingasa/projects/xllm_quant_kvcache/tools/run_mixed_v_cache_experiment.py",
+    "run",
+    "--output",
+    "/home/mingasa/projects/xllm_quant_kvcache/results/flashinfer-mixed-v2-20261010/runner-smoke",
+    "--gates",
+    "/home/mingasa/projects/xllm_quant_kvcache/results/flashinfer-mixed-v2-20261010/gates-final/correctness_gates.json",
+    "--attention-backend",
+    "flashinfer_mixed",
+    "--max-memory-utilization",
+    "0.93",
+    "--port",
+    "18996",
+    "--arms",
+    "auto",
+    "--workloads",
+    "gsm8k",
+    "--no-joint-quality",
+    "--concurrency",
+    "8",
+    "--repetitions",
+    "1",
+    "--replay-cycles",
+    "1",
+    "--warmup",
+    "2"
+  ],
+  "gates_sha256": "edbfddaca2d0ca9244ca4b1c3473acb97a9bfec996d144019497e6d758857b1e",
+  "nvidia_smi": "Sat Oct 10 06:23:27 2026       \n+-----------------------------------------------------------------------------------------+\n| NVIDIA-SMI 615.71.08              KMD Version: 616.92        CUDA UMD Version: 13.4     |\n+-----------------------------------------+------------------------+----------------------+\n| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |\n| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |\n|                                         |                        |               MIG M. |\n|=========================================+========================+======================|\n|   0  NVIDIA GeForce RTX 5060 Ti     On  |   00000000:01:00.0  On |                  N/A |\n|  0%   36C    P8              6W /  180W |     533MiB /  16311MiB |      0%      Default |\n|                                         |                        |                  N/A |\n+-----------------------------------------+------------------------+----------------------+\n\n+-----------------------------------------------------------------------------------------+\n| Processes:                                                                              |\n|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |\n|        ID   ID                                                               Usage      |\n|=========================================================================================|\n|  No running processes found                                                             |\n+-----------------------------------------------------------------------------------------+\n"
+}

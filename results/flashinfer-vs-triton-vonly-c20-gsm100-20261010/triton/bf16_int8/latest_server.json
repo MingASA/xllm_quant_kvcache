@@ -1,0 +1,3 @@
+{
+  "log": "/home/mingasa/projects/xllm_quant_kvcache/results/flashinfer-vs-triton-vonly-c20-gsm100-20261010/triton/bf16_int8/server_1791639051447008619.log"
+}

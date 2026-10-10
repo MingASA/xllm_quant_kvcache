@@ -1,0 +1,10 @@
+========= COMPUTE-SANITIZER
+....................................                                     [100%]
+=============================== warnings summary ===============================
+tests/python/test_flashinfer_mixed_attention.py::test_paged_writer_attention_and_workspace_reuse[auto-queries0-lengths0-1]
+  /home/mingasa/venvs/vllm/lib/python3.12/site-packages/flashinfer/cute_dsl/availability.py:135: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+36 passed, 1 warning in 44.84s
+========= ERROR SUMMARY: 0 errors

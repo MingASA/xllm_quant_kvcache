@@ -1,0 +1,24 @@
+{
+  "arms": [
+    "bf16_int8",
+    "bf16_int4"
+  ],
+  "backends": [
+    "triton",
+    "flashinfer_mixed"
+  ],
+  "requests": 100,
+  "concurrency": 20,
+  "repetitions": 3,
+  "replay_cycles": 1,
+  "warmup_rounds": 2,
+  "max_memory_utilization": 0.93,
+  "eos": "normal",
+  "max_tokens": "existing GSM8K protocol, 512",
+  "trace_sha256": "82069ab008d4ef451cf3076f094c8d93aaa92382a08d713a6a7af9c4c2d54405",
+  "prompt_tokens": {
+    "min": 715,
+    "max": 819,
+    "mean": 749.91
+  }
+}
