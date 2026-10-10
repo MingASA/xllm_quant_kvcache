@@ -11,6 +11,7 @@ import asyncio
 import hashlib
 import importlib.metadata
 import json
+import math
 import os
 import signal
 import subprocess
@@ -108,6 +109,7 @@ async def _request(session: Any, url: str, row: dict[str, Any], index: int) -> d
         "model": assets.MODEL_ID,
         "temperature": 0,
         "top_p": 1,
+        "n": 1,
         "seed": 17,
         "max_tokens": row["max_tokens"],
         "stop_token_ids": [151645, 151643],
@@ -122,6 +124,7 @@ async def _request(session: Any, url: str, row: dict[str, Any], index: int) -> d
     else:
         body["prompt"] = row["prompt"]
         endpoint = "/v1/completions"
+    start_unix = time.time()
     start = time.perf_counter()
     chunks: list[str] = []
     times: list[float] = []
@@ -143,7 +146,10 @@ async def _request(session: Any, url: str, row: dict[str, Any], index: int) -> d
                 raise RuntimeError(item["error"])
             if item.get("usage"):
                 usage = item["usage"]
-            for choice in item.get("choices", []):
+            choices = item.get("choices", [])
+            if len(choices) > 1 or any(choice.get("index", 0) != 0 for choice in choices):
+                raise ValueError("Expected exactly one output sequence (n=1)")
+            for choice in choices:
                 text = choice.get("delta", {}).get("content", "") if row["chat"] else choice.get("text", "")
                 if text:
                     chunks.append(text)
@@ -155,8 +161,16 @@ async def _request(session: Any, url: str, row: dict[str, Any], index: int) -> d
         raise ValueError(
             f"Incomplete streamed response for {row['id']}: done={done}, usage={usage}, finish={finish_reason}"
         )
-    tokens = int(usage["completion_tokens"])
-    if int(usage["prompt_tokens"]) != row["prompt_tokens"]:
+    if any(type(usage.get(key)) is not int for key in ("prompt_tokens", "completion_tokens", "total_tokens")):
+        raise ValueError(f"Invalid API token counts: {usage}")
+    tokens = usage["completion_tokens"]
+    if not 0 <= tokens <= row["max_tokens"] or usage["total_tokens"] != usage["prompt_tokens"] + tokens:
+        raise ValueError(f"Inconsistent API token counts: {usage}")
+    if finish_reason not in ("stop", "length") or (finish_reason == "length" and tokens != row["max_tokens"]):
+        raise ValueError(f"Unexpected finish reason/count: {finish_reason}, {tokens}")
+    if chunks and tokens == 0:
+        raise ValueError("Nonempty output with zero generated tokens")
+    if usage["prompt_tokens"] != row["prompt_tokens"]:
         raise ValueError(f"API/local prompt token count mismatch: {row['id']}")
     return {
         "index": index,
@@ -167,7 +181,11 @@ async def _request(session: Any, url: str, row: dict[str, Any], index: int) -> d
         "usage": usage,
         "finish_reason": finish_reason,
         "ttft_s": times[0] - start if times else None,
-        "tpot_s": (times[-1] - times[0]) / (tokens - 1) if times and tokens > 1 else None,
+        "tpot_s": (end - times[0]) / (tokens - 1) if times and tokens > 1 else None,
+        "text_span_tpot_s": (times[-1] - times[0]) / (tokens - 1) if times and tokens > 1 else None,
+        "request_start_unix_s": start_unix,
+        "request_start_monotonic_s": start,
+        "request_end_monotonic_s": end,
         "e2e_s": end - start,
         "stream_events": len(times),
         "stream_event_times_s": [t - start for t in times],
@@ -175,6 +193,8 @@ async def _request(session: Any, url: str, row: dict[str, Any], index: int) -> d
 
 
 async def _sample(session: Any, url: str, output: Path, stop: asyncio.Event) -> None:
+    import aiohttp
+
     with output.open("w") as stream:
         while not stop.is_set():
             record: dict[str, Any] = {"unix_time": time.time()}
@@ -194,7 +214,7 @@ async def _sample(session: Any, url: str, output: Path, stop: asyncio.Event) -> 
                 async with session.get(url + "/brpc_metrics", timeout=2) as response:
                     record["metrics_status"] = response.status
                     record["metrics"] = await response.text() if response.status == 200 else None
-            except (OSError, asyncio.TimeoutError) as error:
+            except (OSError, asyncio.TimeoutError, aiohttp.ClientError) as error:
                 record["metrics_error"] = str(error)
             stream.write(json.dumps(record) + "\n")
             stream.flush()
@@ -219,6 +239,16 @@ def _percentiles(values: list[float]) -> dict[str, float] | None:
     return {f"p{p}": float(np.percentile(values, p)) for p in (50, 95, 99)}
 
 
+async def _watch_event_loop(stop: asyncio.Event, lags: list[float]) -> None:
+    loop = asyncio.get_running_loop()
+    while not stop.is_set():
+        expected = loop.time() + 0.1
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=0.1)
+        except asyncio.TimeoutError:
+            lags.append(max(0.0, loop.time() - expected))
+
+
 async def _replay(url: str, rows: list[dict[str, Any]], concurrency: int, output: Path, warmup: int) -> None:
     import aiohttp
 
@@ -239,29 +269,56 @@ async def _replay(url: str, rows: list[dict[str, Any]], concurrency: int, output
         results: list[dict[str, Any]] = []
         stop = asyncio.Event()
         sampler = asyncio.create_task(_sample(session, url, output / "telemetry.jsonl", stop))
+        lags: list[float] = []
+        watcher = asyncio.create_task(_watch_event_loop(stop, lags))
+        active = 0
+        peak_active = 0
         with (output / "responses.jsonl").open("x") as journal:
 
             async def _execute(index: int, row: dict[str, Any]) -> None:
+                nonlocal active, peak_active
                 async with semaphore:
-                    result = await _request(session, url, row, index)
+                    active += 1
+                    peak_active = max(peak_active, active)
+                    try:
+                        result = await _request(session, url, row, index)
+                    finally:
+                        active -= 1
                     results.append(result)
                     journal.write(json.dumps(result, ensure_ascii=False) + "\n")
                     journal.flush()
 
+            start_unix = time.time()
+            cpu_start = time.process_time()
             start = time.perf_counter()
             try:
                 async with asyncio.TaskGroup() as group:
                     for index, row in enumerate(rows):
                         group.create_task(_execute(index, row))
             finally:
-                elapsed = time.perf_counter() - start
+                measured_end = time.perf_counter()
+                elapsed = measured_end - start
+                cpu_elapsed = time.process_time() - cpu_start
                 stop.set()
-                await sampler
+                await asyncio.gather(sampler, watcher)
         generated = sum(row["usage"]["completion_tokens"] for row in results)
         _write_json(
             output / "summary.json",
             {
+                "measurement_version": 2,
                 "requests": len(results),
+                "measurement_start_unix_s": start_unix,
+                "measurement_start_monotonic_s": start,
+                "measurement_end_monotonic_s": measured_end,
+                "peak_client_inflight": peak_active,
+                "client_cpu_s": cpu_elapsed,
+                "client_cpu_fraction_one_core": cpu_elapsed / elapsed,
+                "event_loop_lag_s": _percentiles(lags),
+                "event_loop_lag_max_s": max(lags, default=0.0),
+                "event_loop_lag_samples": len(lags),
+                "metric_samples": {
+                    metric: sum(r[metric] is not None for r in results) for metric in ("ttft_s", "tpot_s", "e2e_s")
+                },
                 "elapsed_s": elapsed,
                 "request_throughput": len(results) / elapsed,
                 "generated_tokens": generated,
@@ -272,10 +329,57 @@ async def _replay(url: str, rows: list[dict[str, Any]], concurrency: int, output
                     metric: _percentiles([r[metric] for r in results if r[metric] is not None])
                     for metric in ("ttft_s", "tpot_s", "e2e_s")
                 },
-                "tpot_definition": "(last nonempty stream event - first event)/(API generated tokens - 1)",
+                "tpot_definition": "(stream completion - first nonempty text)/(API generated tokens - 1); client metric",
+                "latency_boundary": "from HTTP submission after client semaphore acquisition; excludes client slot waiting",
                 "ttft_definition": "time to first nonempty text event; includes detokenization buffering",
             },
         )
+
+
+def _validate_allocation(arm: str, allocation: dict[str, Any]) -> None:
+    value_format, value_dtype = {
+        "auto": ("bf16", "torch.bfloat16"),
+        "bf16_int8": ("int8", "torch.int8"),
+        "bf16_fp8_e4m3": ("fp8_e4m3", "torch.uint8"),
+        "bf16_int4": ("int4", "torch.uint8"),
+    }[arm]
+    layers = allocation["layers"]
+    if not layers:
+        raise ValueError("Missing resident cache layers")
+    total = 0
+    capacity = allocation["token_capacity"]
+    for layer in layers:
+        tensors = layer["tensors"]
+        expected_names = {"key", "value"} | ({"value_scale"} if arm != "auto" else set())
+        if set(tensors) != expected_names or layer["key_format"] != "bf16" or layer["value_format"] != value_format:
+            raise ValueError(f"Wrong resident cache format for {arm}")
+        key, value = tensors["key"], tensors["value"]
+        shape = key["shape"]
+        if len(shape) != 4 or any(type(n) is not int or n <= 0 for n in shape):
+            raise ValueError("Invalid key cache shape")
+        value_shape = shape[:-1] + [(shape[-1] + 1) // 2 if arm == "bf16_int4" else shape[-1]]
+        if key["dtype"] != "torch.bfloat16" or value["dtype"] != value_dtype or value["shape"] != value_shape:
+            raise ValueError("Mixed cache dtype/shape mismatch")
+        if arm != "auto":
+            scale = tensors["value_scale"]
+            if scale["dtype"] != "torch.float32" or scale["shape"] != shape[:-1]:
+                raise ValueError("Wrong resident value scale allocation")
+        for tensor in tensors.values():
+            element_bytes = {"torch.bfloat16": 2, "torch.int8": 1, "torch.uint8": 1, "torch.float32": 4}[
+                tensor["dtype"]
+            ]
+            if tensor["bytes"] != math.prod(tensor["shape"]) * element_bytes:
+                raise ValueError("Resident tensor byte count mismatch")
+        resident = sum(tensor["bytes"] for tensor in tensors.values())
+        if (
+            shape[0] * shape[1] != capacity
+            or resident != layer["resident_bytes"]
+            or resident != capacity * layer["bytes_per_token"]
+        ):
+            raise ValueError("Cache capacity/byte accounting mismatch")
+        total += resident
+    if allocation["resident_bytes"] != total:
+        raise ValueError("Total resident cache byte count mismatch")
 
 
 def _run(args: argparse.Namespace) -> None:
@@ -422,6 +526,7 @@ def _run(args: argparse.Namespace) -> None:
                     time.sleep(1)
                 text = log_path.read_text(errors="replace")
                 allocation = json.loads(text.split("KV_ALLOCATION ", 1)[1].splitlines()[0])
+                _validate_allocation(arm, allocation)
                 _write_json(arm_root / "allocation.json", allocation)
                 for workload in args.workloads:
                     trace = args.output / f"trace_{workload}.jsonl"
@@ -435,6 +540,7 @@ def _run(args: argparse.Namespace) -> None:
                         for repetition in range(args.repetitions):
                             run_path = arm_root / workload / f"c{concurrency}_r{repetition}"
                             run_config = {
+                                "measurement_version": 2,
                                 "arm": arm,
                                 "workload": workload,
                                 "concurrency": concurrency,

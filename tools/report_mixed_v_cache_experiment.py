@@ -270,6 +270,8 @@ def _report(root: Path) -> None:
             if path.parent.parent.name == "quality":
                 continue
             summary = json.loads(path.read_text())
+            if summary.get("measurement_version") != 2:
+                raise ValueError(f"Outdated measurement protocol; keep archived and rerun in a new directory: {path}")
             gpu = _telemetry(path.parent / "telemetry.jsonl")
             runs.append(
                 {
@@ -294,6 +296,11 @@ def _report(root: Path) -> None:
             "request_throughput",
             "token_throughput",
             "generated_tokens",
+            "measurement_version",
+            "peak_client_inflight",
+            "client_cpu_fraction_one_core",
+            "event_loop_lag_p95_s",
+            "event_loop_lag_max_s",
             "ttft_p95_s",
             "tpot_p95_s",
             "e2e_p95_s",
@@ -306,6 +313,7 @@ def _report(root: Path) -> None:
             writer.writeheader()
             for row in runs:
                 record = {name: row[name] for name in fields if name in row}
+                record["event_loop_lag_p95_s"] = (row.get("event_loop_lag_s") or {}).get("p95")
                 for metric in ("ttft", "tpot", "e2e"):
                     record[f"{metric}_p95_s"] = (row.get(f"{metric}_s") or {}).get("p95")
                 for field, source, agg in (
@@ -403,7 +411,7 @@ def _report(root: Path) -> None:
         "without a profiler trace.",
         "",
         "Token counts are API generated tokens; normal EOS and original generation "
-        "caps apply. TTFT measures the first nonempty streamed text. TPOT uses first-to-last text time divided by "
+        "caps apply. TTFT measures the first nonempty streamed text. TPOT uses (E2E - TTFT) divided by "
         "generated token intervals. Text buffering can affect both. Mean curves and error bars summarize repetitions.",
         "Joint runs score these same timed responses at every concurrency, separately for each full replay cycle; "
         "replayed IDs are never collapsed. Quality standard deviations describe cycle/repetition variation.",

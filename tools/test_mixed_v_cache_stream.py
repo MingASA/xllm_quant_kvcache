@@ -34,7 +34,13 @@ def test_stream_usage_and_protocol(failure: str | None) -> None:
             ]
             if failure != "no_usage":
                 events.append(
-                    {"usage": {"prompt_tokens": 3 if failure == "wrong_prompt_tokens" else 2, "completion_tokens": 4}}
+                    {
+                        "usage": {
+                            "prompt_tokens": 3 if failure == "wrong_prompt_tokens" else 2,
+                            "completion_tokens": 4,
+                            "total_tokens": 6,
+                        }
+                    }
                 )
             for event in events:
                 await response.write(("data: " + json.dumps(event) + "\n\n").encode())
@@ -69,7 +75,7 @@ def test_stream_usage_and_protocol(failure: str | None) -> None:
                     assert result["prediction"] == "one two"
                     assert result["stream_events"] == 2
                     assert result["usage"]["completion_tokens"] == 4
-                    assert result["tpot_s"] == (result["stream_event_times_s"][-1] - result["ttft_s"]) / 3
+                    assert result["tpot_s"] == (result["e2e_s"] - result["ttft_s"]) / 3
                     assert result["e2e_s"] >= result["ttft_s"] >= 0
             assert captured[0]["max_tokens"] == 512
             assert captured[0]["temperature"] == 0
