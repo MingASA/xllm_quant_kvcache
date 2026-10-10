@@ -1,0 +1,15 @@
+{
+  "git_commit": "b1855044222f2dbcf017425600f45de14c224eea",
+  "source_sha256": {
+    "tools/diagnose_vonly_backend_numerics.py": "d0e98846b203860d52d3743512c9dfdcc7fc721a26987eeb2119ae81c7736ecc",
+    "tools/diagnose_vonly_backend_latency.py": "12222ad9e9321aaba09d250568c33f2ab57952c7ed04ab61b5548226a7b349b0",
+    "xllm/python/attention/quantized_triton.py": "98cec576320f50886c72c0ecb1a9125d561175f894975dccb4a761490a53f1f6",
+    "xllm/python/attention/flashinfer_mixed.py": "37f4a7de1a28f85409dd07ac8fee154b1dc3639ed3855d7afb3bf885fa2f83d3"
+  },
+  "checkpoint": "/mnt/e/AI/models/Qwen2.5-1.5B-Instruct",
+  "config_sha256": "98d2ff8cc47488d08a2b0b3acf4eb99ef210779b42bd48605f6b8e36acdbf670",
+  "transformers": "5.17.0",
+  "scope": "Transformers BF16 checkpoint shell, actual xLLM attention backends; fixed input IDs and positions, B1; not an xLLM server replay",
+  "history": "first 32 tokens retokenized from saved Triton INT8 responses; same history for both formats/backends",
+  "native_gate": "../flashinfer-mixed-v2-20261010/gates-final/correctness_gates.json"
+}

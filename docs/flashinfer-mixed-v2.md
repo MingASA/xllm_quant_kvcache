@@ -28,3 +28,5 @@ The integrated experiment report records the selected backend. The optional kern
 [Second-version validation and calibration](../results/flashinfer-mixed-v2-20261010/README.md)
 
 [V-only INT8/INT4 versus Triton: batch-20 kernels and GSM8K 100-question service comparison](../results/flashinfer-vs-triton-vonly-c20-gsm100-20261010/README.md)
+
+[Fixed-history layer/logit checks and GPU/eager/planning latency decomposition](../results/flashinfer-numerics-20261010/README.md)

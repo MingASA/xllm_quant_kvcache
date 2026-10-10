@@ -1,0 +1,20 @@
+{
+  "bf16_int8": {
+    "positions": 132,
+    "next_token_flips": 0,
+    "layer_comparisons": 7392,
+    "native_vs_bf16_shadow_max_abs": 0.0,
+    "mean_native_vs_fp32_rms": 0.001332985787181921,
+    "mean_triton_vs_fp32_rms": 0.0009544384344432425,
+    "reference_checks": 96
+  },
+  "bf16_int4": {
+    "positions": 132,
+    "next_token_flips": 8,
+    "layer_comparisons": 7392,
+    "native_vs_bf16_shadow_max_abs": 0.0,
+    "mean_native_vs_fp32_rms": 0.001338278227801008,
+    "mean_triton_vs_fp32_rms": 0.0009466986293773516,
+    "reference_checks": 96
+  }
+}

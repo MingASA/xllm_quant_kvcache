@@ -1,0 +1,4 @@
+{
+  "invalid_file": "latency.json",
+  "reason": "prepare replaces Triton metadata allocations referenced by captured graphs; graph and prepare phases must be separate"
+}
