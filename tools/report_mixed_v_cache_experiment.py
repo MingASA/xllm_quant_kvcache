@@ -404,7 +404,7 @@ def _report(root: Path) -> None:
         "# Mixed-precision V cache experiment",
         "",
         "Fair baseline: all arms use Python eager, graph off, "
-        "the same Triton paged-attention algorithm, scheduler and 0.87 memory utilization. Prefix caching is off.",
+        "the same Triton paged-attention algorithm, scheduler and memory budget (server_command.json). Prefix caching is off.",
         "",
         "GPU: RTX 5060 Ti 16GB GDDR7 VRAM. NVIDIA memory utilization is sampled memory-controller activity; "
         "it is not a measured percentage of peak VRAM bandwidth. No memory-traffic or dequant-cost claim is made "

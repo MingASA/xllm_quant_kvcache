@@ -499,7 +499,7 @@ def _run(args: argparse.Namespace) -> None:
             f"--port={args.port}",
             "--max_cache_size=0",
             "--enable_prefix_cache=false",
-            "--max_memory_utilization=0.87",
+            f"--max_memory_utilization={args.max_memory_utilization}",
             "--max_tokens_per_batch=4096",
             "--max_seqs_per_batch=128",
             f"--kv_cache_dtype={arm}",
@@ -625,16 +625,20 @@ def main() -> None:
     parser.add_argument("--repetitions", type=int, default=3)
     parser.add_argument("--replay-cycles", type=int, default=2)
     parser.add_argument("--quality-concurrency", type=int, default=16)
+    parser.add_argument("--max-memory-utilization", type=float, default=0.93)
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--port", type=int, default=18995)
     args = parser.parse_args()
     if (
-        args.performance_samples < 0
+        not 0 < args.max_memory_utilization < 1
+        or args.performance_samples < 0
         or 0 < args.performance_samples < 8
         or min(args.concurrency) <= 0
         or min(args.repetitions, args.replay_cycles, args.quality_concurrency, args.warmup) <= 0
     ):
-        parser.error("Counts must be positive; performance samples must be 0 (full) or at least 8")
+        parser.error(
+            "Counts must be positive, memory utilization in (0, 1), performance samples 0 (full) or at least 8"
+        )
     if args.action == "prepare":
         _prepare(args.output, args.performance_samples)
     else:
