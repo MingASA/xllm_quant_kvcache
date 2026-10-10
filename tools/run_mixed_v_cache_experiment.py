@@ -239,14 +239,17 @@ def _percentiles(values: list[float]) -> dict[str, float] | None:
     return {f"p{p}": float(np.percentile(values, p)) for p in (50, 95, 99)}
 
 
-async def _watch_event_loop(stop: asyncio.Event, lags: list[float]) -> None:
+async def _watch_event_loop(stop: asyncio.Event, lags: list[float], stalls: list[dict[str, float]]) -> None:
     loop = asyncio.get_running_loop()
     while not stop.is_set():
         expected = loop.time() + 0.1
         try:
             await asyncio.wait_for(stop.wait(), timeout=0.1)
         except asyncio.TimeoutError:
-            lags.append(max(0.0, loop.time() - expected))
+            lag = max(0.0, loop.time() - expected)
+            lags.append(lag)
+            if lag >= 0.02:
+                stalls.append({"unix_time": time.time(), "lag_s": lag})
 
 
 async def _replay(url: str, rows: list[dict[str, Any]], concurrency: int, output: Path, warmup: int) -> None:
@@ -270,7 +273,8 @@ async def _replay(url: str, rows: list[dict[str, Any]], concurrency: int, output
         stop = asyncio.Event()
         sampler = asyncio.create_task(_sample(session, url, output / "telemetry.jsonl", stop))
         lags: list[float] = []
-        watcher = asyncio.create_task(_watch_event_loop(stop, lags))
+        stalls: list[dict[str, float]] = []
+        watcher = asyncio.create_task(_watch_event_loop(stop, lags, stalls))
         active = 0
         peak_active = 0
         with (output / "responses.jsonl").open("x") as journal:
@@ -316,6 +320,7 @@ async def _replay(url: str, rows: list[dict[str, Any]], concurrency: int, output
                 "event_loop_lag_s": _percentiles(lags),
                 "event_loop_lag_max_s": max(lags, default=0.0),
                 "event_loop_lag_samples": len(lags),
+                "event_loop_stalls_over_20ms": stalls,
                 "metric_samples": {
                     metric: sum(r[metric] is not None for r in results) for metric in ("ttft_s", "tpot_s", "e2e_s")
                 },
