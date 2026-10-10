@@ -19,10 +19,10 @@ from tools.run_mixed_v_cache_experiment import _request
 
 @pytest.mark.parametrize("failure", (None, "no_usage", "no_done", "wrong_prompt_tokens"))
 def test_stream_usage_and_protocol(failure: str | None) -> None:
-    async def check() -> None:
+    async def _check() -> None:
         captured: list[dict[str, Any]] = []
 
-        async def handler(request: web.Request) -> web.StreamResponse:
+        async def _handler(request: web.Request) -> web.StreamResponse:
             captured.append(await request.json())
             response = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
             await response.prepare(request)
@@ -44,7 +44,7 @@ def test_stream_usage_and_protocol(failure: str | None) -> None:
             return response
 
         app = web.Application()
-        app.router.add_post("/v1/chat/completions", handler)
+        app.router.add_post("/v1/chat/completions", _handler)
         runner = web.AppRunner(app)
         await runner.setup()
         site = web.TCPSite(runner, "127.0.0.1", 0)
@@ -78,4 +78,4 @@ def test_stream_usage_and_protocol(failure: str | None) -> None:
         finally:
             await runner.cleanup()
 
-    asyncio.run(check())
+    asyncio.run(_check())

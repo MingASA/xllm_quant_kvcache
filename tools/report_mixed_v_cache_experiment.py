@@ -227,7 +227,7 @@ def _report(root: Path) -> None:
         fig.savefig(output / "memory.png", dpi=180)
         plt.close(fig)
 
-    def plot_curves(metrics: tuple[str, ...], filename: str, tail: bool) -> None:
+    def _plot_curves(metrics: tuple[str, ...], filename: str, tail: bool) -> None:
         fig, axs = plt.subplots(2, len(metrics), figsize=(6 * len(metrics), 8), squeeze=False)
         for i, workload in enumerate(("gsm8k", "longbench")):
             for j, metric in enumerate(metrics):
@@ -257,8 +257,8 @@ def _report(root: Path) -> None:
         plt.close(fig)
 
     if runs:
-        plot_curves(("request_throughput", "token_throughput"), "throughput.png", False)
-        plot_curves(("ttft_s", "tpot_s"), "tail_latency.png", True)
+        _plot_curves(("request_throughput", "token_throughput"), "throughput.png", False)
+        _plot_curves(("ttft_s", "tpot_s"), "tail_latency.png", True)
     if quality:
         fig, axs = plt.subplots(1, 2, figsize=(12, 4))
         arms = quality["arms"]
@@ -314,7 +314,7 @@ def _report(root: Path) -> None:
             c = max(r["concurrency"] for r in rows)
             tail = [r for r in rows if r["concurrency"] == c]
 
-            def avg_tail(name: str, tail_rows: list[dict[str, Any]] = tail) -> str:
+            def _avg_tail(name: str, tail_rows: list[dict[str, Any]] = tail) -> str:
                 vals = [r[name]["p95"] for r in tail_rows if r.get(name)]
                 return f"{np.mean(vals):.4f}" if vals else "unavailable"
 
@@ -322,8 +322,8 @@ def _report(root: Path) -> None:
             long = quality.get("longbench_macro", {}).get(arm, "pending")
             lines.append(
                 f"| {arm} | {workload} | {c} | {max(p['request_throughput'] for p in scan[workload][arm]['points']):.3f} | "
-                f"{max(p['token_throughput'] for p in scan[workload][arm]['points']):.3f} | {avg_tail('ttft_s')} | "
-                f"{avg_tail('tpot_s')} | {gsm} | {long} |"
+                f"{max(p['token_throughput'] for p in scan[workload][arm]['points']):.3f} | {_avg_tail('ttft_s')} | "
+                f"{_avg_tail('tpot_s')} | {gsm} | {long} |"
             )
     if quality:
         lines += [

@@ -254,6 +254,8 @@ class QuantizedPagedAttentionBackend(AttentionBackend):
                         }
                         for name, tensor in tensors.items()
                     },
+                    "key_format": self._key_codec.cache_dtype,
+                    "value_format": self._codec.cache_dtype,
                     "resident_bytes": resident_bytes,
                     "bytes_per_token": resident_bytes // (cache.key.shape[0] * cache.key.shape[1]),
                 }

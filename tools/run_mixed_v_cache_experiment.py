@@ -225,7 +225,7 @@ async def _replay(url: str, rows: list[dict[str, Any]], concurrency: int, output
         sampler = asyncio.create_task(_sample(session, url, output / "telemetry.jsonl", stop))
         with (output / "responses.jsonl").open("x") as journal:
 
-            async def execute(index: int, row: dict[str, Any]) -> None:
+            async def _execute(index: int, row: dict[str, Any]) -> None:
                 async with semaphore:
                     result = await _request(session, url, row, index)
                     results.append(result)
@@ -236,7 +236,7 @@ async def _replay(url: str, rows: list[dict[str, Any]], concurrency: int, output
             try:
                 async with asyncio.TaskGroup() as group:
                     for index, row in enumerate(rows):
-                        group.create_task(execute(index, row))
+                        group.create_task(_execute(index, row))
             finally:
                 elapsed = time.perf_counter() - start
                 stop.set()
