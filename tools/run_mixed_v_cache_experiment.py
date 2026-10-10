@@ -239,6 +239,19 @@ def _percentiles(values: list[float]) -> dict[str, float] | None:
     return {f"p{p}": float(np.percentile(values, p)) for p in (50, 95, 99)}
 
 
+def _attention_compiles_between(start_unix: float, end_unix: float) -> list[dict[str, Any]]:
+    # Read metadata after sampling stops, outside timed request processing.
+    cache = Path(os.environ.get("TRITON_CACHE_DIR", str(Path.home() / ".triton/cache")))
+    if not cache.is_dir():
+        raise ValueError(f"Triton compilation cache is unavailable for measurement audit: {cache}")
+    records = []
+    for path in cache.glob("*/_quantized_paged*kernel.json"):
+        modified = path.stat().st_mtime
+        if start_unix <= modified <= end_unix:
+            records.append({"path": str(path), "modified_unix_s": modified})
+    return records
+
+
 async def _watch_event_loop(stop: asyncio.Event, lags: list[float], stalls: list[dict[str, float]]) -> None:
     loop = asyncio.get_running_loop()
     while not stop.is_set():
@@ -305,11 +318,19 @@ async def _replay(url: str, rows: list[dict[str, Any]], concurrency: int, output
                 cpu_elapsed = time.process_time() - cpu_start
                 stop.set()
                 await asyncio.gather(sampler, watcher)
+        compiles = _attention_compiles_between(start_unix, start_unix + elapsed)
+        if compiles:
+            _write_json(
+                output / "invalid_measurement.json",
+                {"reason": "attention JIT during timed requests", "compiles": compiles},
+            )
+            raise ValueError(f"Attention JIT contaminated timed replay; preserved raw data: {output}")
         generated = sum(row["usage"]["completion_tokens"] for row in results)
         _write_json(
             output / "summary.json",
             {
                 "measurement_version": 2,
+                "attention_compiles_during_measurement": compiles,
                 "requests": len(results),
                 "measurement_start_unix_s": start_unix,
                 "measurement_start_monotonic_s": start,
@@ -437,7 +458,8 @@ def _run(args: argparse.Namespace) -> None:
         "python": sys.version,
         "packages": {name: importlib.metadata.version(name) for name in ("torch", "triton", "aiohttp", "numpy")},
         "runtime_environment": {
-            name: os.environ.get(name) for name in ("PATH", "PYTHONPATH", "LD_LIBRARY_PATH", "CUDA_VISIBLE_DEVICES")
+            name: os.environ.get(name)
+            for name in ("PATH", "PYTHONPATH", "LD_LIBRARY_PATH", "CUDA_VISIBLE_DEVICES", "TRITON_CACHE_DIR")
         },
         "gpu_static": subprocess.check_output(
             ["nvidia-smi", "--query-gpu=name,driver_version,memory.total", "--format=csv,noheader,nounits"], text=True

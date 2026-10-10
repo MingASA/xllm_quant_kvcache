@@ -148,6 +148,7 @@ def test_replay_boundaries_and_concurrency(tmp_path: Path, monkeypatch: pytest.M
             await asyncio.sleep(0.15)
 
         monkeypatch.setattr(runner, "_sample", _sample)
+        monkeypatch.setattr(runner, "_attention_compiles_between", lambda start, end: [])
         server, url = await _start(_handler)
         try:
             start = time.perf_counter()
@@ -218,3 +219,16 @@ def test_resident_allocation_accounting(arm: str) -> None:
     invalid["resident_bytes"] += 1
     with pytest.raises(ValueError):
         runner._validate_allocation(arm, invalid)
+
+
+def test_compilation_audit_detects_timed_metadata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import os
+
+    cache = tmp_path / "cache"
+    artifact = cache / "hash" / "_quantized_paged_attention_kernel.json"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("{}")
+    os.utime(artifact, (101.0, 101.0))
+    monkeypatch.setenv("TRITON_CACHE_DIR", str(cache))
+    assert runner._attention_compiles_between(100.0, 102.0) == [{"path": str(artifact), "modified_unix_s": 101.0}]
+    assert runner._attention_compiles_between(102.0, 103.0) == []

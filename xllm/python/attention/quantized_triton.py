@@ -228,7 +228,7 @@ def _decode_cache_values(
     return payload * scales[:, None]
 
 
-@triton.jit
+@triton.jit(do_not_specialize=["block_table_stride"], do_not_specialize_on_alignment=["block_table_stride"])
 def _quantized_paged_attention_kernel(
     query_ptr,
     key_cache_ptr,
@@ -248,7 +248,7 @@ def _quantized_paged_attention_kernel(
     storage_dim: tl.constexpr,
     key_storage_dim: tl.constexpr,
     page_size: tl.constexpr,
-    block_table_stride: tl.constexpr,
+    block_table_stride,
     scale: tl.constexpr,
     sliding_window: tl.constexpr,
     CAUSAL: tl.constexpr,
@@ -355,7 +355,7 @@ def _merge_attention_splits_kernel(
     tl.store(output_ptr + row * HEAD_DIM + dims, result, mask=dims < HEAD_DIM)
 
 
-@triton.jit
+@triton.jit(do_not_specialize=["block_table_stride"], do_not_specialize_on_alignment=["block_table_stride"])
 def _quantized_paged_prefill_attention_kernel(
     query_ptr,
     key_cache_ptr,
@@ -374,7 +374,7 @@ def _quantized_paged_prefill_attention_kernel(
     storage_dim: tl.constexpr,
     key_storage_dim: tl.constexpr,
     page_size: tl.constexpr,
-    block_table_stride: tl.constexpr,
+    block_table_stride,
     scale: tl.constexpr,
     sliding_window: tl.constexpr,
     CAUSAL: tl.constexpr,

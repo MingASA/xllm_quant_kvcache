@@ -643,3 +643,40 @@ def test_writer_rejects_wrong_input_dimension_before_mutation(device: str) -> No
         write_quantized_kv(cache, key, key, torch.tensor([0], device=device), codec)
     assert torch.count_nonzero(cache.key) == 0
     assert torch.count_nonzero(cache.value) == 0
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="Requires CUDA")
+@pytest.mark.parametrize("cache_dtype", ("bf16", "bf16_int8", "bf16_fp8_e4m3", "bf16_int4"))
+@pytest.mark.parametrize("queries", (1, 16))
+def test_mixed_attention_reuses_kernel_for_runtime_page_stride(cache_dtype: str, queries: int) -> None:
+    from xllm.python.attention import quantized_triton as kernels
+
+    torch.manual_seed(81)
+    dim, length, page_size = 128, 1004, 128
+    codec = KVCacheCodec(cache_dtype.removeprefix("bf16_"), dim)
+    cache = LayerCache(
+        key=torch.zeros(8, page_size, 2, dim, device="cuda", dtype=torch.bfloat16),
+        value=torch.zeros(8, page_size, 2, codec.storage_dim, device="cuda", dtype=codec.storage_dtype),
+        value_scale=None if cache_dtype == "bf16" else torch.ones(8, page_size, 2, device="cuda"),
+    )
+    backend = QuantizedPagedAttentionBackend(cache_dtype, dim, 2)
+    backend.bind_kv_caches([cache])
+    key, value = torch.randn(2, length, 2, dim, device="cuda", dtype=torch.bfloat16)
+    query = torch.randn(queries, 12, dim, device="cuda", dtype=torch.bfloat16)
+    pages = [4, 1, 5, 3, 2, 0, 7, 6]
+    slots = _metadata([pages], [length], [length], page_size, "cuda").slot_mapping
+    write_quantized_kv(cache, key, value, slots, codec, KVCacheCodec("bf16", dim))
+    expected = _dense_attention(query, key, codec.decode(*codec.encode(value)), -1)
+    kernel = (
+        kernels._quantized_paged_attention_kernel if queries == 1 else kernels._quantized_paged_prefill_attention_kernel
+    )
+    variants = None
+    for width in (8, 9, 16, 17):
+        backend.prepare(_metadata([pages + [0] * (width - 8)], [queries], [length], page_size, "cuda"))
+        actual = backend.execute(query, key[-queries:], value[-queries:], _layer(dim, -1, 12))
+        torch.testing.assert_close(actual, expected, rtol=0.02, atol=0.005)
+        current = len(kernel.device_caches[torch.cuda.current_device()][0])
+        if variants is None:
+            variants = current
+        else:
+            assert current == variants, "Changing only page-table stride must not trigger a new compiled kernel"
