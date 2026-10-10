@@ -543,8 +543,8 @@ bool WorkerImpl::allocate_kv_cache_storage(
     CHECK_EQ(options_.num_speculative_tokens(), 0)
         << "Reference quantized attention has not enabled speculative decode.";
     CHECK_EQ(options_.task_type(), "generate");
-    LOG(WARNING) << "Using experimental quantized KV attention: bounded "
-                    "workspace, eager PyTorch operations, no fused kernel.";
+    LOG(WARNING) << "Using experimental quantized KV attention with "
+                    "resident compressed payloads in Python eager.";
 #elif defined(USE_MLU)
     CHECK(kv_cache_dtype == KVCacheDtype::INT8)
         << "MLU KV cache quantization supports int8 only.";

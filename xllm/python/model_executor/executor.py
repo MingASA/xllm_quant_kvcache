@@ -82,7 +82,8 @@ def _create_attention_backend(
         if quality_mode not in ("v_only_int4", "int4_rht_g32", "k_only_fp8", "v_only_fp8"):
             raise ValueError(f"Unknown XLLM_KV_QUALITY_MODE: {quality_mode}")
         if (
-            not current_platform.is_cuda()
+            os.environ.get("XLLM_QUANTIZED_BACKEND") == "triton"
+            or not current_platform.is_cuda()
             or config.get("kv_cache_dtype", "auto") != "auto"
             or _resolve_graph_backend(config) not in ("", "off", "none", "0")
             or config.get("enable_graph", False)
@@ -92,7 +93,7 @@ def _create_attention_backend(
             raise ValueError("KV quality mode requires Qwen2 CUDA eager with the uncompressed auto cache")
     model_type = config.get("model_type", "")
     cache_dtype = config.get("kv_cache_dtype", "auto")
-    if cache_dtype != "auto":
+    if cache_dtype != "auto" or os.environ.get("XLLM_QUANTIZED_BACKEND") == "triton":
         if not current_platform.is_cuda():
             raise ValueError("Python quantized KV attention currently requires CUDA")
         if _resolve_graph_backend(config) not in ("", "off", "none", "0") or config.get("enable_graph", False):
@@ -130,7 +131,9 @@ def _create_attention_backend(
             raise ValueError(f"Unknown XLLM_QUANTIZED_BACKEND: {quantized_backend}")
         from xllm.python.attention.quantized import QuantizedPagedAttentionBackend
 
-        return QuantizedPagedAttentionBackend(cache_dtype, first_attention.head_dim, first_attention.num_kv_heads)
+        return QuantizedPagedAttentionBackend(
+            "bf16" if cache_dtype == "auto" else cache_dtype, first_attention.head_dim, first_attention.num_kv_heads
+        )
     if model_type == "deepseek_v4" and current_platform.is_npu():
         from xllm.python.attention.dsa_attention import DsaAttentionBackend
 

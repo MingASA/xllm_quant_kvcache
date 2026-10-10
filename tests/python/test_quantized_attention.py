@@ -546,3 +546,100 @@ def test_layer_cache_tuple_compatibility() -> None:
 def test_unknown_quantized_dtype_rejected(dtype: str) -> None:
     with pytest.raises(ValueError, match="dtype"):
         KVCacheCodec(dtype, 8)
+
+
+@pytest.mark.parametrize("cache_dtype", ("bf16", "bf16_int8", "bf16_fp8_e4m3", "bf16_int4"))
+@pytest.mark.parametrize("device", _DEVICES)
+@pytest.mark.parametrize("head_dim", (9, 128))
+@pytest.mark.parametrize("window", (-1, 3))
+def test_mixed_cache_writer_and_chunked_attention(cache_dtype: str, device: str, head_dim: int, window: int) -> None:
+    torch.manual_seed(42)
+    value_codec = KVCacheCodec(cache_dtype.removeprefix("bf16_"), head_dim)
+    key_codec = KVCacheCodec("bf16", head_dim)
+    key_shape = (8, 4, 2, head_dim)
+    value_shape = (8, 4, 2, value_codec.storage_dim)
+    cache = LayerCache(
+        key=torch.zeros(key_shape, dtype=torch.bfloat16, device=device),
+        value=torch.zeros(value_shape, dtype=value_codec.storage_dtype, device=device),
+        value_scale=(
+            None if cache_dtype == "bf16" else torch.ones(value_shape[:-1], dtype=torch.float32, device=device)
+        ),
+    )
+    backend = QuantizedPagedAttentionBackend(cache_dtype, head_dim, 2)
+    backend.bind_kv_caches([cache])
+    key, value = torch.randn(2, 11, 2, head_dim, device=device, dtype=torch.bfloat16)
+    query = torch.randn(11, 12, head_dim, device=device, dtype=torch.bfloat16)
+    decoded_value = value_codec.decode(*value_codec.encode(value))
+    start = 0
+    for end in (5, 8, 9, 11):
+        metadata = _metadata([[4, 1, 5]], [end - start], [end], 4, device)
+        backend.prepare(metadata)
+        output = backend.execute(query[start:end], key[start:end], value[start:end], _layer(head_dim, window, 12))
+        expected = _dense_attention(query[start:end], key[:end], decoded_value[:end], window)
+        torch.testing.assert_close(output, expected, rtol=0.02, atol=0.005)
+        slots = metadata.slot_mapping.long()
+        assert torch.equal(cache.key.flatten(0, 1)[slots], key[start:end])
+        encoded_value, scales = value_codec.encode(value[start:end])
+        torch.testing.assert_close(cache.value.flatten(0, 1)[slots], encoded_value, rtol=0, atol=0)
+        if scales is not None:
+            torch.testing.assert_close(cache.value_scale.flatten(0, 1)[slots], scales, rtol=1e-6, atol=0)
+        start = end
+    assert cache.key_scale is None
+    actual = sum(t.numel() * t.element_size() for t in (cache.key, cache.value, cache.value_scale) if t is not None)
+    expected_bytes = (
+        8
+        * 4
+        * 2
+        * (
+            2 * head_dim
+            + value_codec.storage_dim * value_codec.storage_dtype.itemsize
+            + (0 if cache_dtype == "bf16" else 4)
+        )
+    )
+    assert actual == expected_bytes
+    # Padding slots must leave both the BF16 K and compressed V untouched.
+    before = [t.clone() for t in (cache.key, cache.value)]
+    write_quantized_kv(cache, key[:1], value[:1], torch.tensor([-1], device=device), value_codec, key_codec)
+    assert all(torch.equal(t, old) for t, old in zip((cache.key, cache.value), before))
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="Requires CUDA")
+@pytest.mark.parametrize("cache_dtype", ("bf16", "bf16_int8", "bf16_fp8_e4m3", "bf16_int4"))
+@pytest.mark.parametrize("window", (-1, 513))
+def test_mixed_long_context_prefill_and_split_decode(cache_dtype: str, window: int) -> None:
+    torch.manual_seed(93)
+    dim, length, page_size = 128, 1004, 128
+    value_codec = KVCacheCodec(cache_dtype.removeprefix("bf16_"), dim)
+    cache = LayerCache(
+        key=torch.zeros(8, page_size, 2, dim, dtype=torch.bfloat16, device="cuda"),
+        value=torch.zeros(8, page_size, 2, value_codec.storage_dim, dtype=value_codec.storage_dtype, device="cuda"),
+        value_scale=None if cache_dtype == "bf16" else torch.ones(8, page_size, 2, device="cuda"),
+    )
+    backend = QuantizedPagedAttentionBackend(cache_dtype, dim, 2)
+    backend.bind_kv_caches([cache])
+    key, value = torch.randn(2, length, 2, dim, device="cuda", dtype=torch.bfloat16)
+    query = torch.randn(66, 12, dim, device="cuda", dtype=torch.bfloat16)
+    pages = [[4, 1, 5, 3, 2, 0, 7, 6]]
+    prefix = length - 66
+    slots = _metadata(pages, [prefix], [prefix], page_size, "cuda").slot_mapping
+    write_quantized_kv(cache, key[:prefix], value[:prefix], slots, value_codec, KVCacheCodec("bf16", dim))
+    decoded_value = value_codec.decode(*value_codec.encode(value))
+    for start, end in ((0, 65), (65, 66)):
+        context = prefix + end
+        backend.prepare(_metadata(pages, [end - start], [context], page_size, "cuda"))
+        actual = backend.execute(
+            query[start:end], key[prefix + start : context], value[prefix + start : context], _layer(dim, window, 12)
+        )
+        expected = _dense_attention(query[start:end], key[:context], decoded_value[:context], window)
+        torch.testing.assert_close(actual, expected, rtol=0.02, atol=0.005)
+
+
+@pytest.mark.parametrize("device", _DEVICES)
+def test_writer_rejects_wrong_input_dimension_before_mutation(device: str) -> None:
+    codec = KVCacheCodec("int8", 9)
+    cache = _cache(codec, device)
+    key = torch.randn(1, 2, 10, device=device)
+    with pytest.raises(ValueError, match="head_dim"):
+        write_quantized_kv(cache, key, key, torch.tensor([0], device=device), codec)
+    assert torch.count_nonzero(cache.key) == 0
+    assert torch.count_nonzero(cache.value) == 0

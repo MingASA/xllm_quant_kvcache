@@ -213,7 +213,7 @@ class ArgumentParser:
             "--kv_cache_dtype",
             type=str,
             default="auto",
-            help='KV cache data type. "auto" (default) aligns with model dtype, "int8" enables INT8 quantization (MLU only).',
+            help='KV cache data type. "auto" (default) aligns with model dtype, CUDA Python eager also supports int8, fp8_e4m3, int4 and mixed bf16_int8, bf16_fp8_e4m3, bf16_int4.',
         )
         self.parser.add_argument(
             "--use_cpp_chat_template",

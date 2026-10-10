@@ -22,7 +22,16 @@ limitations under the License.
 
 namespace xllm {
 
-enum class KVCacheDtype : int8_t { AUTO, INT8, FP8_E4M3, FP8_E5M2, INT4 };
+enum class KVCacheDtype : int8_t {
+  AUTO,
+  INT8,
+  FP8_E4M3,
+  FP8_E5M2,
+  INT4,
+  BF16_INT8,
+  BF16_FP8_E4M3,
+  BF16_INT4
+};
 
 inline KVCacheDtype parse_kv_cache_dtype(std::string_view dtype) {
   if (dtype == "auto") {
@@ -40,9 +49,39 @@ inline KVCacheDtype parse_kv_cache_dtype(std::string_view dtype) {
   if (dtype == "int4") {
     return KVCacheDtype::INT4;
   }
+  if (dtype == "bf16_int8") {
+    return KVCacheDtype::BF16_INT8;
+  }
+  if (dtype == "bf16_fp8_e4m3") {
+    return KVCacheDtype::BF16_FP8_E4M3;
+  }
+  if (dtype == "bf16_int4") {
+    return KVCacheDtype::BF16_INT4;
+  }
   LOG(FATAL) << "Invalid kv_cache_dtype=" << dtype
-             << ". Expected auto, int8, fp8, fp8_e4m3, fp8_e5m2 or int4.";
+             << ". Expected auto, int8, fp8, fp8_e4m3, fp8_e5m2, int4, "
+                "bf16_int8, bf16_fp8_e4m3 or bf16_int4.";
   return KVCacheDtype::AUTO;
+}
+
+// Mixed modes keep K in BF16 and allocate a scale only for V.
+inline bool kv_cache_has_bf16_key(KVCacheDtype dtype) {
+  return dtype == KVCacheDtype::BF16_INT8 ||
+         dtype == KVCacheDtype::BF16_FP8_E4M3 ||
+         dtype == KVCacheDtype::BF16_INT4;
+}
+
+inline KVCacheDtype kv_cache_value_dtype(KVCacheDtype dtype) {
+  switch (dtype) {
+    case KVCacheDtype::BF16_INT8:
+      return KVCacheDtype::INT8;
+    case KVCacheDtype::BF16_FP8_E4M3:
+      return KVCacheDtype::FP8_E4M3;
+    case KVCacheDtype::BF16_INT4:
+      return KVCacheDtype::INT4;
+    default:
+      return dtype;
+  }
 }
 
 // Quantized formats use one byte per stored element. INT4 packs adjacent

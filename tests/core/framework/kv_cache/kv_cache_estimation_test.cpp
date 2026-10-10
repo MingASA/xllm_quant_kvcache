@@ -87,6 +87,23 @@ TEST(KVCacheEstimationTest, CountsPackedInt4PaddingAndScales) {
   EXPECT_EQ(capacity.n_blocks(), 315);
 }
 
+TEST(KVCacheEstimationTest, CountsMixedPayloadWithOnlyValueScale) {
+  for (const std::string dtype : {"bf16_int8", "bf16_fp8_e4m3", "bf16_int4"}) {
+    ModelArgs model_args = make_standard_args();
+    model_args.head_dim(17);
+    KVCacheEstimateOptions options = make_estimate_options();
+    options.dtype = torch::kBFloat16;
+    options.kv_cache_dtype = dtype;
+    const KVCacheCapacity capacity =
+        estimate_kv_cache_capacity(model_args, options);
+    const int64_t payload_bytes = 2 * (34 + (dtype == "bf16_int4" ? 9 : 17));
+    EXPECT_EQ(capacity.slot_size(), payload_bytes);
+    EXPECT_EQ(capacity.scale_slot_size(), 8);
+    EXPECT_EQ(capacity.n_blocks(),
+              1024 * 1024 / (16 * 4 * (payload_bytes + 8)));
+  }
+}
+
 TEST(KVCacheEstimationTest, RejectsUnknownDtypeInsteadOfUsingModelBytes) {
   ModelArgs model_args = make_standard_args();
   KVCacheEstimateOptions options = make_estimate_options();

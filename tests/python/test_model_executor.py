@@ -344,7 +344,9 @@ class TestCreateAttentionBackend:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("cache_dtype", ("int8", "fp8", "fp8_e4m3", "fp8_e5m2", "int4"))
+@pytest.mark.parametrize(
+    "cache_dtype", ("int8", "fp8", "fp8_e4m3", "fp8_e5m2", "int4", "bf16_int8", "bf16_fp8_e4m3", "bf16_int4")
+)
 def test_cuda_quantized_backend_dispatch(cache_dtype: str) -> None:
     from xllm.python.attention.quantized import QuantizedPagedAttentionBackend
 
@@ -1422,3 +1424,29 @@ def test_mtp_topk_routes_to_acl_graph(mock_create):
     )
     assert result is graph_runner.execute.return_value
     executor.eager_runner.execute.assert_not_called()
+
+
+def test_cuda_fair_bf16_backend_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    from xllm.python.attention.quantized import QuantizedPagedAttentionBackend
+
+    monkeypatch.setenv("XLLM_QUANTIZED_BACKEND", "triton")
+    with patch("xllm.python.model_executor.executor.current_platform.is_cuda", return_value=True):
+        backend = _create_attention_backend(
+            _make_attention_layer(), torch.device("cuda"), torch.bfloat16, {"kv_cache_dtype": "auto"}
+        )
+    assert isinstance(backend, QuantizedPagedAttentionBackend)
+
+
+def test_cuda_fair_baseline_rejects_qdq_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XLLM_QUANTIZED_BACKEND", "triton")
+    monkeypatch.setenv("XLLM_KV_QUALITY_MODE", "v_only_fp8")
+    with (
+        patch("xllm.python.model_executor.executor.current_platform.is_cuda", return_value=True),
+        pytest.raises(ValueError, match="KV quality mode"),
+    ):
+        _create_attention_backend(
+            _make_attention_layer(),
+            torch.device("cuda"),
+            torch.bfloat16,
+            {"kv_cache_dtype": "auto", "model_type": "qwen2"},
+        )

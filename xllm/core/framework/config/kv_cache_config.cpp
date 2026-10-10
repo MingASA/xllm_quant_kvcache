@@ -42,7 +42,9 @@ DEFINE_string(
     "cache dtype aligns with model dtype (no quantization). "
     "MLU supports int8. CUDA Python eager supports experimental int8, "
     "fp8 (alias for fp8_e4m3), fp8_e4m3, fp8_e5m2 and packed int4. "
-    "Quantized CUDA attention uses a reference implementation.");
+    "Mixed modes bf16_int8, bf16_fp8_e4m3 and bf16_int4 keep K in BF16 "
+    "and compress only V. CUDA attention uses fused Triton kernels in Python "
+    "eager.");
 
 DEFINE_string(indexer_cache_dtype,
               "auto",

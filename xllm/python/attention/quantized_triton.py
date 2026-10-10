@@ -83,6 +83,7 @@ def _quantize_and_scatter_kv_kernel(
     BLOCK_STORAGE: tl.constexpr,
     FIXED_KEY_SCALE: tl.constexpr,
     FIXED_VALUE_SCALE: tl.constexpr,
+    BF16_KEY: tl.constexpr,
 ):
     token_head = tl.program_id(0)
     token = token_head // num_kv_heads
@@ -105,12 +106,12 @@ def _quantize_and_scatter_kv_kernel(
 
         key_max = tl.max(tl.abs(key_values), axis=0)
         value_max = tl.max(tl.abs(value_values), axis=0)
-        key_scale = tl.where(key_max == 0.0, 1.0, tl.maximum(key_max / bound, 1.1754943508222875e-38))
-        value_scale = tl.where(value_max == 0.0, 1.0, tl.maximum(value_max / bound, 1.1754943508222875e-38))
+        key_scale = tl.where(key_max == 0.0, 1.0, tl.maximum(key_max * (1.0 / bound), 1.1754943508222875e-38))
+        value_scale = tl.where(value_max == 0.0, 1.0, tl.maximum(value_max * (1.0 / bound), 1.1754943508222875e-38))
         if FIXED_KEY_SCALE > 0:
             key_scale = FIXED_KEY_SCALE
             value_scale = FIXED_VALUE_SCALE
-        if FORMAT == 0:
+        if FORMAT == 0 or FORMAT == 3:
             # Approximate reciprocal division can flip half-integer ties for
             # BF16 inputs. Match the codec's FP32 nearest-even division.
             key_normalized = tl.clamp(tl.div_rn(key_values, key_scale), -bound, bound)
@@ -119,22 +120,28 @@ def _quantize_and_scatter_kv_kernel(
             key_normalized = tl.clamp(key_values / key_scale, -bound, bound)
             value_normalized = tl.clamp(value_values / value_scale, -bound, bound)
 
+        if BF16_KEY:
+            key_base = (slot * num_kv_heads + head) * head_dim
+            tl.store(key_cache_ptr + key_base + dims, key_values, mask=dims < head_dim)
         output_base = (slot * num_kv_heads + head) * storage_dim
         scale_index = slot * num_kv_heads + head
         if FORMAT == 0:
             key_quantized = _round_to_nearest_even(key_normalized).to(tl.int8)
             value_quantized = _round_to_nearest_even(value_normalized).to(tl.int8)
-            tl.store(key_cache_ptr + output_base + dims, key_quantized, mask=dims < head_dim)
+            if not BF16_KEY:
+                tl.store(key_cache_ptr + output_base + dims, key_quantized, mask=dims < head_dim)
             tl.store(value_cache_ptr + output_base + dims, value_quantized, mask=dims < head_dim)
         elif FORMAT == 1:
             key_quantized = key_normalized.to(tl.float8e4nv).to(tl.uint8, bitcast=True)
             value_quantized = value_normalized.to(tl.float8e4nv).to(tl.uint8, bitcast=True)
-            tl.store(key_cache_ptr + output_base + dims, key_quantized, mask=dims < head_dim)
+            if not BF16_KEY:
+                tl.store(key_cache_ptr + output_base + dims, key_quantized, mask=dims < head_dim)
             tl.store(value_cache_ptr + output_base + dims, value_quantized, mask=dims < head_dim)
         elif FORMAT == 2:
             key_quantized = key_normalized.to(tl.float8e5).to(tl.uint8, bitcast=True)
             value_quantized = value_normalized.to(tl.float8e5).to(tl.uint8, bitcast=True)
-            tl.store(key_cache_ptr + output_base + dims, key_quantized, mask=dims < head_dim)
+            if not BF16_KEY:
+                tl.store(key_cache_ptr + output_base + dims, key_quantized, mask=dims < head_dim)
             tl.store(value_cache_ptr + output_base + dims, value_quantized, mask=dims < head_dim)
         else:
             storage_offsets = tl.arange(0, BLOCK_STORAGE)
@@ -152,18 +159,20 @@ def _quantize_and_scatter_kv_kernel(
             value_second = tl.where(second_dim < head_dim, value_second, 0)
             key_packed = (key_first & 15) | ((key_second & 15) << 4)
             value_packed = (value_first & 15) | ((value_second & 15) << 4)
-            tl.store(
-                key_cache_ptr + output_base + storage_offsets,
-                key_packed.to(tl.uint8),
-                mask=storage_offsets < storage_dim,
-            )
+            if not BF16_KEY:
+                tl.store(
+                    key_cache_ptr + output_base + storage_offsets,
+                    key_packed.to(tl.uint8),
+                    mask=storage_offsets < storage_dim,
+                )
             tl.store(
                 value_cache_ptr + output_base + storage_offsets,
                 value_packed.to(tl.uint8),
                 mask=storage_offsets < storage_dim,
             )
 
-        tl.store(key_scale_ptr + scale_index, key_scale)
+        if not BF16_KEY:
+            tl.store(key_scale_ptr + scale_index, key_scale)
         tl.store(value_scale_ptr + scale_index, value_scale)
 
 
@@ -237,12 +246,14 @@ def _quantized_paged_attention_kernel(
     num_kv_heads: tl.constexpr,
     head_dim: tl.constexpr,
     storage_dim: tl.constexpr,
+    key_storage_dim: tl.constexpr,
     page_size: tl.constexpr,
     block_table_stride: tl.constexpr,
     scale: tl.constexpr,
     sliding_window: tl.constexpr,
     CAUSAL: tl.constexpr,
     FORMAT: tl.constexpr,
+    KEY_FORMAT: tl.constexpr,
     BLOCK_D: tl.constexpr,
     BLOCK_N: tl.constexpr,
     NUM_SPLITS: tl.constexpr,
@@ -285,8 +296,8 @@ def _quantized_paged_attention_kernel(
                     num_kv_heads,
                     page_size,
                     head_dim,
-                    storage_dim,
-                    FORMAT,
+                    key_storage_dim,
+                    KEY_FORMAT,
                 )
                 value = _decode_cache_values(
                     value_cache_ptr,
@@ -361,12 +372,14 @@ def _quantized_paged_prefill_attention_kernel(
     num_kv_heads: tl.constexpr,
     head_dim: tl.constexpr,
     storage_dim: tl.constexpr,
+    key_storage_dim: tl.constexpr,
     page_size: tl.constexpr,
     block_table_stride: tl.constexpr,
     scale: tl.constexpr,
     sliding_window: tl.constexpr,
     CAUSAL: tl.constexpr,
     FORMAT: tl.constexpr,
+    KEY_FORMAT: tl.constexpr,
     BLOCK_Q: tl.constexpr,
     BLOCK_D: tl.constexpr,
     BLOCK_N: tl.constexpr,
@@ -443,8 +456,8 @@ def _quantized_paged_prefill_attention_kernel(
             num_kv_heads,
             page_size,
             head_dim,
-            storage_dim,
-            FORMAT,
+            key_storage_dim,
+            KEY_FORMAT,
             valid_keys,
         )
         value = _decode_cache_values(
@@ -520,11 +533,13 @@ def write_quantized_kv(
     slots: torch.Tensor,
     key_cache: torch.Tensor,
     value_cache: torch.Tensor,
-    key_scale: torch.Tensor,
-    value_scale: torch.Tensor,
+    key_scale: torch.Tensor | None,
+    value_scale: torch.Tensor | None,
     cache_dtype: str,
     head_dim: int,
     fixed_scales: tuple[float, float] | None = None,
+    *,
+    bf16_key: bool = False,
 ) -> None:
     """Quantize K/V vectors and scatter payloads/scales in one GPU launch."""
     if fixed_scales is not None:
@@ -534,8 +549,11 @@ def write_quantized_kv(
             or len(fixed_scales) != 2
         ):
             raise ValueError("Fixed scales require FP8 and two finite positive scalar scales")
+    if cache_dtype == "bf16":
+        write_bf16_kv(key, value, slots, key_cache, value_cache)
+        return
     num_tokens, num_kv_heads, _ = key.shape
-    storage_dim = key_cache.shape[-1]
+    storage_dim = value_cache.shape[-1]
     capacity = key_cache.shape[0] * key_cache.shape[1]
     block_d = triton.next_power_of_2(head_dim)
     _quantize_and_scatter_kv_kernel[(num_tokens * num_kv_heads,)](
@@ -556,6 +574,7 @@ def write_quantized_kv(
         triton.next_power_of_2(storage_dim),
         fixed_scales[0] if fixed_scales is not None else 0.0,
         fixed_scales[1] if fixed_scales is not None else 0.0,
+        bf16_key,
         num_warps=4,
     )
 
@@ -589,8 +608,8 @@ def quantized_paged_attention(
     query: torch.Tensor,
     key_cache: torch.Tensor,
     value_cache: torch.Tensor,
-    key_scale: torch.Tensor,
-    value_scale: torch.Tensor,
+    key_scale: torch.Tensor | None,
+    value_scale: torch.Tensor | None,
     block_table: torch.Tensor,
     query_to_sequence: torch.Tensor,
     query_positions: torch.Tensor,
@@ -601,12 +620,14 @@ def quantized_paged_attention(
     causal: bool,
     query_offsets: torch.Tensor | None = None,
     max_query_tokens: int | None = None,
+    *,
+    bf16_key: bool = False,
 ) -> torch.Tensor:
     """Attend directly over paged quantized cache, dequantizing on read."""
     num_query_tokens, num_heads, head_dim = query.shape
     num_kv_heads = key_cache.shape[2]
     page_size = key_cache.shape[1]
-    storage_dim = key_cache.shape[-1]
+    storage_dim = value_cache.shape[-1]
     output = torch.empty_like(query)
     block_d = triton.next_power_of_2(head_dim)
     max_query_tokens = num_query_tokens if max_query_tokens is None else max_query_tokens
@@ -640,12 +661,14 @@ def quantized_paged_attention(
             num_kv_heads,
             head_dim,
             storage_dim,
+            key_cache.shape[-1],
             page_size,
             block_table.stride(0),
             scale,
             sliding_window,
             causal,
             4 if cache_dtype == "bf16" else _format_code(cache_dtype),
+            4 if bf16_key or cache_dtype == "bf16" else _format_code(cache_dtype),
             block_d,
             64,
             num_splits,
@@ -663,17 +686,12 @@ def quantized_paged_attention(
         query_offsets = torch.tensor([0, num_query_tokens], device=query.device, dtype=torch.int32)
     groups = num_heads // num_kv_heads
     # Reuse each decoded K/V tile across GQA heads, without staging full cache.
-    grouped_heads = groups if cache_dtype in ("int8", "bf16") and groups in (1, 2, 3, 4, 6, 8) else 1
+    grouped_heads = groups if groups in (1, 2, 3, 4, 6, 8) else 1
     block_q = min(64, triton.next_power_of_2(16 * grouped_heads))
     prefill_block_d = max(16, block_d)
     num_splits = (
         4
-        if (
-            query.dtype == torch.bfloat16
-            and cache_dtype in ("int8", "bf16")
-            and context_lengths.numel() <= 4
-            and block_table.shape[1] * page_size >= 1024
-        )
+        if (query.dtype == torch.bfloat16 and context_lengths.numel() <= 4 and block_table.shape[1] * page_size >= 1024)
         else 1
     )
     partial = (
@@ -708,17 +726,19 @@ def quantized_paged_attention(
         num_kv_heads,
         head_dim,
         storage_dim,
+        key_cache.shape[-1],
         page_size,
         block_table.stride(0),
         scale,
         sliding_window,
         causal,
         4 if cache_dtype == "bf16" else _format_code(cache_dtype),
+        4 if bf16_key or cache_dtype == "bf16" else _format_code(cache_dtype),
         block_q,
         prefill_block_d,
         64,
         grouped_heads,
-        query.dtype == torch.bfloat16 and cache_dtype in ("int8", "bf16"),
+        query.dtype == torch.bfloat16,
         num_splits,
         num_warps=4,
     )

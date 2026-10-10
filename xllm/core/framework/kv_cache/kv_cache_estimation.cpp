@@ -47,6 +47,15 @@ int64_t kv_slot_size(const ModelArgs& model_args,
                      const KVCacheEstimateOptions& options,
                      int64_t cache_dtype_size) {
   const KVCacheDtype dtype = parse_kv_cache_dtype(options.kv_cache_dtype);
+  if (kv_cache_has_bf16_key(dtype)) {
+    CHECK(!model_args.enable_mla()) << "Mixed KV cache supports MHA/GQA only.";
+    CHECK(options.dtype == torch::kBFloat16)
+        << "Mixed KV cache requires BF16 model dtype.";
+    return (2 * model_args.head_dim() +
+            kv_cache_storage_head_dim(kv_cache_value_dtype(dtype),
+                                      model_args.head_dim())) *
+           options.n_local_kv_heads;
+  }
   if (model_args.enable_mla()) {
     CHECK(dtype != KVCacheDtype::INT4)
         << "Packed INT4 KV cache does not support MLA.";
@@ -101,7 +110,10 @@ int64_t scale_slot_size(const ModelArgs& model_args,
   if (model_args.enable_mla()) {
     return sizeof(float);
   }
-  return 2 * sizeof(float) * options.n_local_kv_heads;
+  const int64_t scale_count =
+      kv_cache_has_bf16_key(parse_kv_cache_dtype(options.kv_cache_dtype)) ? 1
+                                                                          : 2;
+  return scale_count * sizeof(float) * options.n_local_kv_heads;
 }
 
 int64_t standard_full_cache_block_size_in_bytes(

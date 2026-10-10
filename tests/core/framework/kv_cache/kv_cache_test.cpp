@@ -571,6 +571,51 @@ TEST(KVCacheTest, QuantizedAllocationMatchesBudgetAndCopiesScales) {
     }
   }
 }
+TEST(KVCacheTest, MixedAllocationRetainsBf16KeysAndCopiesValueScales) {
+  for (const std::string dtype : {"bf16_int8", "bf16_fp8_e4m3", "bf16_int4"}) {
+    ModelArgs args;
+    args.n_layers(1).n_heads(4).n_kv_heads(2).head_dim(17);
+    KVCacheCapacity capacity;
+    capacity.n_blocks(3).block_size(4);
+    KVCacheShape shape(capacity, args, /*world_size=*/1);
+    KVCacheCreateOptions options;
+    options.device(torch::Device(torch::kCPU))
+        .dtype(torch::kBFloat16)
+        .num_layers(1)
+        .enable_kv_cache_quant(true)
+        .quantized_dtype(parse_kv_cache_dtype(dtype));
+    std::vector<KVCache> caches;
+    allocate_kv_caches(caches, shape, options);
+    ASSERT_EQ(caches.size(), 1U);
+    KVCache& cache = caches.front();
+    const int64_t storage_dim = dtype == "bf16_int4" ? 9 : 17;
+    EXPECT_EQ(shape_vec(cache.get_k_cache()),
+              (std::vector<int64_t>{3, 4, 2, 17}));
+    EXPECT_EQ(cache.get_k_cache().scalar_type(), torch::kBFloat16);
+    EXPECT_EQ(shape_vec(cache.get_v_cache()),
+              (std::vector<int64_t>{3, 4, 2, storage_dim}));
+    EXPECT_EQ(cache.get_v_cache().scalar_type(),
+              dtype == "bf16_int8" ? torch::kChar : torch::kByte);
+    EXPECT_FALSE(cache.get_k_cache_scale().has_value());
+    ASSERT_TRUE(cache.get_v_cache_scale().has_value());
+    int64_t bytes = 0;
+    for (const KVCacheTensor& tensor : cache.get_cache_tensors()) {
+      bytes += static_cast<int64_t>(tensor.tensor.nbytes());
+      tensor.tensor[0].fill_(3);
+      tensor.tensor[1].fill_(5);
+    }
+    EXPECT_EQ(bytes, 3 * 4 * 2 * (34 + storage_dim + 4));
+    EXPECT_EQ(cache.get_block_type_tensors(BlockType::KV).size(), 3U);
+    torch::Tensor sources = torch::tensor({0, 1}, torch::kLong);
+    torch::Tensor destinations = torch::tensor({1, 0}, torch::kLong);
+    cache.swap_blocks(sources, destinations);
+    for (const KVCacheTensor& tensor : cache.get_cache_tensors()) {
+      EXPECT_TRUE(tensor.tensor[0].eq(5).all().item<bool>());
+      EXPECT_TRUE(tensor.tensor[1].eq(3).all().item<bool>());
+    }
+  }
+}
+
 #endif
 
 #if defined(USE_MLU)

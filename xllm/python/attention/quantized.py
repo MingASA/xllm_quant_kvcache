@@ -22,12 +22,14 @@ small eager reference implementation for correctness tests.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import torch
 import torch.nn.functional as F
 
+from scripts.logger import logger
 from xllm.python.attention.backend import AttentionBackend, AttentionMetadata, LayerCache
 
 if TYPE_CHECKING:
@@ -67,17 +69,21 @@ class KVCacheCodec:
 
     def __init__(self, cache_dtype: str, head_dim: int) -> None:
         self.cache_dtype = "fp8_e4m3" if cache_dtype == "fp8" else cache_dtype
-        if self.cache_dtype not in ("int8", "int4", *_FP8_DTYPES):
+        if self.cache_dtype not in ("bf16", "int8", "int4", *_FP8_DTYPES):
             raise ValueError(f"Unsupported quantized KV cache dtype: {cache_dtype}")
         if head_dim <= 0:
             raise ValueError("head_dim must be positive")
         self.head_dim = head_dim
         self.storage_dim = (head_dim + 1) // 2 if self.cache_dtype == "int4" else head_dim
-        self.storage_dtype = torch.int8 if self.cache_dtype == "int8" else torch.uint8
+        self.storage_dtype = (
+            torch.bfloat16 if self.cache_dtype == "bf16" else torch.int8 if self.cache_dtype == "int8" else torch.uint8
+        )
 
-    def encode(self, tensor: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def encode(self, tensor: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor | None]:
         if tensor.shape[-1] != self.head_dim or not tensor.is_floating_point():
             raise ValueError("KV input must be floating point with the configured head_dim")
+        if self.cache_dtype == "bf16":
+            return tensor.to(torch.bfloat16), None
         values = tensor.float()
         if not torch.isfinite(values).all().item():
             raise ValueError("KV quantization requires finite inputs")
@@ -99,10 +105,14 @@ class KVCacheCodec:
             nibbles = F.pad(nibbles, (0, 1))
         return nibbles[..., 0::2] | (nibbles[..., 1::2] << 4), scale
 
-    def decode(self, payload: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
+    def decode(self, payload: torch.Tensor, scale: torch.Tensor | None) -> torch.Tensor:
         if payload.dtype != self.storage_dtype or payload.shape[-1] != self.storage_dim:
             raise ValueError("KV payload does not match its quantization format")
-        if scale.dtype != torch.float32 or scale.shape != payload.shape[:-1]:
+        if self.cache_dtype == "bf16":
+            if scale is not None:
+                raise ValueError("BF16 cache must not own scales")
+            return payload.float()
+        if scale is None or scale.dtype != torch.float32 or scale.shape != payload.shape[:-1]:
             raise ValueError("KV scales must be FP32 with one entry per token/head")
         if self.cache_dtype in _FP8_DTYPES:
             values = payload.contiguous().view(_FP8_DTYPES[self.cache_dtype]).float()
@@ -115,23 +125,31 @@ class KVCacheCodec:
         return values * scale.unsqueeze(-1)
 
 
-def _validate_cache(cache: LayerCache, codec: KVCacheCodec, num_kv_heads: int) -> None:
-    tensors = (cache.key, cache.value, cache.key_scale, cache.value_scale)
-    if any(tensor is None for tensor in tensors):
-        raise ValueError("Quantized attention requires K/V payloads and K/V scales")
-    key, value, key_scale, value_scale = tensors
-    if key.ndim != 4 or key.shape != value.shape or key.shape[2:] != (num_kv_heads, codec.storage_dim):
-        raise ValueError("Quantized cache must use [blocks, page_size, kv_heads, storage_dim]")
-    if key.shape[0] <= 0 or key.shape[1] <= 0:
-        raise ValueError("Quantized cache requires positive block count and page_size")
-    if key.dtype != codec.storage_dtype or value.dtype != codec.storage_dtype:
-        raise ValueError("Quantized cache payload dtype mismatch")
-    if key_scale.shape != key.shape[:-1] or value_scale.shape != key_scale.shape:
-        raise ValueError("Quantized cache scale shape mismatch")
-    if key_scale.dtype != torch.float32 or value_scale.dtype != torch.float32:
-        raise ValueError("Quantized cache requires FP32 scales")
-    if any(tensor.device != key.device or not tensor.is_contiguous() for tensor in tensors):
-        raise ValueError("Quantized cache tensors must be contiguous on the same device")
+def _validate_cache(
+    cache: LayerCache, codec: KVCacheCodec, num_kv_heads: int, key_codec: KVCacheCodec | None = None
+) -> None:
+    key_codec = key_codec or codec
+    tensors = []
+    for payload, scale, side_codec in (
+        (cache.key, cache.key_scale, key_codec),
+        (cache.value, cache.value_scale, codec),
+    ):
+        if payload is None or payload.ndim != 4 or payload.shape[2:] != (num_kv_heads, side_codec.storage_dim):
+            raise ValueError("Cache must use [blocks, page_size, kv_heads, storage_dim]")
+        if payload.dtype != side_codec.storage_dtype:
+            raise ValueError("Cache payload dtype mismatch")
+        tensors.append(payload)
+        if side_codec.cache_dtype == "bf16":
+            if scale is not None:
+                raise ValueError("BF16 cache must not own scales")
+        else:
+            if scale is None or scale.shape != payload.shape[:-1] or scale.dtype != torch.float32:
+                raise ValueError("Quantized cache requires FP32 scales, one per token/head")
+            tensors.append(scale)
+    if cache.key.shape[:3] != cache.value.shape[:3] or min(cache.key.shape[:2]) <= 0:
+        raise ValueError("K/V must have matching positive block/page layouts")
+    if any(tensor.device != cache.key.device or not tensor.is_contiguous() for tensor in tensors):
+        raise ValueError("Cache tensors must be contiguous on the same device")
 
 
 def write_quantized_kv(
@@ -140,11 +158,17 @@ def write_quantized_kv(
     value: torch.Tensor,
     slots: torch.Tensor,
     codec: KVCacheCodec,
+    key_codec: KVCacheCodec | None = None,
 ) -> None:
     """Scatter payloads and scales together; -1 slots are padding, never writes."""
     if key.ndim != 3 or key.shape != value.shape or key.device != value.device:
         raise ValueError("K/V must have matching [tokens, kv_heads, head_dim] shapes and devices")
-    _validate_cache(cache, codec, key.shape[1])
+    key_codec = key_codec or codec
+    if key.shape[-1] != codec.head_dim or key_codec.head_dim != codec.head_dim:
+        raise ValueError("K/V input head_dim must match both cache codecs")
+    if not key.is_floating_point() or not value.is_floating_point():
+        raise ValueError("K/V inputs must be floating point")
+    _validate_cache(cache, codec, key.shape[1], key_codec)
     if key.device != cache.key.device or slots.device != key.device:
         raise ValueError("K/V, slots and cache must be on the same device")
     if slots.ndim != 1 or slots.numel() != key.shape[0] or slots.dtype not in (torch.int32, torch.int64):
@@ -160,6 +184,7 @@ def write_quantized_kv(
             cache.value_scale,
             codec.cache_dtype,
             codec.head_dim,
+            bf16_key=key_codec.cache_dtype == "bf16",
         )
         return
     capacity = cache.key.shape[0] * cache.key.shape[1]
@@ -170,19 +195,23 @@ def write_quantized_kv(
     if indices.unique().numel() != indices.numel():
         raise ValueError("Duplicate KV write slots are not supported")
     # Encode both before mutating the persistent cache.
-    encoded_key, key_scale = codec.encode(key[valid])
+    encoded_key, key_scale = key_codec.encode(key[valid])
     encoded_value, value_scale = codec.encode(value[valid])
     cache.key.flatten(0, 1).index_copy_(0, indices, encoded_key)
     cache.value.flatten(0, 1).index_copy_(0, indices, encoded_value)
-    cache.key_scale.flatten(0, 1).index_copy_(0, indices, key_scale)
-    cache.value_scale.flatten(0, 1).index_copy_(0, indices, value_scale)
+    if cache.key_scale is not None:
+        cache.key_scale.flatten(0, 1).index_copy_(0, indices, key_scale)
+    if cache.value_scale is not None:
+        cache.value_scale.flatten(0, 1).index_copy_(0, indices, value_scale)
 
 
 class QuantizedPagedAttentionBackend(AttentionBackend):
     """Explicit eager backend; supports MHA/GQA prefill, chunking and decode."""
 
     def __init__(self, cache_dtype: str, head_dim: int, num_kv_heads: int) -> None:
-        self._codec = KVCacheCodec(cache_dtype, head_dim)
+        value_dtype = cache_dtype.removeprefix("bf16_")
+        self._codec = KVCacheCodec(value_dtype, head_dim)
+        self._key_codec = KVCacheCodec("bf16" if cache_dtype.startswith("bf16_") else value_dtype, head_dim)
         self._num_kv_heads = num_kv_heads
         self._kv_caches: list[LayerCache] = []
         self._metadata: AttentionMetadata | None = None
@@ -198,10 +227,47 @@ class QuantizedPagedAttentionBackend(AttentionBackend):
         if not kv_caches:
             raise ValueError("Quantized attention requires at least one cache")
         for cache in kv_caches:
-            _validate_cache(cache, self._codec, self._num_kv_heads)
+            _validate_cache(cache, self._codec, self._num_kv_heads, self._key_codec)
             if cache.key.shape != kv_caches[0].key.shape or cache.key.device != kv_caches[0].key.device:
                 raise ValueError("Quantized cache layout must match across layers")
         self._kv_caches = kv_caches
+        layouts = []
+        for cache in kv_caches:
+            tensors = {
+                name: tensor
+                for name, tensor in (
+                    ("key", cache.key),
+                    ("value", cache.value),
+                    ("key_scale", cache.key_scale),
+                    ("value_scale", cache.value_scale),
+                )
+                if tensor is not None
+            }
+            resident_bytes = sum(tensor.numel() * tensor.element_size() for tensor in tensors.values())
+            layouts.append(
+                {
+                    "tensors": {
+                        name: {
+                            "dtype": str(tensor.dtype),
+                            "shape": list(tensor.shape),
+                            "bytes": tensor.numel() * tensor.element_size(),
+                        }
+                        for name, tensor in tensors.items()
+                    },
+                    "resident_bytes": resident_bytes,
+                    "bytes_per_token": resident_bytes // (cache.key.shape[0] * cache.key.shape[1]),
+                }
+            )
+        logger.info(
+            "KV_ALLOCATION %s",
+            json.dumps(
+                {
+                    "layers": layouts,
+                    "resident_bytes": sum(layout["resident_bytes"] for layout in layouts),
+                    "token_capacity": self.num_kv_blocks * self.page_size,
+                }
+            ),
+        )
 
     @property
     def num_kv_blocks(self) -> int:
@@ -302,7 +368,7 @@ class QuantizedPagedAttentionBackend(AttentionBackend):
         if query.device.type == "cpu" and not torch.isfinite(query).all().item():
             raise ValueError("Quantized attention requires finite queries")
         cache = self._kv_caches[layer.layer_id]
-        write_quantized_kv(cache, key, value, self._metadata.slot_mapping, self._codec)
+        write_quantized_kv(cache, key, value, self._metadata.slot_mapping, self._codec, self._key_codec)
         return self.execute_attention(query, layer)
 
     def execute_attention(self, q: torch.Tensor, layer: Attention) -> torch.Tensor:
@@ -333,6 +399,7 @@ class QuantizedPagedAttentionBackend(AttentionBackend):
                 layer.causal,
                 self._query_offsets,
                 self._max_query_tokens,
+                bf16_key=self._key_codec.cache_dtype == "bf16",
             )
             return output.flatten(1)
 
@@ -379,8 +446,13 @@ class QuantizedPagedAttentionBackend(AttentionBackend):
         accumulator = torch.zeros_like(q)
         for page_index, block_id in enumerate(pages):
             valid = min(self.page_size, context_len - page_index * self.page_size)
-            key = self._codec.decode(cache.key[block_id, :valid], cache.key_scale[block_id, :valid])
-            value = self._codec.decode(cache.value[block_id, :valid], cache.value_scale[block_id, :valid])
+            key = self._key_codec.decode(
+                cache.key[block_id, :valid], None if cache.key_scale is None else cache.key_scale[block_id, :valid]
+            )
+            value = self._codec.decode(
+                cache.value[block_id, :valid],
+                None if cache.value_scale is None else cache.value_scale[block_id, :valid],
+            )
             key_positions = torch.arange(valid, device=q.device) + page_index * self.page_size
             visible = torch.ones((q.shape[0], valid), device=q.device, dtype=torch.bool)
             if layer.causal:

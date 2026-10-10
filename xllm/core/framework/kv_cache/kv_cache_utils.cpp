@@ -297,16 +297,27 @@ QuantizedKVCacheTensors create_quantized_kv_cache_tensors(
   // FP8 uses byte storage of the actual IEEE-like float8 encoding, not an
   // integer conversion. This also makes block copies independent of float8
   // indexing support in the installed PyTorch version.
+  const bool bf16_key = kv_cache_has_bf16_key(dtype);
+  if (bf16_key) {
+    CHECK(create_options.dtype() == torch::kBFloat16);
+    CHECK(kv_cache_shape.has_value_cache_shape());
+  }
+  const KVCacheDtype value_dtype = kv_cache_value_dtype(dtype);
   const torch::ScalarType storage_dtype =
-      dtype == KVCacheDtype::INT8 ? torch::kChar : torch::kByte;
+      value_dtype == KVCacheDtype::INT8 ? torch::kChar : torch::kByte;
   auto alloc_quantized = [&](KVCacheTensorRole role,
                              std::vector<int64_t> shape) {
     CHECK(!shape.empty());
-    shape.back() = kv_cache_storage_head_dim(dtype, shape.back());
+    shape.back() = kv_cache_storage_head_dim(value_dtype, shape.back());
     return alloc_cache_tensor(role, shape, storage_dtype, create_options);
   };
   tensors.kv_cache_tensors.key_cache =
-      alloc_quantized(KVCacheTensorRole::KEY, kv_cache_shape.key_cache_shape());
+      bf16_key ? alloc_cache_tensor(KVCacheTensorRole::KEY,
+                                    kv_cache_shape.key_cache_shape(),
+                                    torch::kBFloat16,
+                                    create_options)
+               : alloc_quantized(KVCacheTensorRole::KEY,
+                                 kv_cache_shape.key_cache_shape());
   if (kv_cache_shape.has_value_cache_shape()) {
     tensors.kv_cache_tensors.value_cache = alloc_quantized(
         KVCacheTensorRole::VALUE, kv_cache_shape.value_cache_shape());
@@ -318,10 +329,12 @@ QuantizedKVCacheTensors create_quantized_kv_cache_tensors(
                                        key_cache_shape.end() - 1);
 
   // One FP32 scale per token/head, independent of storage encoding.
-  tensors.key_cache_scale = alloc_cache_tensor(KVCacheTensorRole::KEY_SCALE,
-                                               key_scale_shape,
-                                               torch::kFloat32,
-                                               create_options);
+  if (!bf16_key) {
+    tensors.key_cache_scale = alloc_cache_tensor(KVCacheTensorRole::KEY_SCALE,
+                                                 key_scale_shape,
+                                                 torch::kFloat32,
+                                                 create_options);
+  }
   if (!kv_cache_shape.value_cache_shape().empty()) {
     const std::vector<int64_t>& value_cache_shape =
         kv_cache_shape.value_cache_shape();
