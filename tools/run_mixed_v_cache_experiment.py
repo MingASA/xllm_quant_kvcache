@@ -217,8 +217,15 @@ async def _replay(url: str, rows: list[dict[str, Any]], concurrency: int, output
     async with aiohttp.ClientSession(
         timeout=aiohttp.ClientTimeout(total=3600), connector=aiohttp.TCPConnector(limit=0)
     ) as session:
-        for index, row in enumerate(rows[:warmup]):
-            await _request(session, url, row, index)
+        warmup_semaphore = asyncio.Semaphore(concurrency)
+
+        async def _warm(index: int, row: dict[str, Any]) -> None:
+            async with warmup_semaphore:
+                await _request(session, url, row, index)
+
+        async with asyncio.TaskGroup() as group:
+            for index, row in enumerate(rows[: max(warmup, concurrency)]):
+                group.create_task(_warm(index, row))
         semaphore = asyncio.Semaphore(concurrency)
         results: list[dict[str, Any]] = []
         stop = asyncio.Event()
@@ -398,6 +405,8 @@ def _run(args: argparse.Namespace) -> None:
                                 "replay_cycles": args.replay_cycles if workload != "quality" else 1,
                                 "trace_sha256": _hash_file(trace),
                                 "warmup": args.warmup,
+                                "warmup_requests": min(len(rows), max(args.warmup, concurrency)),
+                                "warmup_concurrency": concurrency,
                                 "server_command": command,
                             }
                             config_path = run_path / "run_config.json"
