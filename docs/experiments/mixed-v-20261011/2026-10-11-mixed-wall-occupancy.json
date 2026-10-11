@@ -1,0 +1,127 @@
+{
+  "scope": "static resource-based theoretical occupancy, not achieved occupancy or hardware utilization",
+  "cubin_sha256": "b6a64aa56ea7c21277ab40ed052a734c1432fadcd492d9f415dc63bdb1cd326b",
+  "dynamic_shared_method": "sizeof existing BF16 traits union: tile16 36864; tile64/128 49152; source-derived, unchanged all modes",
+  "kernels": [
+    {
+      "tile_q": 128,
+      "mode": 3,
+      "threads_per_block": 128,
+      "dynamic_shared_bytes": 49152,
+      "theoretical_active_blocks_per_sm": 2,
+      "registers": 243,
+      "static_shared_bytes": 0,
+      "local_bytes": 0
+    },
+    {
+      "tile_q": 64,
+      "mode": 3,
+      "threads_per_block": 128,
+      "dynamic_shared_bytes": 49152,
+      "theoretical_active_blocks_per_sm": 2,
+      "registers": 203,
+      "static_shared_bytes": 0,
+      "local_bytes": 0
+    },
+    {
+      "tile_q": 16,
+      "mode": 3,
+      "threads_per_block": 128,
+      "dynamic_shared_bytes": 36864,
+      "theoretical_active_blocks_per_sm": 2,
+      "registers": 168,
+      "static_shared_bytes": 0,
+      "local_bytes": 0
+    },
+    {
+      "tile_q": 128,
+      "mode": 2,
+      "threads_per_block": 128,
+      "dynamic_shared_bytes": 49152,
+      "theoretical_active_blocks_per_sm": 2,
+      "registers": 243,
+      "static_shared_bytes": 0,
+      "local_bytes": 0
+    },
+    {
+      "tile_q": 64,
+      "mode": 2,
+      "threads_per_block": 128,
+      "dynamic_shared_bytes": 49152,
+      "theoretical_active_blocks_per_sm": 2,
+      "registers": 205,
+      "static_shared_bytes": 0,
+      "local_bytes": 0
+    },
+    {
+      "tile_q": 16,
+      "mode": 2,
+      "threads_per_block": 128,
+      "dynamic_shared_bytes": 36864,
+      "theoretical_active_blocks_per_sm": 2,
+      "registers": 168,
+      "static_shared_bytes": 0,
+      "local_bytes": 0
+    },
+    {
+      "tile_q": 128,
+      "mode": 1,
+      "threads_per_block": 128,
+      "dynamic_shared_bytes": 49152,
+      "theoretical_active_blocks_per_sm": 2,
+      "registers": 243,
+      "static_shared_bytes": 0,
+      "local_bytes": 0
+    },
+    {
+      "tile_q": 64,
+      "mode": 1,
+      "threads_per_block": 128,
+      "dynamic_shared_bytes": 49152,
+      "theoretical_active_blocks_per_sm": 2,
+      "registers": 226,
+      "static_shared_bytes": 0,
+      "local_bytes": 0
+    },
+    {
+      "tile_q": 16,
+      "mode": 1,
+      "threads_per_block": 128,
+      "dynamic_shared_bytes": 36864,
+      "theoretical_active_blocks_per_sm": 2,
+      "registers": 168,
+      "static_shared_bytes": 0,
+      "local_bytes": 0
+    },
+    {
+      "tile_q": 128,
+      "mode": 0,
+      "threads_per_block": 128,
+      "dynamic_shared_bytes": 49152,
+      "theoretical_active_blocks_per_sm": 2,
+      "registers": 244,
+      "static_shared_bytes": 0,
+      "local_bytes": 0
+    },
+    {
+      "tile_q": 64,
+      "mode": 0,
+      "threads_per_block": 128,
+      "dynamic_shared_bytes": 49152,
+      "theoretical_active_blocks_per_sm": 2,
+      "registers": 174,
+      "static_shared_bytes": 0,
+      "local_bytes": 0
+    },
+    {
+      "tile_q": 16,
+      "mode": 0,
+      "threads_per_block": 128,
+      "dynamic_shared_bytes": 36864,
+      "theoretical_active_blocks_per_sm": 2,
+      "registers": 128,
+      "static_shared_bytes": 0,
+      "local_bytes": 0
+    }
+  ]
+}

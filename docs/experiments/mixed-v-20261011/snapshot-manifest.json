@@ -1,0 +1,137 @@
+[
+  {
+    "path": "2026-10-11-final-mixed-v-cache-summary.md",
+    "bytes": 7133,
+    "sha256": "cc618b46c7642d4410c6a62bbb18d1de8c2742c4b72ee8646fe3b3459ca99df2"
+  },
+  {
+    "path": "2026-10-11-govreport-c128-four-arm-service-analysis.md",
+    "bytes": 5805,
+    "sha256": "432a5069289a1bad5188417ea4032ee4d8d0ca1905a55f9e2834eb5690c48970"
+  },
+  {
+    "path": "2026-10-11-govreport-c16-four-arm-service-analysis.md",
+    "bytes": 2917,
+    "sha256": "39fd30e6ed5067706f2b4d3b43bec812a0478be319b27a28bb114d85ff5a9991"
+  },
+  {
+    "path": "2026-10-11-govreport-c32-matched-four-arm-summary.md",
+    "bytes": 4081,
+    "sha256": "815db48ba797c6c28feb7c7fe81428015c5b452c7fc4f57296a9af971f9bf4c9"
+  },
+  {
+    "path": "2026-10-11-govreport-c64-four-arm-service-summary.md",
+    "bytes": 4322,
+    "sha256": "4f04e7b66a716dfa45ce3a95f059e65a33bb22874ec63b67a8c9b979282e86d1"
+  },
+  {
+    "path": "2026-10-11-govreport-c64-gpu-time-attribution.md",
+    "bytes": 5026,
+    "sha256": "d3d113b66aee66c147f0b1ef760e01b2a0974ae1c288adf4bc0fb61a85216cc7"
+  },
+  {
+    "path": "2026-10-11-govreport-c64-rolling-itl.png",
+    "bytes": 272146,
+    "sha256": "dc3f0f48d8b567dfb584c97f85672e8f4257d123af87b0baf2a1c736d9ad7f08"
+  },
+  {
+    "path": "2026-10-11-govreport-c8-four-arm-service-analysis.md",
+    "bytes": 4103,
+    "sha256": "d8fbad7ca46e09f27ed930e4e19d86e957289d824fccacfc35a3d436b870f282"
+  },
+  {
+    "path": "2026-10-11-gsm8k-c128-seq256-analysis.md",
+    "bytes": 1500,
+    "sha256": "6e24ac69bbcbcaed4c0b7b3ceec4ef84638e2c2d38eb3952f9defaecdf4dd94f"
+  },
+  {
+    "path": "2026-10-11-gsm8k-c160-seq256-analysis.md",
+    "bytes": 1500,
+    "sha256": "3ccd9b59385deb33da74deb7c7e88ab6f885f0bb6cf72e1b3c7ce06928fa7c31"
+  },
+  {
+    "path": "2026-10-11-gsm8k-c208-seq256-analysis.md",
+    "bytes": 2397,
+    "sha256": "819ff7b1adcbd50d67e4a08e341c5625cc78d06215a4ef25da8babed1b7f19c6"
+  },
+  {
+    "path": "2026-10-11-literature-vs-implementation-performance-judgment.md",
+    "bytes": 2905,
+    "sha256": "e5d69b58f61adf4349a66d5a1f3663019e44355e442773952104210aa2df7241"
+  },
+  {
+    "path": "2026-10-11-mixed-batch-wall-analysis.md",
+    "bytes": 5373,
+    "sha256": "a9009689496f3af977f046b5e6f6dd492c1f855fd051f8842613c6e171b84de4"
+  },
+  {
+    "path": "2026-10-11-mixed-wall-knee-default.json",
+    "bytes": 169189,
+    "sha256": "80333d9bc1418a7d49d513f2e4572e4c47b0918ecc4aee94654d197513dbb83b"
+  },
+  {
+    "path": "2026-10-11-mixed-wall-knee-split32.json",
+    "bytes": 169676,
+    "sha256": "da207540226f699c092902ac1db32a16eb1c33505ba193875dbe8d058e036591"
+  },
+  {
+    "path": "2026-10-11-mixed-wall-knee.png",
+    "bytes": 202424,
+    "sha256": "9da8eaad38bc6c3806cb919fc702178f252af3f85e533d92f7ada150cf971575"
+  },
+  {
+    "path": "2026-10-11-mixed-wall-occupancy.json",
+    "bytes": 3267,
+    "sha256": "a4ae63b4f3b4e1462896ac3386d1af2bad444cb4341d0c0c2fa5b50fa3ea0a7c"
+  },
+  {
+    "path": "2026-10-11-ncu-wall-compact.json",
+    "bytes": 17645,
+    "sha256": "649db25f4357c418ffd4bf1c2e5e82da18d1196136bbadc45625dd807830c69f"
+  },
+  {
+    "path": "2026-10-11-ncu-wall-counters.png",
+    "bytes": 166409,
+    "sha256": "204f85d4299570ecf0281be5d40a8f65966be78f1cac36094fa4b73a54a63bf9"
+  },
+  {
+    "path": "2026-10-11-ncu-wall-manifest.json",
+    "bytes": 5931,
+    "sha256": "73821447138cd7ab0ca2c9ddd02dab0ba7d9fad35ca1474fdf55e410c8f2a71d"
+  },
+  {
+    "path": "2026-10-11-nsight-compute-mixed-v-wall-analysis.md",
+    "bytes": 6969,
+    "sha256": "3627df503ae527d1d1b8c35359d4d125d8fbe2736d7db54fee9c00b9fddf27bc"
+  },
+  {
+    "path": "2026-10-11-prefill-decode-scheduler-analysis.md",
+    "bytes": 6887,
+    "sha256": "eebfaf664d36ca6983889d8f5e55abaf9cffdb615a85f9ffe9b5d39bad0d7761"
+  },
+  {
+    "path": "2026-10-11-quantization-service-time-attribution.md",
+    "bytes": 12194,
+    "sha256": "b82c1bb78001eb1d95f7f37c286f3f1f6956815e5d39089e03864352c95ab27d"
+  },
+  {
+    "path": "diagnostics/diagnose_mixed_batch_wall.py",
+    "bytes": 4171,
+    "sha256": "ef090c9169eea7f5acab70a6eec1fb965f73387b58f1ee23893f643cdd2c3dcf"
+  },
+  {
+    "path": "diagnostics/read_mixed_kernel_occupancy.py",
+    "bytes": 2306,
+    "sha256": "024f7fc31af64411ce88af9e2b56e593a332c27d6194504c09712ba46081f62c"
+  },
+  {
+    "path": "diagnostics/run_ncu_wall_comparisons.py",
+    "bytes": 1777,
+    "sha256": "fd69c89b0dd543d5d2311511f03a9e5007ad0973ac76969444c890049bba2c4c"
+  },
+  {
+    "path": "diagnostics/summarize_ncu_wall.py",
+    "bytes": 2407,
+    "sha256": "488e9fee69a52c55c2ca559bad0a0c9dc3e216c54e8ec6ac0e43ebafed4d3a2d"
+  }
+]
