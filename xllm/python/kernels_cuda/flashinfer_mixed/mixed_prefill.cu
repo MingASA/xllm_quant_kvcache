@@ -11,6 +11,13 @@
 #include <flashinfer/attention/default_prefill_params.cuh>
 #include <flashinfer/attention/prefill.cuh>
 
+#ifndef XLLM_MIXED_V_STRATEGY
+#define XLLM_MIXED_V_STRATEGY 0
+#endif
+#ifndef XLLM_MIXED_V_DECODE_WARPS
+#define XLLM_MIXED_V_DECODE_WARPS 4
+#endif
+
 namespace mixed_v {
 using BasePrefill = flashinfer::BatchPrefillPagedParams<__nv_bfloat16,
                                                         __nv_bfloat16,
@@ -21,39 +28,103 @@ class PrefillParams : public BasePrefill {
  public:
   static constexpr bool kMixedV = Mode != 0;
   static constexpr int32_t kVMode = Mode;
+  // Candidate strategies: 0 = shared expansion, 1 = producer conversion,
+  // 2 = MMA register conversion, 3 = register conversion with packed shared
+  // storage. These are compile-time ablations, not service scheduler knobs.
+  static constexpr int32_t kVDecodeStrategy = XLLM_MIXED_V_STRATEGY;
+  static constexpr bool kDecodeVOnLoad = kVDecodeStrategy == 1;
+  static constexpr bool kDecodeVInRegisters = kVDecodeStrategy >= 2;
+  static constexpr bool kPackedVShared = kMixedV && kVDecodeStrategy >= 3;
+  static constexpr bool kDecodeOnly = kVDecodeStrategy >= 4;
+  static constexpr bool kCacheVScales = kVDecodeStrategy >= 5;
+  static constexpr bool kVectorVShared = kVDecodeStrategy >= 6;
+  static constexpr bool kMatrixVLoad =
+      (kVDecodeStrategy == 7 || kVDecodeStrategy == 9) && Mode != 3;
+  static constexpr bool kBalancedVSwizzle = kVDecodeStrategy >= 8;
   const uint8_t* v_bytes = nullptr;
   const float* v_token_scales = nullptr;
+};
+
+template <typename BaseTraits, int32_t Mode>
+class MixedTraits : public BaseTraits {
+ public:
+  static constexpr uint32_t kVBits =
+      PrefillParams<Mode>::kPackedVShared &&
+              (!PrefillParams<Mode>::kDecodeOnly ||
+               BaseTraits::CTA_TILE_Q == 16)
+          ? (Mode == 3 ? 4 : 8)
+          : 16;
+  using SharedStoragePaged =
+      flashinfer::SharedStorageQKVO<BaseTraits::NUM_WARPS_KV,
+                                    BaseTraits::CTA_TILE_Q,
+                                    BaseTraits::CTA_TILE_KV,
+                                    BaseTraits::HEAD_DIM_QK,
+                                    BaseTraits::HEAD_DIM_VO,
+                                    typename BaseTraits::DTypeQ,
+                                    typename BaseTraits::DTypeKV,
+                                    typename BaseTraits::DTypeO,
+                                    true,
+                                    kVBits>;
 };
 
 template <int32_t TileQ, int32_t Mode>
 cudaError_t launch_prefill(PrefillParams<Mode> params,
                            __nv_bfloat16* temporary,
                            float* temporary_lse,
-                           cudaStream_t stream) {
+                           cudaStream_t stream,
+                           int32_t* resources = nullptr) {
   using Variant = flashinfer::DefaultAttention<false, false, false, false>;
   constexpr uint32_t kWarpsQ = flashinfer::get_num_warps_q(TileQ);
-  constexpr uint32_t kWarpsKV = flashinfer::get_num_warps_kv(TileQ);
+  constexpr uint32_t kWarpsKV = TileQ == 16 && Mode != 0
+                                    ? XLLM_MIXED_V_DECODE_WARPS
+                                    : flashinfer::get_num_warps_kv(TileQ);
   // Exact BF16/head128 heuristic on this SM120 100-KiB shared-memory device.
   constexpr uint32_t kMmaKV = TileQ == 128 ? 2 : TileQ == 64 ? 4 : 1;
-  using Traits = flashinfer::KernelTraits<flashinfer::MaskMode::kCausal,
-                                          TileQ,
-                                          flashinfer::get_num_mma_q(TileQ),
-                                          kMmaKV,
-                                          8,
-                                          8,
-                                          kWarpsQ,
-                                          kWarpsKV,
-                                          flashinfer::PosEncodingMode::kNone,
-                                          __nv_bfloat16,
-                                          __nv_bfloat16,
-                                          __nv_bfloat16,
-                                          float,
-                                          int32_t,
-                                          Variant>;
+  using BaseTraits =
+      flashinfer::KernelTraits<flashinfer::MaskMode::kCausal,
+                               TileQ,
+                               flashinfer::get_num_mma_q(TileQ),
+                               kMmaKV,
+                               8,
+                               8,
+                               kWarpsQ,
+                               kWarpsKV,
+                               flashinfer::PosEncodingMode::kNone,
+                               __nv_bfloat16,
+                               __nv_bfloat16,
+                               __nv_bfloat16,
+                               float,
+                               int32_t,
+                               Variant>;
+  using Traits = MixedTraits<BaseTraits, Mode>;
   static_assert(!Traits::IsInvalid());
   auto kernel =
       flashinfer::BatchPrefillWithPagedKVCacheKernel<Traits,
                                                      PrefillParams<Mode>>;
+  if (resources != nullptr) {
+    cudaFuncAttributes attributes{};
+    cudaError_t status = cudaFuncGetAttributes(&attributes, kernel);
+    if (status != cudaSuccess) {
+      return status;
+    }
+    int active_blocks = 0;  // CUDA API requires int*.
+    status = cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+        &active_blocks,
+        kernel,
+        Traits::NUM_THREADS,
+        sizeof(typename Traits::SharedStoragePaged));
+    if (status != cudaSuccess) {
+      return status;
+    }
+    resources[0] = Traits::NUM_THREADS;
+    resources[1] =
+        static_cast<int32_t>(sizeof(typename Traits::SharedStoragePaged));
+    resources[2] = attributes.numRegs;
+    resources[3] = static_cast<int32_t>(attributes.localSizeBytes);
+    resources[4] = active_blocks;
+    resources[5] = Traits::CTA_TILE_KV;
+    return cudaSuccess;
+  }
   cudaError_t status =
       cudaFuncSetAttribute(kernel,
                            cudaFuncAttributeMaxDynamicSharedMemorySize,
@@ -88,6 +159,38 @@ cudaError_t launch_prefill(PrefillParams<Mode> params,
                                                /*head_dim=*/128,
                                                /*enable_pdl=*/false,
                                                stream);
+}
+
+// Diagnostic-only resource query; does not launch a kernel or change the
+// scheduler. The caller supplies six int32 slots and an active CUDA context.
+extern "C" int32_t mixed_prefill_resources(int32_t mode,
+                                           int32_t tile_q,
+                                           int32_t* resources) {
+  if (resources == nullptr || mode < 0 || mode > 3 ||
+      (tile_q != 16 && tile_q != 64 && tile_q != 128)) {
+    return cudaErrorInvalidValue;
+  }
+#define QUERY_RESOURCE(MODE, TILE)        \
+  case (MODE * 256 + TILE):               \
+    return mixed_v::launch_prefill<TILE>( \
+        mixed_v::PrefillParams<MODE>{}, nullptr, nullptr, nullptr, resources)
+  switch (mode * 256 + tile_q) {
+    QUERY_RESOURCE(0, 16);
+    QUERY_RESOURCE(0, 64);
+    QUERY_RESOURCE(0, 128);
+    QUERY_RESOURCE(1, 16);
+    QUERY_RESOURCE(1, 64);
+    QUERY_RESOURCE(1, 128);
+    QUERY_RESOURCE(2, 16);
+    QUERY_RESOURCE(2, 64);
+    QUERY_RESOURCE(2, 128);
+    QUERY_RESOURCE(3, 16);
+    QUERY_RESOURCE(3, 64);
+    QUERY_RESOURCE(3, 128);
+    default:
+      return cudaErrorInvalidValue;
+  }
+#undef QUERY_RESOURCE
 }
 
 template <int32_t Mode>

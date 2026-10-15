@@ -19,6 +19,25 @@ from scripts.logger import logger
 
 SOURCE_ROOT = Path(__file__).resolve().parents[1] / "kernels_cuda/flashinfer_mixed"
 
+# Explicit operator ablations. The default stays on the attested algorithm until
+# the candidate suite establishes correctness and a useful performance envelope.
+_KERNEL_VARIANTS = {
+    "original": (0, 4),
+    "producer": (1, 4),
+    "register": (2, 4),
+    "packed_register": (3, 4),
+    "register_warps2": (2, 2),
+    "packed_register_warps2": (3, 2),
+    "packed_decode": (4, 4),
+    "packed_decode_scales": (5, 4),
+    "packed_decode_scales_warps2": (5, 2),
+    "vector_decode": (6, 4),
+    "matrix_decode": (7, 4),
+    "matrix_decode_warps2": (7, 2),
+    "vector_decode_balanced": (8, 4),
+    "matrix_decode_balanced": (9, 4),
+}
+
 
 def load_library(device: torch.device) -> tuple[ctypes.CDLL, dict]:
     """Compile once at backend startup; every artifact has a source-addressed path."""
@@ -38,6 +57,10 @@ def load_library(device: torch.device) -> tuple[ctypes.CDLL, dict]:
     if nvcc is None:
         raise ValueError("nvcc must be on PATH or set XLLM_FLASHINFER_MIXED_NVCC")
     compiler = subprocess.check_output([nvcc, "--version"], text=True)
+    variant = os.environ.get("XLLM_FLASHINFER_MIXED_KERNEL_VARIANT", "original")
+    if variant not in _KERNEL_VARIANTS:
+        raise ValueError(f"Unknown mixed-V kernel variant: {variant}")
+    strategy, decode_warps = _KERNEL_VARIANTS[variant]
     source_hashes = {
         path.name: hashlib.sha256(path.read_bytes()).hexdigest()
         for path in sorted(SOURCE_ROOT.iterdir())
@@ -61,7 +84,12 @@ def load_library(device: torch.device) -> tuple[ctypes.CDLL, dict]:
         upstream_headers=upstream_headers,
         compiler=compiler,
         architecture="sm_120",
-        flags=["-std=c++17", "-O3", "--shared", "-Xcompiler=-fPIC"],
+        kernel_variant=variant,
+        flags=[
+            "-std=c++17", "-O3", "--shared", "-Xcompiler=-fPIC",
+            f"-DXLLM_MIXED_V_STRATEGY={strategy}",
+            f"-DXLLM_MIXED_V_DECODE_WARPS={decode_warps}",
+        ],
     )
     key = hashlib.sha256(json.dumps(provenance, sort_keys=True).encode()).hexdigest()
     build_root = (

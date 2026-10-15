@@ -47,7 +47,7 @@ template <uint32_t Bytes>
 __device__ __forceinline__ void copy_compressed_v_async(uint8_t* destination,
                                                         const uint8_t* source,
                                                         bool valid) {
-  static_assert(Bytes == 4 || Bytes == 8);
+  static_assert(Bytes == 4 || Bytes == 8 || Bytes == 16);
   const uint32_t shared_address =
       static_cast<uint32_t>(__cvta_generic_to_shared(destination));
   const int32_t source_bytes = valid ? Bytes : 0;
@@ -67,6 +67,45 @@ __device__ __forceinline__ void load_mixed_v_tile(
     bool valid) {
   if constexpr (Params::kMixedV) {
     static_assert(VecSize == 8, "Prototype supports BF16 head_dim=128 only");
+    if constexpr (Params::kDecodeVOnLoad) {
+      // Convert while producing the tile. The existing producer/consumer
+      // barrier publishes BF16 directly; no in-place decode pass is needed.
+      vec_t<__nv_bfloat16, 8> values;
+      values.fill(__float2bfloat16_rn(0.0f));
+      if (valid) {
+        const float scale =
+            params.v_token_scales[offset / params.paged_kv.head_dim];
+        if constexpr (Params::kVMode == 3) {
+          const uint32_t packed =
+              *reinterpret_cast<const uint32_t*>(params.v_bytes + offset / 2);
+#pragma unroll
+          for (uint32_t i = 0; i < 8; ++i) {
+            const int32_t value = ((packed >> (4 * i)) & 15) ^ 8;
+            values[i] =
+                __float2bfloat16_rn(static_cast<float>(value - 8) * scale);
+          }
+        } else {
+          const uint2 packed =
+              *reinterpret_cast<const uint2*>(params.v_bytes + offset);
+#pragma unroll
+          for (uint32_t i = 0; i < 8; ++i) {
+            const uint32_t byte =
+                (i < 4 ? packed.x : packed.y) >> ((i % 4) * 8);
+            float value;
+            if constexpr (Params::kVMode == 1) {
+              asm("cvt.rn.f32.s8 %0, %1;" : "=f"(value) : "r"(byte));
+            } else {
+              __nv_fp8_e4m3 encoded;
+              encoded.__x = static_cast<uint8_t>(byte);
+              value = static_cast<float>(encoded);
+            }
+            values[i] = __float2bfloat16_rn(value * scale);
+          }
+        }
+      }
+      values.store(destination);
+      return;
+    }
     uint8_t* packed_destination = reinterpret_cast<uint8_t*>(destination);
     // Contiguous NHD: scales are [physical page, token in page, KV head].
     *reinterpret_cast<float*>(packed_destination + 8) =

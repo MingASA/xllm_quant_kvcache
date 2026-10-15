@@ -188,7 +188,8 @@ template <uint32_t NUM_WARPS_KV,
           typename DTypeQ,
           typename DTypeKV,
           typename DTypeO,
-          bool kEnableVOSplitOpt = false>
+          bool kEnableVOSplitOpt = false,
+          uint32_t VStorageBits = sizeof(DTypeKV) * 8>
 struct SharedStorageQKVO
     : KVScaleFactorSmem<DTypeKV, CTA_TILE_KV, HEAD_DIM_QK, HEAD_DIM_VO>,
       KVRepackSmem<DTypeQ,
@@ -217,9 +218,14 @@ struct SharedStorageQKVO
     struct {
       alignas(16) DTypeQ q_smem[CTA_TILE_Q * HEAD_DIM_QK];
       alignas(16) DTypeKV k_smem[CTA_TILE_KV * HEAD_DIM_QK];
-      alignas(16) std::conditional_t<kVShareActive,
-                                     DTypeKV[1],
-                                     DTypeKV[CTA_TILE_KV * HEAD_DIM_VO]> v_smem;
+      alignas(16) std::conditional_t<
+          kVShareActive,
+          DTypeKV[1],
+          DTypeKV[(CTA_TILE_KV * HEAD_DIM_VO * VStorageBits / 8 +
+                   (VStorageBits < sizeof(DTypeKV) * 8
+                        ? CTA_TILE_KV * sizeof(float)
+                        : 0)) /
+                  sizeof(DTypeKV)]> v_smem;
     };
     struct {  // NOTE(Zihao): synchronize attention states across warps
       alignas(16) std::conditional_t<
@@ -822,11 +828,52 @@ __device__ __forceinline__ void page_produce_mixed_v(
         size_t offset = thr_local_kv_offset[i];
 #pragma unroll
         for (uint32_t j = 0; j < NUM_MMA_D / (8 / sizeof(DType)); ++j) {
-          load_mixed_v_tile<128, 8>(
-              params,
-              reinterpret_cast<DType*>(smem.base + *smem_offset),
-              offset,
-              kv_idx < kv_len);
+          if constexpr (Params::kPackedVShared &&
+                        (!Params::kDecodeOnly || KTraits::CTA_TILE_Q == 16)) {
+            constexpr uint32_t kSlotBytes = Params::kVMode == 3 ? 4 : 8;
+            constexpr uint32_t kPayloadBytes =
+                KTraits::CTA_TILE_KV * KTraits::HEAD_DIM_VO * kSlotBytes / 8;
+            uint8_t* base = reinterpret_cast<uint8_t*>(smem_storage->v_smem);
+            const bool valid = kv_idx < kv_len;
+            if constexpr (Params::kVectorVShared) {
+              // Preserve contiguous 16-byte groups through the swizzle. A
+              // leader copies two INT8/FP8 or four packed INT4 slots at once.
+              constexpr uint32_t kSlotsPerCopy = 16 / kSlotBytes;
+              if (lane_idx % kSlotsPerCopy == 0) {
+                const uint32_t row = kv_idx - kv_idx_base;
+                const uint32_t column_slot = lane_idx % 8 + j * 8;
+                const uint32_t slot =
+                    row * UPCAST_STRIDE +
+                    (column_slot ^
+                     (Params::kBalancedVSwizzle
+                          ? (row % (16 / kSlotsPerCopy)) * kSlotsPerCopy
+                          : (row % 4) * 4));
+                copy_compressed_v_async<16>(
+                    base + slot * kSlotBytes,
+                    params.v_bytes +
+                        (Params::kVMode == 3 ? offset / 2 : offset),
+                    valid);
+              }
+            } else {
+              copy_compressed_v_async<kSlotBytes>(
+                  base + *smem_offset * kSlotBytes,
+                  params.v_bytes + (Params::kVMode == 3 ? offset / 2 : offset),
+                  valid);
+            }
+            // One scale per token/head, rather than one per eight values.
+            if (lane_idx % 8 == 0 && j == 0) {
+              reinterpret_cast<float*>(base +
+                                       kPayloadBytes)[kv_idx - kv_idx_base] =
+                  valid ? params.v_token_scales[offset / KTraits::HEAD_DIM_VO]
+                        : 0.0f;
+            }
+          } else {
+            load_mixed_v_tile<128, 8>(
+                params,
+                reinterpret_cast<DType*>(smem.base + *smem_offset),
+                offset,
+                kv_idx < kv_len);
+          }
           *smem_offset =
               smem.template advance_offset_by_column<8>(*smem_offset, j);
           // FP4: GMEM row is HEAD_DIM/2 bytes wide (packed), so advance by half
@@ -868,7 +915,9 @@ template <typename KTraits, typename SmemStorage, typename Params>
 __device__ __forceinline__ void decode_mixed_v_shared_tile(const Params& params,
                                                            SmemStorage* storage,
                                                            uint32_t thread_id) {
-  if constexpr (Params::kMixedV) {
+  if constexpr (Params::kMixedV && !Params::kDecodeVOnLoad &&
+                !(Params::kDecodeVInRegisters &&
+                  (!Params::kDecodeOnly || KTraits::CTA_TILE_Q == 16))) {
     static_assert(!KTraits::USE_KV_SHARED_SMEM);
     constexpr uint32_t slots = KTraits::CTA_TILE_KV * KTraits::HEAD_DIM_VO / 8;
     uint8_t* base = reinterpret_cast<uint8_t*>(storage->v_smem);
@@ -2243,7 +2292,65 @@ __device__ __forceinline__ void update_mdo_states(
   }
 }
 
-template <typename KTraits, bool REPACK_BF16 = false>
+// Read a compressed slot without expanding it back into shared memory. The
+// producer keeps the existing swizzled 16-byte slot: payload at +0, FP32 scale
+// at +8. Conversion preserves the original FP32 multiply followed by BF16 RN.
+template <int32_t Mode,
+          typename KTraits,
+          bool PackedShared,
+          bool CachedScale,
+          bool VectorShared,
+          bool BalancedSwizzle>
+__device__ __forceinline__ __nv_bfloat16
+load_mixed_v_element(smem_t<KTraits::SWIZZLE_MODE_KV>* smem,
+                     uint32_t row,
+                     uint32_t column,
+                     float cached_scale) {
+  static_assert(Mode >= 1 && Mode <= 3);
+  const uint32_t slot =
+      VectorShared
+          ? row * KTraits::UPCAST_STRIDE_V +
+                ((column / 8) ^
+                 (BalancedSwizzle && Mode != 3 ? (row % 8) * 2 : (row % 4) * 4))
+          : smem->template get_permuted_offset<KTraits::UPCAST_STRIDE_V>(
+                row, column / 8);
+  constexpr uint32_t kSlotBytes = Mode == 3 ? 4 : 8;
+  const uint8_t* base = reinterpret_cast<const uint8_t*>(smem->base);
+  const uint8_t* source = base + slot * (PackedShared ? kSlotBytes : 16);
+  const float scale =
+      CachedScale    ? cached_scale
+      : PackedShared ? reinterpret_cast<const float*>(
+                           base + KTraits::CTA_TILE_KV * KTraits::HEAD_DIM_VO *
+                                      kSlotBytes / 8)[row]
+                     : *reinterpret_cast<const float*>(source + 8);
+  float value;
+  if constexpr (Mode == 3) {
+    const uint32_t packed = *reinterpret_cast<const uint32_t*>(source);
+    const int32_t nibble = (packed >> (4 * (column % 8))) & 15;
+    value = static_cast<float>((nibble ^ 8) - 8);
+  } else {
+    const uint32_t packed =
+        reinterpret_cast<const uint32_t*>(source)[(column % 8) / 4];
+    const uint32_t byte = packed >> (8 * (column % 4));
+    if constexpr (Mode == 1) {
+      asm("cvt.rn.f32.s8 %0, %1;" : "=f"(value) : "r"(byte));
+    } else {
+      __nv_fp8_e4m3 encoded;
+      encoded.__x = static_cast<uint8_t>(byte);
+      value = static_cast<float>(encoded);
+    }
+  }
+  return __float2bfloat16_rn(value * scale);
+}
+
+template <typename KTraits,
+          bool REPACK_BF16 = false,
+          int32_t RegisterVMode = 0,
+          bool PackedVShared = false,
+          bool CacheVScales = false,
+          bool VectorVShared = false,
+          bool MatrixVLoad = false,
+          bool BalancedVSwizzle = false>
 __device__ __forceinline__ void compute_sfm_v(
     smem_t<KTraits::SWIZZLE_MODE_KV>* v_smem,
     uint32_t* v_smem_offset_r,
@@ -2252,7 +2359,8 @@ __device__ __forceinline__ void compute_sfm_v(
     typename KTraits::DTypeQKAccum (*s_frag)[KTraits::NUM_MMA_KV][8],
     float (*o_frag)[KTraits::NUM_MMA_D_VO_TILE][8],
     float (*d)[2],
-    const uint32_t d_base = 0) {
+    const uint32_t d_base = 0,
+    const uint32_t v_row_base = 0) {
   constexpr uint32_t UPCAST_STRIDE_V = KTraits::UPCAST_STRIDE_V;
   // When reading from the BF16 repack buffer, V is native 16-bit.
   constexpr uint32_t VV_STRIDE =
@@ -2289,11 +2397,105 @@ __device__ __forceinline__ void compute_sfm_v(
 
 #pragma unroll
   for (uint32_t mma_kv = 0; mma_kv < KTraits::NUM_MMA_KV; ++mma_kv) {
+    float cached_scales[4];
+    if constexpr (CacheVScales) {
+      static_assert(PackedVShared && RegisterVMode != 0);
+      constexpr uint32_t kSlotBytes = RegisterVMode == 3 ? 4 : 8;
+      const uint8_t* base = reinterpret_cast<const uint8_t*>(v_smem->base);
+      const float* scales = reinterpret_cast<const float*>(
+          base + KTraits::CTA_TILE_KV * KTraits::HEAD_DIM_VO * kSlotBytes / 8);
+#pragma unroll
+      for (uint32_t i = 0; i < 4; ++i) {
+        const uint32_t row =
+            v_row_base + mma_kv * 16 + 2 * (lane_idx % 4) + (i / 2) * 8 + i % 2;
+        cached_scales[i] = scales[row];
+      }
+    }
 #pragma unroll
     for (uint32_t mma_d = 0; mma_d < KTraits::NUM_MMA_D_VO; ++mma_d) {
       if (mma_d >= d_base && mma_d < d_base + KTraits::NUM_MMA_D_VO_TILE) {
         uint32_t b_frag[4];
-        if constexpr (sizeof(typename KTraits::DTypeKV) == 1 && !REPACK_BF16) {
+        if constexpr (MatrixVLoad) {
+          static_assert(VectorVShared && PackedVShared && CacheVScales);
+          static_assert(RegisterVMode == 1 || RegisterVMode == 2);
+          // Each participating address is a contiguous 16-byte V row. Read
+          // two 8x8 matrices of byte pairs, then reuse FlashInfer's native
+          // 8-bit transpose permutation to obtain the MMA B fragment order.
+          const uint32_t row = v_row_base + mma_kv * 16 + lane_idx % 16;
+          const uint32_t slot =
+              row * KTraits::UPCAST_STRIDE_V +
+              ((mma_d * 2) ^
+               (BalancedVSwizzle ? (row % 8) * 2 : (row % 4) * 4));
+          const uint8_t* source =
+              reinterpret_cast<const uint8_t*>(v_smem->base) + slot * 8;
+          const uint32_t address =
+              static_cast<uint32_t>(__cvta_generic_to_shared(source));
+          uint32_t encoded[2];
+          asm volatile(
+              "ldmatrix.sync.aligned.trans.m8n8.x2.shared.b16 {%0, %1}, [%2];"
+              : "=r"(encoded[0]), "=r"(encoded[1])
+              : "r"(address));
+          encoded[0] = frag_layout_swizzle_16b_to_8b_trans(encoded[0]);
+          encoded[1] = frag_layout_swizzle_16b_to_8b_trans(encoded[1]);
+#pragma unroll
+          for (uint32_t fragment = 0; fragment < 4; ++fragment) {
+            uint32_t converted = 0;
+#pragma unroll
+            for (uint32_t element = 0; element < 2; ++element) {
+              const uint32_t byte =
+                  encoded[fragment % 2] >> (8 * (2 * (fragment / 2) + element));
+              float value;
+              if constexpr (RegisterVMode == 1) {
+                asm("cvt.rn.f32.s8 %0, %1;" : "=f"(value) : "r"(byte));
+              } else {
+                __nv_fp8_e4m3 fp8;
+                fp8.__x = static_cast<uint8_t>(byte);
+                value = static_cast<float>(fp8);
+              }
+              const __nv_bfloat16 scaled = __float2bfloat16_rn(
+                  value * cached_scales[2 * (fragment % 2) + element]);
+              converted |= static_cast<uint32_t>(__bfloat16_as_ushort(scaled))
+                           << (16 * element);
+            }
+            b_frag[fragment] = converted;
+          }
+        } else if constexpr (RegisterVMode != 0) {
+          static_assert(
+              std::is_same_v<typename KTraits::DTypeQ, __nv_bfloat16>);
+          // MMA B operand: each lane owns two adjacent KV rows, two column
+          // groups, and the second pair of rows at +8. Match ldmatrix.trans.
+#pragma unroll
+          for (uint32_t fragment = 0; fragment < 4; ++fragment) {
+            const uint32_t row = v_row_base + mma_kv * 16 + 2 * (lane_idx % 4) +
+                                 (fragment % 2) * 8;
+            const uint32_t column =
+                mma_d * 16 + lane_idx / 4 + (fragment / 2) * 8;
+            const __nv_bfloat16 low = load_mixed_v_element<RegisterVMode,
+                                                           KTraits,
+                                                           PackedVShared,
+                                                           CacheVScales,
+                                                           VectorVShared,
+                                                           BalancedVSwizzle>(
+                v_smem,
+                row,
+                column,
+                CacheVScales ? cached_scales[2 * (fragment % 2)] : 0.0f);
+            const __nv_bfloat16 high = load_mixed_v_element<RegisterVMode,
+                                                            KTraits,
+                                                            PackedVShared,
+                                                            CacheVScales,
+                                                            VectorVShared,
+                                                            BalancedVSwizzle>(
+                v_smem,
+                row + 1,
+                column,
+                CacheVScales ? cached_scales[2 * (fragment % 2) + 1] : 0.0f);
+            b_frag[fragment] =
+                static_cast<uint32_t>(__bfloat16_as_ushort(low)) |
+                (static_cast<uint32_t>(__bfloat16_as_ushort(high)) << 16);
+          }
+        } else if constexpr (sizeof(typename KTraits::DTypeKV) == 1 &&
+                             !REPACK_BF16) {
           uint32_t b_frag_quant[2];
           if (mma_d % 2 == 0) {
             v_smem->ldmatrix_m8n8x4_trans_left_half(*v_smem_offset_r,
@@ -5472,6 +5674,26 @@ __device__ __forceinline__ void BatchPrefillWithPagedKVCacheDevice(
               o_frag,
               d,
               d_base);
+        } else if constexpr (Params::kMixedV && Params::kDecodeVInRegisters &&
+                             (!Params::kDecodeOnly ||
+                              KTraits::CTA_TILE_Q == 16)) {
+          compute_sfm_v<KTraits,
+                        false,
+                        Params::kVMode,
+                        Params::kPackedVShared,
+                        Params::kCacheVScales,
+                        Params::kVectorVShared,
+                        Params::kMatrixVLoad,
+                        Params::kBalancedVSwizzle>(
+              &v_smem,
+              &v_smem_offset_r,
+              nullptr,
+              lane_idx,
+              s_frag,
+              o_frag,
+              d,
+              d_base,
+              get_warp_idx_kv<KTraits>(tid.z) * KTraits::NUM_MMA_KV * 16);
         } else {
           compute_sfm_v<KTraits>(
               &v_smem,
