@@ -352,7 +352,11 @@ def _score_pair(
             if not isinstance(answers, list):
                 answers = [answers]
             scorer = (
-                longbench_metrics.code_sim_score if task in {"lcc", "repobench-p"} else longbench_metrics.qa_f1_score
+                longbench_metrics.rouge_score
+                if task == "gov_report"
+                else longbench_metrics.code_sim_score
+                if task in {"lcc", "repobench-p"}
+                else longbench_metrics.qa_f1_score
             )
             for arm, outputs in predictions.items():
                 value = max(scorer(outputs[index], answer) for answer in answers)

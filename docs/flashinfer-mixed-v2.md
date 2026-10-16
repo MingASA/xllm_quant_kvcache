@@ -2,7 +2,7 @@
 
 Use `XLLM_QUANTIZED_BACKEND=flashinfer_mixed` with `kv_cache_dtype=auto`, `bf16_int8`, `bf16_fp8_e4m3`, or `bf16_int4`. All four formats use the same FlashInfer FA2 paged Tensor Core pipeline for prefill and decode. This is a separate extension; the installed FlashInfer package and existing backend selection remain available.
 
-The current specialization targets Qwen2.5-1.5B-Instruct on SM120: BF16 queries/keys, 12 query heads, 2 KV heads, head dimension 128, full causal attention, eager execution. Its launch geometry matches the pinned FlashInfer BF16 heuristic on a device with 100 KiB shared memory per SM. Unsupported shapes, sliding windows, devices and graph execution fail explicitly.
+The specialization targets Qwen2.5-1.5B-Instruct on SM120 and SM90 (H800/H200): BF16 queries/keys, 12 query heads, 2 KV heads, head dimension 128, full causal attention, eager execution. Its launch geometry matches the pinned FlashInfer BF16 heuristic: the original 100-KiB SM120 path is preserved, and SM90 has a separate 228-KiB tile policy. See the [Hopper reproduction README](hopper-mixed-v/README.md) for fresh-machine gates, frozen data transport, full experiment commands, and validation limitations. Unsupported shapes, sliding windows, devices and graph execution fail explicitly.
 
 V remains in its allocated INT8, FP8 E4M3 byte, or packed signed INT4 format with FP32 per-token/head scales. The original codec, writer, allocator and block-copy paths are reused. Only the current attention tile is dequantized in shared memory before the original BF16 MMA operations. No global BF16 V tensor or BF16 V Cache is created.
 

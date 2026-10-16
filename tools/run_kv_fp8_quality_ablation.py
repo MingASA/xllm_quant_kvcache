@@ -25,16 +25,16 @@ sys.path.insert(0, str(ROOT))
 
 from scripts.logger import logger
 
-DATA_ROOT = Path("/mnt/e/AI/xllm-eval-data")
-MODEL = Path("/mnt/e/AI/models/Qwen2.5-1.5B-Instruct")
+DATA_ROOT = Path(os.environ.get("XLLM_EVAL_DATA_ROOT", "/mnt/e/AI/xllm-eval-data"))
+MODEL = Path(os.environ.get("XLLM_MODEL_PATH", "/mnt/e/AI/models/Qwen2.5-1.5B-Instruct"))
 MODEL_ID = "Qwen2.5-1.5B-Instruct"
 LONG_BENCH = DATA_ROOT / "longbench-5e628be450b7e67fb7ae6e201bd6d8f7056f7672"
 PREPARED_LONG = LONG_BENCH / "prepared/seed17_n50_contextcap32704"
 GSM_DATA = DATA_ROOT / "int4-model-eval-20261002/gsm8k/data.jsonl"
 GSM_SHOTS = DATA_ROOT / "gsm8k-3101c7d5072418e28b9008a6636bde82a006892c/prepared/five_train_examples.json"
-LONG_BENCH_REPO = DATA_ROOT / "../xllm-eval-tools"
+LONG_BENCH_REPO = Path(os.environ.get("XLLM_LONGBENCH_REPO", str(DATA_ROOT / "../xllm-eval-tools")))
 PROVENANCE = DATA_ROOT / "model_provenance.json"
-BINARY = ROOT / "build/cmake.cuda-x86/xllm/xllm"
+BINARY = Path(os.environ.get("XLLM_SERVER_BINARY", str(ROOT / "build/cmake.cuda-x86/xllm/xllm")))
 EVALUATOR = ROOT / "tools/eval_kv_cache_quality.py"
 RUNNER = Path(__file__).resolve()
 BASE_URL = "http://127.0.0.1:18994/v1"

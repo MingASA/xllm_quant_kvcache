@@ -37,22 +37,76 @@ def _check_results(path: Path) -> int:
     return len(cases)
 
 
+def _fresh_allocator_gates(output: Path, binary: Path) -> dict:
+    """Revalidate rebuilt allocators/codecs on the current GPU, not a prior host."""
+    import torch
+
+    if not torch.cuda.is_available():
+        raise ValueError("Fresh allocator gates require a CUDA device")
+    evidence = []
+    tests = binary.parents[1] / "tests/core/framework/kv_cache"
+    for name, minimum in (("kv_cache_estimation_test", 25), ("kv_cache_test", 26)):
+        xml = (output / f"{name}.xml").resolve()
+        with (output / f"{name}.log").open("w") as log:
+            subprocess.run([str(tests / name), f"--gtest_output=xml:{xml}"],
+                           check=True, stdout=log, stderr=subprocess.STDOUT)
+        cases = list(ET.parse(xml).iter("testcase"))
+        passed = 0
+        for case in cases:
+            if case.find("failure") is not None or case.find("error") is not None:
+                raise ValueError(f"Allocator test failed: {name}")
+            skipped = case.find("skipped")
+            if skipped is not None:
+                if "MLU" not in ET.tostring(skipped, encoding="unicode"):
+                    raise ValueError(f"Unexpected skipped allocator test: {name}")
+            elif case.get("status") == "run":
+                passed += 1
+        if passed < minimum:
+            raise ValueError(f"Incomplete allocator tests: {name}: {passed}")
+        evidence.append({"path": str(xml), "result": f"{passed} passed", "sha256": _hash(xml)})
+    xml = (output / "codec.xml").resolve()
+    with (output / "codec.log").open("w") as log:
+        subprocess.run([sys.executable, "-B", "-m", "pytest",
+                        "tests/python/test_quantized_attention.py", "-q", f"--junitxml={xml}"],
+                       cwd=ROOT, check=True, stdout=log, stderr=subprocess.STDOUT)
+    cases = list(ET.parse(xml).iter("testcase"))
+    if len(cases) < 215 or any(any(case.find(kind) is not None
+                                  for kind in ("failure", "error", "skipped")) for case in cases):
+        raise ValueError("Fresh CUDA codec/writer tests failed or skipped")
+    evidence.append({"path": str(xml), "result": f"{len(cases)} passed", "sha256": _hash(xml)})
+    paths = [ROOT / "xllm/python/attention/quantized.py",
+             ROOT / "xllm/python/attention/quantized_triton.py",
+             *[p for p in (ROOT / "xllm/core/framework/kv_cache").rglob("*") if p.is_file()]]
+    base = {arm: {"passed": True, "evidence": evidence} for arm in _ARMS}
+    base.update(binary_sha256=_hash(binary),
+                device={"name": torch.cuda.get_device_name(),
+                        "capability": list(torch.cuda.get_device_capability())},
+                source_sha256={str(p.relative_to(ROOT)): _hash(p) for p in paths})
+    (output / "allocator_gates.json").write_text(json.dumps(base, indent=2) + "\n")
+    return base
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(
         "--allocator-gates",
         type=Path,
-        required=True,
-        help="Prior tested allocator evidence; unchanged source/binary hashes are required",
+        help="Optional prior allocator evidence from the same GPU architecture; otherwise run fresh gates",
     )
     parser.add_argument("--sanitizer", choices=("memcheck", "racecheck"), default="memcheck")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
-    base = json.loads(args.allocator_gates.read_text())
+    binary = Path(os.environ.get("XLLM_SERVER_BINARY", str(ROOT / "build/cmake.cuda-x86/xllm/xllm"))).resolve()
+    base = (json.loads(args.allocator_gates.read_text()) if args.allocator_gates
+            else _fresh_allocator_gates(args.output, binary))
+    import torch
+
+    capability = list(torch.cuda.get_device_capability())
+    if base.get("device", {}).get("capability", [12, 0]) != capability:
+        raise ValueError("Allocator gates belong to another GPU architecture; rerun fresh gates")
     if not all(base.get(arm, {}).get("passed") for arm in _ARMS):
         raise ValueError("Allocator gates must cover all four arms")
-    binary = ROOT / "build/cmake.cuda-x86/xllm/xllm"
     if _hash(binary) != base["binary_sha256"]:
         raise ValueError("Server binary changed since allocator correctness tests")
     # The previous backend entry-point is deliberately replaced. Codec, writer
@@ -118,8 +172,8 @@ def main() -> None:
         {"path": str(args.output / "correctness.log"), "result": f"{count} GPU tests passed"},
         {"path": str(args.output / "sanitizer.log"), "result": f"{args.sanitizer}: zero errors"},
         {
-            "path": str(args.allocator_gates),
-            "sha256": _hash(args.allocator_gates),
+            "path": str(args.allocator_gates or args.output / "allocator_gates.json"),
+            "sha256": _hash(args.allocator_gates or args.output / "allocator_gates.json"),
             "result": "Inherited unchanged binary/allocator/codec correctness evidence",
         },
     ]

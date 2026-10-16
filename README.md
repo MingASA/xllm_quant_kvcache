@@ -99,3 +99,7 @@ xllm serve --model="$MODEL" --model_impl=python \
 - [实验阶段总结与 INT8 kernel 数据](docs/kv_cache_experiment_summary_20261001_zh.md) · [INT8 优化记录](docs/int8-kernel-optimization-20261001.md)
 - [GSM8K INT4 变体全量对照](docs/kv_cache_gsm8k_int4_variants_20261002_zh.md) · [INT4 诊断与已知问题](docs/kv_cache_int4_diagnosis_20261002_zh.md)
 - [xLLM 上游项目](https://github.com/xLLM-AI/xllm) · [上游中文介绍](README_zh.md)
+
+## Mixed-V experiments on NVIDIA Hopper
+
+[H800 / H200 architecture adaptation, validation, and reproduction commands](docs/hopper-mixed-v/README.md).

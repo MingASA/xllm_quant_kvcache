@@ -249,7 +249,7 @@ def _scan_summary(runs: list[dict[str, Any]]) -> dict[str, Any]:
     return output
 
 
-def _report(root: Path) -> None:
+def _report(root: Path, *, performance_only: bool = False) -> None:
     import matplotlib
 
     matplotlib.use("Agg")
@@ -273,7 +273,7 @@ def _report(root: Path) -> None:
         for arm in ARMS
         if (root / arm / "allocation.json").exists()
     }
-    quality = _quality(root, output)
+    quality = {} if performance_only else _quality(root, output)
     runs: list[dict[str, Any]] = []
     for arm in ARMS:
         for path in (root / arm).glob("*/c*_r*/summary.json"):
@@ -509,7 +509,7 @@ def _report(root: Path) -> None:
         "",
         "Max tested concurrency is not a certified stability limit. Saturation requires a plateau in "
         "throughput, scheduler waiting evidence and rising tail latency. If the permitted scan does not bracket it, "
-        "report saturation as unconfirmed; this protocol is capped at concurrency 128.",
+        "report saturation as unconfirmed; see recorded client concurrency and scheduler limits.",
         "",
         "Joint quality is scored from complete timed full-benchmark cycles at matching load/repetition/cycle. "
         "Per-task scores, paired improvement/regression counts and observation counts are in quality.json "
@@ -522,7 +522,9 @@ def _report(root: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
-    _report(parser.parse_args().output)
+    parser.add_argument("--performance-only", action="store_true")
+    args = parser.parse_args()
+    _report(args.output, performance_only=args.performance_only)
 
 
 if __name__ == "__main__":

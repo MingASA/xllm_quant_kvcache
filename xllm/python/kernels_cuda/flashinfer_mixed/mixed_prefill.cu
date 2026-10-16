@@ -78,8 +78,17 @@ cudaError_t launch_prefill(PrefillParams<Mode> params,
   constexpr uint32_t kWarpsKV = TileQ == 16 && Mode != 0
                                     ? XLLM_MIXED_V_DECODE_WARPS
                                     : flashinfer::get_num_warps_kv(TileQ);
-  // Exact BF16/head128 heuristic on this SM120 100-KiB shared-memory device.
+#if defined(XLLM_MIXED_V_SM90)
+  // Hopper: the pinned BF16 FA2 policy budgets 228 KiB / 2 CTAs per SM.
+  // Q uses TileQ * 128 * 2 bytes; each MMA KV tile uses
+  // (128 + 128) * 16 * num_warps_kv * 2 bytes. Round down to a
+  // supported power of two and cap at 8 / num_mma_q, as upstream does.
+  // Keep this BF16-derived policy identical across all resident V formats.
+  constexpr uint32_t kMmaKV = TileQ == 128 ? 4 : TileQ == 64 ? 8 : 2;
+#else
+  // Preserve the original SM120 100-KiB tile and launch policy exactly.
   constexpr uint32_t kMmaKV = TileQ == 128 ? 2 : TileQ == 64 ? 4 : 1;
+#endif
   using BaseTraits =
       flashinfer::KernelTraits<flashinfer::MaskMode::kCausal,
                                TileQ,
@@ -102,6 +111,17 @@ cudaError_t launch_prefill(PrefillParams<Mode> params,
       flashinfer::BatchPrefillWithPagedKVCacheKernel<Traits,
                                                      PrefillParams<Mode>>;
   if (resources != nullptr) {
+#if defined(XLLM_MIXED_V_SM90)
+    // Hopper tiles exceed the default 48-KiB block limit. Opt in before
+    // occupancy queries as well as launch; queries must describe runnable CTAs.
+    cudaError_t optin_status =
+        cudaFuncSetAttribute(kernel,
+                             cudaFuncAttributeMaxDynamicSharedMemorySize,
+                             sizeof(typename Traits::SharedStoragePaged));
+    if (optin_status != cudaSuccess) {
+      return optin_status;
+    }
+#endif
     cudaFuncAttributes attributes{};
     cudaError_t status = cudaFuncGetAttributes(&attributes, kernel);
     if (status != cudaSuccess) {

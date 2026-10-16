@@ -28,7 +28,7 @@ _MODES = {"bf16": 0, "int8": 1, "fp8_e4m3": 2, "int4": 3}
 
 
 class FlashInferMixedVBackend(QuantizedPagedAttentionBackend):
-    """Qwen2.5-1.5B BF16, GQA6, head128, eager SM120 specialization."""
+    """Qwen2.5-1.5B BF16, GQA6, head128, eager SM120/SM90 specialization."""
 
     def __init__(
         self,

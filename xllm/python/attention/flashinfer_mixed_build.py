@@ -39,14 +39,29 @@ _KERNEL_VARIANTS = {
 }
 
 
+def _architecture_config(capability: tuple[int, int], shared_per_sm: int,
+                         shared_per_block: int) -> tuple[str, list[str]]:
+    """Select a validated FA2 tile policy, never infer support from a newer CC."""
+    if capability == (12, 0) and shared_per_sm == 102400:
+        return "120", []  # Preserve the original compiler flags and tile policy.
+    if capability == (9, 0) and shared_per_sm == 233472 and shared_per_block >= 98304:
+        return "90", ["-DXLLM_MIXED_V_SM90=1"]
+    raise ValueError(
+        f"Mixed-V requires SM120/100 KiB or SM90/228 KiB shared memory; "
+        f"got CC={capability}, shared/SM={shared_per_sm}, shared/block={shared_per_block}"
+    )
+
+
 def load_library(device: torch.device) -> tuple[ctypes.CDLL, dict]:
     """Compile once at backend startup; every artifact has a source-addressed path."""
     manifest = json.loads((SOURCE_ROOT / "upstream.json").read_text())
     if flashinfer.__version__ != manifest["flashinfer_version"]:
         raise ValueError("Mixed-V FlashInfer requires the pinned version in upstream.json")
     properties = torch.cuda.get_device_properties(device)
-    if (properties.major, properties.minor) != (12, 0) or properties.shared_memory_per_multiprocessor != 102400:
-        raise ValueError("Mixed-V FA2 specialization requires SM120 with 100 KiB shared memory per SM")
+    architecture, architecture_flags = _architecture_config(
+        (properties.major, properties.minor), properties.shared_memory_per_multiprocessor,
+        properties.shared_memory_per_block_optin,
+    )
     data = Path(flashinfer.__file__).resolve().parent / "data"
     include = data / "include"
     for name, expected in manifest["upstream_sha256"].items():
@@ -83,12 +98,13 @@ def load_library(device: torch.device) -> tuple[ctypes.CDLL, dict]:
         source_sha256=source_hashes,
         upstream_headers=upstream_headers,
         compiler=compiler,
-        architecture="sm_120",
+        architecture=f"sm_{architecture}",
         kernel_variant=variant,
         flags=[
             "-std=c++17", "-O3", "--shared", "-Xcompiler=-fPIC",
             f"-DXLLM_MIXED_V_STRATEGY={strategy}",
             f"-DXLLM_MIXED_V_DECODE_WARPS={decode_warps}",
+            *architecture_flags,
         ],
     )
     key = hashlib.sha256(json.dumps(provenance, sort_keys=True).encode()).hexdigest()
@@ -111,7 +127,7 @@ def load_library(device: torch.device) -> tuple[ctypes.CDLL, dict]:
                 nvcc,
                 *provenance["flags"],
                 "-gencode",
-                "arch=compute_120,code=sm_120",
+                f"arch=compute_{architecture},code=sm_{architecture}",
                 f"-I{build_root / 'include'}",
                 f"-I{include}",
                 f"-I{data / 'cutlass/include'}",

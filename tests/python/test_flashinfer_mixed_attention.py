@@ -12,8 +12,8 @@ import torch
 from xllm.python.attention.backend import LayerCache
 
 _ARMS = ("auto", "bf16_int8", "bf16_fp8_e4m3", "bf16_int4")
-_SUPPORTED = torch.cuda.is_available() and torch.cuda.get_device_capability() == (12, 0)
-pytestmark = pytest.mark.skipif(not _SUPPORTED, reason="Pinned mixed-V specialization requires SM120")
+_SUPPORTED = torch.cuda.is_available() and torch.cuda.get_device_capability() in ((12, 0), (9, 0))
+pytestmark = pytest.mark.skipif(not _SUPPORTED, reason="Pinned mixed-V specialization requires SM120 or SM90")
 
 
 @pytest.fixture(scope="module", params=_ARMS)

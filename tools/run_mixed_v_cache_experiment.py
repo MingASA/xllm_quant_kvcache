@@ -13,6 +13,7 @@ import importlib.metadata
 import json
 import math
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -200,6 +201,7 @@ async def _sample(session: Any, url: str, output: Path, stop: asyncio.Event) -> 
             record: dict[str, Any] = {"unix_time": time.time()}
             process = await asyncio.create_subprocess_exec(
                 "nvidia-smi",
+                *(["-i", os.environ["XLLM_TELEMETRY_GPU"]] if os.environ.get("XLLM_TELEMETRY_GPU") else []),
                 "--query-gpu=memory.used,utilization.gpu,utilization.memory,power.draw",
                 "--format=csv,noheader,nounits",
                 stdout=asyncio.subprocess.PIPE,
@@ -207,6 +209,8 @@ async def _sample(session: Any, url: str, output: Path, stop: asyncio.Event) -> 
             )
             stdout, stderr = await process.communicate()
             record["gpu_raw"] = stdout.decode().strip()
+            if len(record["gpu_raw"].splitlines()) > 1:
+                raise ValueError("Select one telemetry GPU with XLLM_TELEMETRY_GPU (prefer its UUID)")
             if process.returncode:
                 record["gpu_error"] = stderr.decode().strip()
             # Telemetry is best-effort at its external API boundary; failures remain visible in raw data.
@@ -416,8 +420,8 @@ def _run(args: argparse.Namespace) -> None:
         raise ValueError("QDQ quality modes must be disabled for real compressed-cache experiments")
     manifest = json.loads((args.output / "trace_manifest.json").read_text())
     if args.joint_quality:
-        if min(args.concurrency) < 8 or max(args.concurrency) > 128:
-            raise ValueError("Joint full-trace protocol requires concurrency between 8 and 128")
+        if min(args.concurrency) < 8 or max(args.concurrency) > 256:
+            raise ValueError("Joint full-trace protocol requires concurrency between 8 and 256")
         if "quality" in args.workloads:
             raise ValueError("Joint quality scores measured workload responses; no separate quality replay")
         reference_path = args.output / "trace_quality.jsonl"
@@ -477,7 +481,16 @@ def _run(args: argparse.Namespace) -> None:
         "packages": {name: importlib.metadata.version(name) for name in ("torch", "triton", "aiohttp", "numpy")},
         "runtime_environment": {
             name: os.environ.get(name)
-            for name in ("PATH", "PYTHONPATH", "LD_LIBRARY_PATH", "CUDA_VISIBLE_DEVICES", "TRITON_CACHE_DIR")
+            for name in (
+                "PATH",
+                "PYTHONPATH",
+                "LD_LIBRARY_PATH",
+                "CUDA_VISIBLE_DEVICES",
+                "TRITON_CACHE_DIR",
+                "XLLM_TELEMETRY_GPU",
+                "XLLM_FLASHINFER_MIXED_KERNEL_VARIANT",
+                "XLLM_MODEL_PATH",
+            )
         },
         "gpu_static": subprocess.check_output(
             ["nvidia-smi", "--query-gpu=name,driver_version,memory.total", "--format=csv,noheader,nounits"], text=True
@@ -522,8 +535,9 @@ def _run(args: argparse.Namespace) -> None:
             "--max_cache_size=0",
             "--enable_prefix_cache=false",
             f"--max_memory_utilization={args.max_memory_utilization}",
-            "--max_tokens_per_batch=4096",
-            "--max_seqs_per_batch=128",
+            *([] if args.use_default_token_budget else ["--max_tokens_per_batch=4096"]),
+            f"--max_seqs_per_batch={args.max_seqs_per_batch}",
+            f"--max_concurrent_requests={args.max_concurrent_requests}",
             f"--kv_cache_dtype={arm}",
             "--enable_graph=false",
             "--enable_prefill_piecewise_graph=false",
@@ -584,6 +598,21 @@ def _run(args: argparse.Namespace) -> None:
                         if native[field] != gates.get("native_build", {}).get(field):
                             raise ValueError(f"Correctness gate is stale for the native kernel: {field}")
                     _write_json(arm_root / "native_build.json", native)
+                options = [line for line in text.splitlines() if "Master init options" in line]
+                if not options:
+                    raise ValueError("Missing effective scheduler options in server log")
+                effective = {}
+                for name in ("max_tokens_per_batch", "max_tokens_per_chunk_for_prefill", "max_seqs_per_batch"):
+                    match = re.search(r"\b" + name + r"\s*[:=]\s*(\d+)", options[-1])
+                    if match is None:
+                        raise ValueError(f"Missing effective scheduler option: {name}")
+                    effective[name] = int(match.group(1))
+                if effective["max_seqs_per_batch"] != args.max_seqs_per_batch:
+                    raise ValueError("Effective batch sequence limit differs from requested configuration")
+                expected_budget = 10240 if args.use_default_token_budget else 4096
+                if effective["max_tokens_per_batch"] != expected_budget:
+                    raise ValueError("Effective token budget differs from the pinned protocol")
+                _write_json(arm_root / "scheduler_effective.json", effective)
                 _write_json(arm_root / "allocation.json", allocation)
                 for workload in args.workloads:
                     trace = args.output / f"trace_{workload}.jsonl"
@@ -660,6 +689,9 @@ def main() -> None:
     parser.add_argument("--max-memory-utilization", type=float, default=0.93)
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--port", type=int, default=18995)
+    parser.add_argument("--use-default-token-budget", action="store_true")
+    parser.add_argument("--max-seqs-per-batch", type=int, default=128)
+    parser.add_argument("--max-concurrent-requests", type=int, default=200)
     args = parser.parse_args()
     if (
         not 0 < args.max_memory_utilization < 1
@@ -671,6 +703,8 @@ def main() -> None:
         parser.error(
             "Counts must be positive, memory utilization in (0, 1), performance samples 0 (full) or at least 8"
         )
+    if args.max_seqs_per_batch <= 0 or args.max_concurrent_requests < max(args.concurrency):
+        parser.error("Positive batch limit and admission limit >= client concurrency required")
     if args.action == "prepare":
         _prepare(args.output, args.performance_samples)
     else:
