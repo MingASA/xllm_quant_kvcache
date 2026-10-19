@@ -159,12 +159,13 @@ cudaError_t launch_prefill(PrefillParams<Mode> params,
     params.lse = temporary_lse;
   }
   void* arguments[] = {&params};
-  status = cudaLaunchKernel(reinterpret_cast<const void*>(kernel),
-                            dim3(params.padded_batch_size, 1, 2),
-                            dim3(32, kWarpsQ, kWarpsKV),
-                            arguments,
-                            sizeof(typename Traits::SharedStoragePaged),
-                            stream);
+  status = cudaLaunchKernel(
+      reinterpret_cast<const void*>(kernel),
+      dim3(params.padded_batch_size, 1, params.paged_kv.num_heads),
+      dim3(32, kWarpsQ, kWarpsKV),
+      arguments,
+      sizeof(typename Traits::SharedStoragePaged),
+      stream);
   if (status != cudaSuccess || temporary == nullptr) {
     return status;
   }
@@ -175,7 +176,7 @@ cudaError_t launch_prefill(PrefillParams<Mode> params,
                                                /*lse=*/nullptr,
                                                params.max_total_num_rows,
                                                params.total_num_rows,
-                                               /*num_heads=*/12,
+                                               params.num_qo_heads,
                                                /*head_dim=*/128,
                                                /*enable_pdl=*/false,
                                                stream);
@@ -229,12 +230,14 @@ cudaError_t prefill(void* query,
                     cudaStream_t stream,
                     void* float_workspace,
                     void* int_workspace,
-                    const int64_t* plan) {
+                    const int64_t* plan,
+                    int32_t num_qo_heads,
+                    int32_t num_kv_heads) {
   PrefillParams<Mode> params;
   params.q = static_cast<__nv_bfloat16*>(query);
   params.o = static_cast<__nv_bfloat16*>(output);
   params.paged_kv = flashinfer::paged_kv_t<__nv_bfloat16, int32_t>(
-      /*num_heads=*/2,
+      num_kv_heads,
       page_size,
       /*head_dim=*/128,
       batch,
@@ -247,9 +250,9 @@ cudaError_t prefill(void* query,
   params.v_bytes = static_cast<const uint8_t*>(value);
   params.v_token_scales = static_cast<const float*>(scales);
   params.q_indptr = static_cast<int32_t*>(q_indptr);
-  params.num_qo_heads = 12;
-  params.group_size = flashinfer::uint_fastdiv(6);
-  params.q_stride_n = 12 * 128;
+  params.num_qo_heads = num_qo_heads;
+  params.group_size = flashinfer::uint_fastdiv(num_qo_heads / num_kv_heads);
+  params.q_stride_n = num_qo_heads * 128;
   params.q_stride_h = 128;
   params.window_left = -1;
   params.sm_scale = sm_scale;
@@ -302,8 +305,11 @@ extern "C" int32_t mixed_prefill(void* query,
                                  void* stream,
                                  void* float_workspace,
                                  void* int_workspace,
-                                 const int64_t* plan) {
-  if (batch <= 0 || page_size <= 0 || plan == nullptr) {
+                                 const int64_t* plan,
+                                 int32_t num_qo_heads,
+                                 int32_t num_kv_heads) {
+  if (batch <= 0 || page_size <= 0 || plan == nullptr || num_qo_heads <= 0 ||
+      num_kv_heads <= 0 || num_qo_heads % num_kv_heads != 0) {
     return cudaErrorInvalidValue;
   }
   switch (mode) {
@@ -324,7 +330,9 @@ extern "C" int32_t mixed_prefill(void* query,
                                   static_cast<cudaStream_t>(stream), \
                                   float_workspace,                   \
                                   int_workspace,                     \
-                                  plan)
+                                  plan,                              \
+                                  num_qo_heads,                      \
+                                  num_kv_heads)
     LAUNCH_MODE(0);
     LAUNCH_MODE(1);
     LAUNCH_MODE(2);

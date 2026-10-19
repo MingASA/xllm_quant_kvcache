@@ -14,9 +14,25 @@ sys.path.insert(0, str(ROOT))
 from scripts.logger import logger
 
 
-def _prepare(source: Path, output: Path, smoke_samples: int = 0) -> None:
+def _prepare(
+    source: Path, output: Path, smoke_samples: int = 0, model: Path | None = None, model_provenance: Path | None = None
+) -> None:
     manifest_path = source / "trace_manifest.json"
     manifest = json.loads(manifest_path.read_text())
+    tokenizer = None
+    if model is not None:
+        from transformers import AutoTokenizer
+
+        from tools.qwen25_experiment_model import checkpoint_provenance, read_profile, sha256_file
+
+        profile = read_profile(model)
+        provenance = json.loads(model_provenance.read_text()) if model_provenance else checkpoint_provenance(model)
+        if provenance["metadata_sha256"]["config.json"] != sha256_file(model / "config.json"):
+            raise ValueError("Checkpoint provenance config mismatch")
+        tokenizer = AutoTokenizer.from_pretrained(model, local_files_only=True)
+        manifest["source_model_provenance"] = manifest.get("model_provenance")
+        manifest["model_provenance"] = provenance
+        manifest["checkpoint"] = str(model.resolve())
     blobs = {}
     for name, entry in manifest["traces"].items():
         if name not in ("gsm8k", "longbench", "quality"):
@@ -30,8 +46,16 @@ def _prepare(source: Path, output: Path, smoke_samples: int = 0) -> None:
         for row in rows:
             if hashlib.sha256(row["prompt"].encode()).hexdigest() != row["prompt_sha256"]:
                 raise ValueError(f"Prompt changed: {row['id']}")
+        if tokenizer is not None:
+            from tools.eval_kv_cache_quality import _token_count
+
+            for row in rows:
+                row["prompt_tokens"] = _token_count(tokenizer, row["prompt"], row["chat"])
+                if row["prompt_tokens"] + row["max_tokens"] > min(32768, profile["max_position_embeddings"]):
+                    raise ValueError(f"Target model context exceeded: {row['id']}; no truncation")
         if smoke_samples:
             rows = rows[:smoke_samples]
+        if smoke_samples or tokenizer is not None:
             blob = "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows).encode()
             manifest["traces"][name] = {"requests": len(rows), "sha256": hashlib.sha256(blob).hexdigest()}
         blobs[name] = blob
@@ -61,10 +85,12 @@ def main() -> None:
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--smoke-samples", type=int, default=0)
+    parser.add_argument("--model", type=Path)
+    parser.add_argument("--model-provenance", type=Path)
     args = parser.parse_args()
     if args.smoke_samples < 0:
         parser.error("smoke-samples must be nonnegative")
-    _prepare(args.source, args.output, args.smoke_samples)
+    _prepare(args.source, args.output, args.smoke_samples, args.model, args.model_provenance)
 
 
 if __name__ == "__main__":

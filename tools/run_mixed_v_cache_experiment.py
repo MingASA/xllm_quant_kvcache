@@ -419,6 +419,16 @@ def _run(args: argparse.Namespace) -> None:
     if "XLLM_KV_QUALITY_MODE" in os.environ and os.environ["XLLM_KV_QUALITY_MODE"] != "none":
         raise ValueError("QDQ quality modes must be disabled for real compressed-cache experiments")
     manifest = json.loads((args.output / "trace_manifest.json").read_text())
+    from tools.qwen25_experiment_model import read_profile, sha256_file
+
+    profile = read_profile(assets.MODEL)
+    provenance = manifest.get("model_provenance", {})
+    recorded_config = provenance.get("metadata_sha256", {}).get("config.json")
+    if recorded_config:
+        if sha256_file(assets.MODEL / "config.json") != recorded_config:
+            raise ValueError("Trace was prepared for another model config")
+    elif profile["size"] != "1.5b":
+        raise ValueError("Rebind historical traces with prepare_mixed_v_reproduction.py --model first")
     if args.joint_quality:
         if min(args.concurrency) < 8 or max(args.concurrency) > 256:
             raise ValueError("Joint full-trace protocol requires concurrency between 8 and 256")
@@ -439,6 +449,10 @@ def _run(args: argparse.Namespace) -> None:
     gates = json.loads(args.gates.read_text())
     if gates.get("attention_backend", "triton") != args.attention_backend:
         raise ValueError("Correctness gate does not attest the selected attention backend")
+    if args.attention_backend == "flashinfer_mixed":
+        shape = [profile["num_heads"], profile["num_kv_heads"], profile["head_dim"]]
+        if shape not in gates.get("supported_shapes", [[12, 2, 128]]):
+            raise ValueError(f"Correctness gates do not cover model shape {shape}")
     for arm in args.arms:
         if not gates.get(arm, {}).get("passed"):
             raise ValueError(f"Correctness gate not passed for {arm}")
@@ -528,6 +542,7 @@ def _run(args: argparse.Namespace) -> None:
         command = [
             str(assets.BINARY),
             f"--model={assets.MODEL}",
+            f"--model_id={assets.MODEL_ID}",
             "--model_impl=python",
             f"--python_model_path={ROOT}",
             "--host=127.0.0.1",
@@ -590,6 +605,11 @@ def _run(args: argparse.Namespace) -> None:
                 text = log_path.read_text(errors="replace")
                 allocation = json.loads(text.split("KV_ALLOCATION ", 1)[1].splitlines()[0])
                 _validate_allocation(arm, allocation)
+                if len(allocation["layers"]) != profile["num_layers"] or any(
+                    layer["tensors"]["key"]["shape"][-2:] != [profile["num_kv_heads"], profile["head_dim"]]
+                    for layer in allocation["layers"]
+                ):
+                    raise ValueError("Resident cache layer/head shape differs from the checkpoint")
                 if args.attention_backend == "flashinfer_mixed":
                     if "FLASHINFER_MIXED_BUILD " not in text:
                         raise ValueError("Server did not load the mixed-V FlashInfer backend")

@@ -27,13 +27,17 @@ def _hash(path: Path) -> str:
 
 def _check_results(path: Path) -> int:
     cases = list(ET.parse(path).iter("testcase"))
-    if len(cases) < 36 or any(
+    if len(cases) < 108 or any(
         any(case.find(kind) is not None for kind in ("failure", "error", "skipped")) for case in cases
     ):
         raise ValueError(f"Incomplete or failing GPU correctness tests: {path}")
     for arm in _ARMS:
         if not any(f"[{arm}-" in case.attrib["name"] for case in cases):
             raise ValueError(f"Missing correctness tests for {arm}")
+    for q, kv in ((12, 2), (28, 4), (40, 8)):
+        for arm in _ARMS:
+            if not any(f"[{arm}-q{q}-kv{kv}-" in case.attrib["name"] for case in cases):
+                raise ValueError(f"Missing model-shape correctness tests: {arm}, {q}/{kv}")
     return len(cases)
 
 
@@ -48,8 +52,9 @@ def _fresh_allocator_gates(output: Path, binary: Path) -> dict:
     for name, minimum in (("kv_cache_estimation_test", 25), ("kv_cache_test", 26)):
         xml = (output / f"{name}.xml").resolve()
         with (output / f"{name}.log").open("w") as log:
-            subprocess.run([str(tests / name), f"--gtest_output=xml:{xml}"],
-                           check=True, stdout=log, stderr=subprocess.STDOUT)
+            subprocess.run(
+                [str(tests / name), f"--gtest_output=xml:{xml}"], check=True, stdout=log, stderr=subprocess.STDOUT
+            )
         cases = list(ET.parse(xml).iter("testcase"))
         passed = 0
         for case in cases:
@@ -66,22 +71,38 @@ def _fresh_allocator_gates(output: Path, binary: Path) -> dict:
         evidence.append({"path": str(xml), "result": f"{passed} passed", "sha256": _hash(xml)})
     xml = (output / "codec.xml").resolve()
     with (output / "codec.log").open("w") as log:
-        subprocess.run([sys.executable, "-B", "-m", "pytest",
-                        "tests/python/test_quantized_attention.py", "-q", f"--junitxml={xml}"],
-                       cwd=ROOT, check=True, stdout=log, stderr=subprocess.STDOUT)
+        subprocess.run(
+            [
+                sys.executable,
+                "-B",
+                "-m",
+                "pytest",
+                "tests/python/test_quantized_attention.py",
+                "-q",
+                f"--junitxml={xml}",
+            ],
+            cwd=ROOT,
+            check=True,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+        )
     cases = list(ET.parse(xml).iter("testcase"))
-    if len(cases) < 215 or any(any(case.find(kind) is not None
-                                  for kind in ("failure", "error", "skipped")) for case in cases):
+    if len(cases) < 215 or any(
+        any(case.find(kind) is not None for kind in ("failure", "error", "skipped")) for case in cases
+    ):
         raise ValueError("Fresh CUDA codec/writer tests failed or skipped")
     evidence.append({"path": str(xml), "result": f"{len(cases)} passed", "sha256": _hash(xml)})
-    paths = [ROOT / "xllm/python/attention/quantized.py",
-             ROOT / "xllm/python/attention/quantized_triton.py",
-             *[p for p in (ROOT / "xllm/core/framework/kv_cache").rglob("*") if p.is_file()]]
+    paths = [
+        ROOT / "xllm/python/attention/quantized.py",
+        ROOT / "xllm/python/attention/quantized_triton.py",
+        *[p for p in (ROOT / "xllm/core/framework/kv_cache").rglob("*") if p.is_file()],
+    ]
     base = {arm: {"passed": True, "evidence": evidence} for arm in _ARMS}
-    base.update(binary_sha256=_hash(binary),
-                device={"name": torch.cuda.get_device_name(),
-                        "capability": list(torch.cuda.get_device_capability())},
-                source_sha256={str(p.relative_to(ROOT)): _hash(p) for p in paths})
+    base.update(
+        binary_sha256=_hash(binary),
+        device={"name": torch.cuda.get_device_name(), "capability": list(torch.cuda.get_device_capability())},
+        source_sha256={str(p.relative_to(ROOT)): _hash(p) for p in paths},
+    )
     (output / "allocator_gates.json").write_text(json.dumps(base, indent=2) + "\n")
     return base
 
@@ -98,8 +119,11 @@ def main() -> None:
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
     binary = Path(os.environ.get("XLLM_SERVER_BINARY", str(ROOT / "build/cmake.cuda-x86/xllm/xllm"))).resolve()
-    base = (json.loads(args.allocator_gates.read_text()) if args.allocator_gates
-            else _fresh_allocator_gates(args.output, binary))
+    base = (
+        json.loads(args.allocator_gates.read_text())
+        if args.allocator_gates
+        else _fresh_allocator_gates(args.output, binary)
+    )
     import torch
 
     capability = list(torch.cuda.get_device_capability())
@@ -180,6 +204,7 @@ def main() -> None:
     gates = {arm: {"passed": True, "evidence": evidence} for arm in _ARMS}
     gates.update(
         attention_backend="flashinfer_mixed",
+        supported_shapes=[[12, 2, 128], [28, 4, 128], [40, 8, 128]],
         native_build=native,
         binary_sha256=_hash(binary),
         source_sha256=source_hashes,

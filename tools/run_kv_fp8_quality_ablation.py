@@ -27,20 +27,19 @@ from scripts.logger import logger
 
 DATA_ROOT = Path(os.environ.get("XLLM_EVAL_DATA_ROOT", "/mnt/e/AI/xllm-eval-data"))
 MODEL = Path(os.environ.get("XLLM_MODEL_PATH", "/mnt/e/AI/models/Qwen2.5-1.5B-Instruct"))
-MODEL_ID = "Qwen2.5-1.5B-Instruct"
+MODEL_ID = os.environ.get("XLLM_MODEL_ID", MODEL.name)
 LONG_BENCH = DATA_ROOT / "longbench-5e628be450b7e67fb7ae6e201bd6d8f7056f7672"
 PREPARED_LONG = LONG_BENCH / "prepared/seed17_n50_contextcap32704"
 GSM_DATA = DATA_ROOT / "int4-model-eval-20261002/gsm8k/data.jsonl"
 GSM_SHOTS = DATA_ROOT / "gsm8k-3101c7d5072418e28b9008a6636bde82a006892c/prepared/five_train_examples.json"
 LONG_BENCH_REPO = Path(os.environ.get("XLLM_LONGBENCH_REPO", str(DATA_ROOT / "../xllm-eval-tools")))
-PROVENANCE = DATA_ROOT / "model_provenance.json"
+PROVENANCE = Path(os.environ.get("XLLM_MODEL_PROVENANCE", str(DATA_ROOT / "model_provenance.json")))
 BINARY = Path(os.environ.get("XLLM_SERVER_BINARY", str(ROOT / "build/cmake.cuda-x86/xllm/xllm")))
 EVALUATOR = ROOT / "tools/eval_kv_cache_quality.py"
 RUNNER = Path(__file__).resolve()
 BASE_URL = "http://127.0.0.1:18994/v1"
 ARMS = (("auto", "none"), ("k-only-fp8", "k_only_fp8"), ("v-only-fp8", "v_only_fp8"))
 TASKS = ("narrativeqa", "qasper", "multifieldqa_en", "2wikimqa", "hotpotqa", "musique", "lcc", "repobench-p")
-FLASHINFER_OPS = "/mnt/e/AI/xllm-build-tools/flashinfer-cache/.cache/flashinfer/0.6.18.post1/120f/cached_ops"
 
 
 def _sha256_file(path: Path) -> str:
@@ -336,8 +335,7 @@ def _run_arm(
         manifest_path, _create_server_manifest(arm, quality_mode, max(concurrency for _, _, concurrency in tasks))
     )
     env = os.environ.copy()
-    env["FLASHINFER_OPS_PATH"] = env.get("FLASHINFER_OPS_PATH", FLASHINFER_OPS)
-    env["FLASHINFER_CUDA_ARCH_LIST"] = env.get("FLASHINFER_CUDA_ARCH_LIST", "12.0f")
+    # FlashInfer detects the active GPU; never inject another machine's SM120 cache.
     env["XLLM_QUANTIZED_BACKEND"] = "flashinfer"
     env["XLLM_KV_QUALITY_MODE"] = quality_mode
     env["XLLM_FP8_K_SCALE"] = "1.0"
@@ -351,6 +349,7 @@ def _run_arm(
                 [
                     str(BINARY),
                     f"--model={MODEL}",
+                    f"--model_id={MODEL_ID}",
                     "--model_impl=python",
                     f"--python_model_path={ROOT}",
                     "--host=127.0.0.1",

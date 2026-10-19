@@ -103,3 +103,5 @@ xllm serve --model="$MODEL" --model_impl=python \
 ## Mixed-V experiments on NVIDIA Hopper
 
 [H800 / H200 architecture adaptation, validation, and reproduction commands](docs/hopper-mixed-v/README.md).
+
+[Qwen2.5-7B / 14B 模型适配与一键质量、服务性能复现](docs/qwen25-models/README.md)。

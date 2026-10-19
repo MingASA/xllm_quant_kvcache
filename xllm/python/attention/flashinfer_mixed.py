@@ -28,7 +28,7 @@ _MODES = {"bf16": 0, "int8": 1, "fp8_e4m3": 2, "int4": 3}
 
 
 class FlashInferMixedVBackend(QuantizedPagedAttentionBackend):
-    """Qwen2.5-1.5B BF16, GQA6, head128, eager SM120/SM90 specialization."""
+    """Qwen2.5 BF16 head128, runtime GQA, eager SM120/SM90 specialization."""
 
     def __init__(
         self,
@@ -43,18 +43,32 @@ class FlashInferMixedVBackend(QuantizedPagedAttentionBackend):
     ) -> None:
         if cache_dtype not in ("auto", "bf16", "bf16_int8", "bf16_fp8_e4m3", "bf16_int4"):
             raise ValueError("Mixed-V FlashInfer requires BF16 K and a supported V format")
-        if (num_heads, num_kv_heads, head_dim) != (12, 2, 128) or dtype != torch.bfloat16 or device.type != "cuda":
-            raise ValueError("Mixed-V FlashInfer requires CUDA BF16 Qwen GQA6/head128")
+        if (
+            head_dim != 128
+            or num_heads <= 0
+            or num_kv_heads <= 0
+            or num_heads % num_kv_heads != 0
+            or dtype != torch.bfloat16
+            or device.type != "cuda"
+        ):
+            raise ValueError("Mixed-V FlashInfer requires CUDA BF16 head128 and integral positive GQA")
         if sliding_window > 0 or not math.isclose(scale, 128**-0.5, rel_tol=1e-6):
             raise ValueError("Mixed-V FlashInfer supports full causal attention with the standard head128 scale")
         super().__init__("bf16" if cache_dtype == "auto" else cache_dtype, head_dim, num_kv_heads)
         self._device = torch.device("cuda", device.index if device.index is not None else torch.cuda.current_device())
         self._mode = _MODES[self._codec.cache_dtype]
         self._scale = scale
+        self._num_heads = num_heads
+        self._num_kv_heads = num_kv_heads
+        self._head_dim = head_dim
         self._library, self.provenance = load_library(device)
         self._launch = self._library.mixed_prefill
         self._launch.argtypes = (
-            [ctypes.c_void_p] * 9 + [ctypes.c_int32] * 2 + [ctypes.c_float, ctypes.c_int32] + [ctypes.c_void_p] * 4
+            [ctypes.c_void_p] * 9
+            + [ctypes.c_int32] * 2
+            + [ctypes.c_float, ctypes.c_int32]
+            + [ctypes.c_void_p] * 4
+            + [ctypes.c_int32] * 2
         )
         self._launch.restype = ctypes.c_int32
         # Allocate before cache budgeting, and reuse across every layer and step.
@@ -118,9 +132,9 @@ class FlashInferMixedVBackend(QuantizedPagedAttentionBackend):
             raise ValueError("Mixed-V write slots must match the appended query tokens")
         self._planner.plan(
             *paging,
-            12,
-            2,
-            128,
+            self._num_heads,
+            self._num_kv_heads,
+            self._head_dim,
             self.page_size,
             causal=True,
             q_data_type=torch.bfloat16,
@@ -137,7 +151,9 @@ class FlashInferMixedVBackend(QuantizedPagedAttentionBackend):
 
     def execute_attention(self, q: torch.Tensor, layer: Attention) -> torch.Tensor:
         if (
-            layer.num_heads != 12
+            layer.num_heads != self._num_heads
+            or layer.num_kv_heads != self._num_kv_heads
+            or layer.head_dim != self._head_dim
             or not layer.causal
             or layer.sliding_window > 0
             or not math.isclose(layer.scale, self._scale)
@@ -163,6 +179,8 @@ class FlashInferMixedVBackend(QuantizedPagedAttentionBackend):
             self._workspace.data_ptr(),
             self._planner._int_workspace_buffer.data_ptr(),
             ctypes.cast(self._plan_array, ctypes.c_void_p),
+            self._num_heads,
+            self._num_kv_heads,
         )
         if status:
             raise RuntimeError(f"Mixed-V FlashInfer CUDA launch returned error {status}")

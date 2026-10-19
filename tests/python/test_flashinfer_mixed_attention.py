@@ -16,12 +16,24 @@ _SUPPORTED = torch.cuda.is_available() and torch.cuda.get_device_capability() in
 pytestmark = pytest.mark.skipif(not _SUPPORTED, reason="Pinned mixed-V specialization requires SM120 or SM90")
 
 
-@pytest.fixture(scope="module", params=_ARMS)
+@pytest.fixture(
+    scope="module",
+    params=[(arm, q, kv) for arm in _ARMS for q, kv in ((12, 2), (28, 4), (40, 8))],
+    ids=[f"{arm}-q{q}-kv{kv}" for arm in _ARMS for q, kv in ((12, 2), (28, 4), (40, 8))],
+)
 def backend(request: pytest.FixtureRequest) -> object:
     from xllm.python.attention.flashinfer_mixed import FlashInferMixedVBackend
 
+    arm, num_heads, num_kv_heads = request.param
     return FlashInferMixedVBackend(
-        request.param, 12, 2, 128, 128**-0.5, 0, torch.device("cuda", torch.cuda.current_device()), torch.bfloat16
+        arm,
+        num_heads,
+        num_kv_heads,
+        128,
+        128**-0.5,
+        0,
+        torch.device("cuda", torch.cuda.current_device()),
+        torch.bfloat16,
     )
 
 
@@ -48,13 +60,15 @@ def test_paged_writer_attention_and_workspace_reuse(
     from xllm.python.attention.quantized_triton import write_quantized_kv
 
     torch.manual_seed(20261010)
+    num_heads, num_kv_heads = backend._num_heads, backend._num_kv_heads
+    group_size = num_heads // num_kv_heads
     counts = [(length + page_size - 1) // page_size for length in lengths]
     pages = sum(counts) + 3
     indices_cpu = torch.randperm(pages, dtype=torch.int32)[: sum(counts)]
     indptr_cpu = torch.tensor([0, *torch.tensor(counts).cumsum(0).tolist()], dtype=torch.int32)
     offsets = torch.tensor([0, *torch.tensor(queries).cumsum(0).tolist()], dtype=torch.int32)
     tails = torch.tensor([(length - 1) % page_size + 1 for length in lengths], dtype=torch.int32)
-    key = torch.randn(pages, page_size, 2, 128, dtype=torch.bfloat16, device="cuda")
+    key = torch.randn(pages, page_size, num_kv_heads, 128, dtype=torch.bfloat16, device="cuda")
     values = torch.randn_like(key)
     values[0, 0] = 0
     codec = backend._codec
@@ -62,8 +76,8 @@ def test_paged_writer_attention_and_workspace_reuse(
     scales = None if codec.cache_dtype == "bf16" else torch.empty(key.shape[:3], dtype=torch.float32, device="cuda")
     cache = LayerCache(key, payload, value_scale=scales)
     write_quantized_kv(
-        key.reshape(-1, 2, 128),
-        values.reshape(-1, 2, 128),
+        key.reshape(-1, num_kv_heads, 128),
+        values.reshape(-1, num_kv_heads, 128),
         torch.arange(pages * page_size, device="cuda"),
         key,
         payload,
@@ -73,7 +87,7 @@ def test_paged_writer_attention_and_workspace_reuse(
         128,
         bf16_key=True,
     )
-    query = torch.randn(sum(queries), 12, 128, dtype=torch.bfloat16, device="cuda")
+    query = torch.randn(sum(queries), num_heads, 128, dtype=torch.bfloat16, device="cuda")
     # Reappend the real query tokens through backend.execute(), preserving tails.
     slots_cpu = torch.cat(
         [
@@ -104,7 +118,13 @@ def test_paged_writer_attention_and_workspace_reuse(
         slot_mapping=slots,
     )
     layer = SimpleNamespace(
-        num_heads=12, num_kv_heads=2, head_dim=128, layer_id=0, scale=128**-0.5, causal=True, sliding_window=0
+        num_heads=num_heads,
+        num_kv_heads=num_kv_heads,
+        head_dim=128,
+        layer_id=0,
+        scale=128**-0.5,
+        causal=True,
+        sliding_window=0,
     )
     backend.bind_kv_caches([cache])
     workspace_ptr = backend._workspace.data_ptr()
@@ -116,8 +136,8 @@ def test_paged_writer_attention_and_workspace_reuse(
     references = []
     for i, (query_len, length) in enumerate(zip(queries, lengths)):
         physical = indices_cpu[indptr_cpu[i] : indptr_cpu[i + 1]].long().cuda()
-        k = key[physical].reshape(-1, 2, 128)[:length].float().repeat_interleave(6, 1)
-        v = decoded[physical].reshape(-1, 2, 128)[:length].repeat_interleave(6, 1)
+        k = key[physical].reshape(-1, num_kv_heads, 128)[:length].float().repeat_interleave(group_size, 1)
+        v = decoded[physical].reshape(-1, num_kv_heads, 128)[:length].repeat_interleave(group_size, 1)
         q = query[offsets[i] : offsets[i + 1]].float()
         scores = torch.einsum("qhd,khd->hqk", q, k) * 128**-0.5
         mask = (
@@ -131,7 +151,7 @@ def test_paged_writer_attention_and_workspace_reuse(
     repeated = backend.execute_attention(query, layer).reshape_as(query)
     torch.testing.assert_close(output, repeated, atol=0, rtol=0)
     assert backend._workspace.data_ptr() == workspace_ptr
-    expected = {"bf16": 1024, "int8": 776, "fp8_e4m3": 776, "int4": 648}[codec.cache_dtype]
+    expected = {"bf16": 1024, "int8": 776, "fp8_e4m3": 776, "int4": 648}[codec.cache_dtype] * num_kv_heads // 2
     actual_bytes = sum(t.numel() * t.element_size() for t in (key, payload, scales) if t is not None)
     assert actual_bytes == pages * page_size * expected
     if codec.cache_dtype == "bf16" and not os.environ.get("XLLM_MIXED_SANITIZER"):
