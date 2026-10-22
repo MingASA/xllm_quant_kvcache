@@ -14,11 +14,13 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 import torch
 import torch.nn as nn
 
+from scripts.logger import logger
 from xllm.python import kernels
 from xllm.python.attention.backend import AttentionBackend, AttentionMetadata
 from xllm.python.model_executor.forward_context import (
@@ -108,6 +110,13 @@ class DecodeCudaGraphRunner(BaseRunner):
         self._paged_kv_indices_buffer: torch.Tensor | None = None
         self._stream: torch.cuda.Stream | None = None
         self._warmed_up = False
+        self._replay_logged = False
+
+    @property
+    def captured_batch_sizes(self) -> tuple[int, ...]:
+        if not self._warmed_up:
+            return ()
+        return tuple(sorted({key[0] for key in self._graphs}))
 
     def can_execute(
         self,
@@ -124,6 +133,7 @@ class DecodeCudaGraphRunner(BaseRunner):
             and graph_key in self._graphs
         )
 
+    @torch.inference_mode()
     def warmup(
         self,
         device: torch.device,
@@ -212,6 +222,18 @@ class DecodeCudaGraphRunner(BaseRunner):
                 output = entry.static_output[:batch_size].clone()
 
         torch.cuda.current_stream().wait_stream(self._stream)
+        if not self._replay_logged:
+            logger.info(
+                "NATIVE_KV_GRAPH_REPLAY %s",
+                json.dumps(
+                    {
+                        "class": type(self.attention_backend).__name__,
+                        "batch_size": batch_size,
+                        "captured_batch_size": padded_batch_size,
+                    }
+                ),
+            )
+            self._replay_logged = True
         return output
 
     def _graph_key(

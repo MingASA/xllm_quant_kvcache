@@ -34,6 +34,7 @@ from xllm.python.attention.backend import LayerCache
 from xllm.python.attention.native_kv import KVScaleCalibration, cache_allocation
 from xllm.python.layers.attention import Attention
 from xllm.python.model_executor.executor import ModelExecutor, _create_attention_backend
+from xllm.python.model_executor.runners.decode_cuda_graph import DecodeCudaGraphRunner
 
 
 def _cache(cache_format: str) -> LayerCache:
@@ -118,7 +119,8 @@ def test_executor_emits_native_backend_marker_once_with_graph_runner_state() -> 
     args = logger_mock.info.call_args.args
     assert args[0] == "NATIVE_KV_BACKEND %s"
     evidence = json.loads(args[1])
-    assert evidence["graph_enabled"] is True
+    assert evidence["graph_enabled"] is False
+    assert evidence["graph_captured_batches"] == []
     assert evidence["graph_runner"] == "SimpleNamespace"
 
 
@@ -267,3 +269,44 @@ def test_service_stream_rejects_missing_done(monkeypatch: pytest.MonkeyPatch) ->
 
     with pytest.raises(ValueError, match="Incomplete SSE/usage"):
         service_check._stream("http://localhost:8000/v1", "offline prompt", 17)
+
+
+@pytest.mark.parametrize("capture_fails", [False, True])
+def test_executor_captures_cuda_graphs_before_binding_completes(capture_fails: bool) -> None:
+    backend = MagicMock()
+    backend.native_kv_runtime_info.return_value = {"class": "FlashInferFP8Backend"}
+    executor = object.__new__(ModelExecutor)
+    executor.model = nn.Sequential(_attention(), nn.Linear(1, 1))
+    executor.attention_backend = backend
+    executor.eager_runner = MagicMock()
+    executor.inductor_runner = None
+    executor._kv_bound = False
+    runner = DecodeCudaGraphRunner(executor.model, backend, torch.device("cpu"), 1, 32)
+    executor.decode_graph_runner = runner
+
+    def capture(_device: torch.device, _dtype: torch.dtype) -> None:
+        assert not executor._kv_bound
+        assert len(runner.layer_caches) == 1
+        if capture_fails:
+            raise RuntimeError("capture failed")
+        runner._graphs[(1, (1,))] = object()
+        runner._warmed_up = True
+
+    logger_mock = MagicMock()
+    with (
+        patch.object(runner, "warmup", side_effect=capture) as warmup,
+        patch("xllm.python.model_executor.executor.logger", logger_mock),
+    ):
+        if capture_fails:
+            with pytest.raises(RuntimeError, match="capture failed"):
+                executor.bind_kv_caches([(torch.zeros(1), torch.zeros(1))])
+            assert not executor._kv_bound
+            logger_mock.info.assert_not_called()
+        else:
+            executor.bind_kv_caches([(torch.zeros(1), torch.zeros(1))])
+            executor.bind_kv_caches([(torch.zeros(1), torch.zeros(1))])
+            warmup.assert_called_once()
+            assert executor._kv_bound
+            evidence = json.loads(logger_mock.info.call_args.args[1])
+            assert evidence["graph_enabled"] is True
+            assert evidence["graph_captured_batches"] == [1]

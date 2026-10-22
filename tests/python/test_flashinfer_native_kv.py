@@ -328,7 +328,7 @@ def test_gqa5_native_bf16_profile_runs_paged_prefill_and_graph_decode(monkeypatc
     key = torch.randn(1, prefix_length + 1, kv_heads, dim, dtype=torch.bfloat16, device=device) * 0.2
     value = torch.randn_like(key) * 0.2
     prefill_query = torch.randn(1, prefix_length, heads, dim, dtype=torch.bfloat16, device=device)
-    pages = torch.tensor([[0, 1]], dtype=torch.int32, device=device)
+    pages = torch.tensor([[0]], dtype=torch.int32, device=device)
     prefill_metadata = _attention_metadata(
         pages,
         torch.arange(prefix_length, dtype=torch.int64, device=device),
@@ -387,3 +387,159 @@ def test_gqa5_native_bf16_profile_runs_paged_prefill_and_graph_decode(monkeypatc
     expected_decode = _dense(decode_query[:, None].float(), full_key, full_value)
     torch.testing.assert_close(graph_output.float(), expected_decode, rtol=0.02, atol=0.005)
     assert backend._active_decode_wrapper is backend._graph_decode_wrappers[1]
+
+
+def test_model_executor_fp8_gqa5_binds_warms_prefills_and_replays_graph(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Exercise the native FP8 graph route through the real model executor."""
+    import logging
+
+    from xllm.python import kernels
+    from xllm.python.layers.attention import Attention
+    from xllm.python.model_executor.executor import ModelExecutor
+
+    monkeypatch.setenv("XLLM_QUANTIZED_BACKEND", "flashinfer")
+    monkeypatch.setenv("XLLM_FLASHINFER_NATIVE_KV", "1")
+    monkeypatch.setenv("XLLM_FP8_K_SCALE", "0.5")
+    monkeypatch.setenv("XLLM_FP8_V_SCALE", "2.0")
+
+    def update_graph_metadata(
+        tokens: torch.Tensor,
+        positions: torch.Tensor,
+        slots: torch.Tensor,
+        kv_lens: torch.Tensor,
+        page_indptr: torch.Tensor,
+        page_indices: torch.Tensor,
+        last_page_len: torch.Tensor,
+        dst_tokens: torch.Tensor,
+        dst_positions: torch.Tensor,
+        dst_slots: torch.Tensor,
+        dst_kv_lens: torch.Tensor,
+        dst_kv_delta: torch.Tensor,
+        dst_page_indptr: torch.Tensor,
+        dst_page_indices: torch.Tensor,
+        dst_last_page_len: torch.Tensor,
+        padded_batch: int,
+    ) -> torch.Tensor:
+        batch = tokens.numel()
+        dst_tokens.zero_()
+        dst_positions.zero_()
+        dst_slots.zero_()
+        dst_kv_lens.zero_()
+        dst_kv_delta.zero_()
+        dst_page_indptr.zero_()
+        dst_last_page_len.fill_(1)
+        dst_page_indices.zero_()
+        dst_tokens[:batch].copy_(tokens)
+        dst_positions[:batch].copy_(positions)
+        dst_slots[:batch].copy_(slots)
+        dst_kv_lens[: batch + 1].copy_(kv_lens[: batch + 1])
+        dst_kv_delta[:batch].copy_(kv_lens[1 : batch + 1] - kv_lens[:batch])
+        dst_page_indptr[: batch + 1].copy_(page_indptr[: batch + 1])
+        dst_page_indices[: page_indices.numel()].copy_(page_indices)
+        dst_last_page_len[:batch].copy_(last_page_len[:batch])
+        return dst_tokens
+
+    monkeypatch.setattr(kernels, "update_decode_graph_metadata", update_graph_metadata, raising=False)
+
+    device = torch.device("cuda")
+    heads, kv_heads, dim, page_size, max_len = 40, 8, 128, 128, 256
+
+    class TinyForward(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.attention = Attention(heads, kv_heads, dim, dim**-0.5, -1, 0)
+            self.q = torch.nn.Parameter(torch.randn(max_len, heads, dim, device=device, dtype=torch.bfloat16))
+            self.k = torch.nn.Parameter(torch.randn(max_len, kv_heads, dim, device=device, dtype=torch.bfloat16) * 0.1)
+            self.v = torch.nn.Parameter(torch.randn(max_len, kv_heads, dim, device=device, dtype=torch.bfloat16) * 0.1)
+
+        def forward(self, input_ids: torch.Tensor, positions: torch.Tensor) -> torch.Tensor:
+            del input_ids
+            pos = positions.to(torch.long)
+            return self.attention(self.q[pos].flatten(1), self.k[pos].flatten(1), self.v[pos].flatten(1))
+
+    class TinyModel(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.model = TinyForward()
+
+    model = TinyModel()
+    executor = ModelExecutor(
+        model,
+        {
+            "kv_cache_dtype": "fp8_e4m3",
+            "python_graph_backend": "cudagraphs",
+            "max_position_embeddings": max_len,
+        },
+        max_seqs_per_batch=1,
+    )
+    cache_shape = (2, page_size, kv_heads, dim)
+    cache = LayerCache(
+        torch.zeros(cache_shape, dtype=torch.uint8, device=device),
+        torch.zeros(cache_shape, dtype=torch.uint8, device=device),
+        key_scale=torch.ones(cache_shape[:-1], dtype=torch.float32, device=device),
+        value_scale=torch.ones(cache_shape[:-1], dtype=torch.float32, device=device),
+    )
+    executor.bind_kv_caches([cache])
+    assert executor.decode_graph_runner.captured_batch_sizes == (1,)
+    assert executor.attention_backend.native_kv_runtime_info()["fp8_views_alias_resident_pages"]
+
+    pages = torch.tensor([[0, 1]], dtype=torch.int32, device=device)
+    prefix_len = 3
+    prefill_metadata = _attention_metadata(
+        pages,
+        torch.arange(prefix_len, dtype=torch.int32, device=device),
+        prefix_len,
+        prefix_len,
+        page_size,
+    )
+    prefill_metadata.q_seq_lens_host = torch.tensor([prefix_len], dtype=torch.int32)
+    prefill_metadata.kv_seq_lens_host = torch.tensor([0, prefix_len], dtype=torch.int32)
+    prefill_metadata.kv_cu_seq_lens = torch.tensor([0, prefix_len], dtype=torch.int32, device=device)
+    prefill_metadata.kv_seq_lens_host_values = [prefix_len]
+    prefill_metadata.is_prefill = True
+    prefill_metadata.is_chunked_prefill = False
+    executor.execute(
+        torch.arange(prefix_len, dtype=torch.int32, device=device),
+        torch.arange(prefix_len, dtype=torch.int32, device=device),
+        prefill_metadata,
+    )
+
+    decode_metadata = _attention_metadata(
+        pages,
+        torch.tensor([prefix_len], dtype=torch.int32, device=device),
+        prefix_len + 1,
+        1,
+        page_size,
+    )
+    decode_metadata.q_seq_lens_host = torch.tensor([1], dtype=torch.int32)
+    decode_metadata.kv_seq_lens_host = torch.tensor([0, prefix_len + 1], dtype=torch.int32)
+    decode_metadata.kv_cu_seq_lens = torch.tensor([0, prefix_len + 1], dtype=torch.int32, device=device)
+    decode_metadata.kv_seq_lens_host_values = [prefix_len + 1]
+    decode_metadata.is_prefill = False
+    decode_metadata.is_chunked_prefill = False
+
+    def eager_must_not_run(*args: object, **kwargs: object) -> None:
+        raise AssertionError("decode unexpectedly used EagerRunner")
+
+    monkeypatch.setattr(executor.eager_runner, "execute", eager_must_not_run)
+    with caplog.at_level(logging.INFO):
+        actual = executor.execute(
+            torch.tensor([prefix_len], dtype=torch.int32, device=device),
+            torch.tensor([prefix_len], dtype=torch.int32, device=device),
+            decode_metadata,
+        )
+    assert "NATIVE_KV_GRAPH_REPLAY" in caplog.text
+    assert torch.isfinite(actual).all()
+
+    codec = KVCacheCodec("fp8_e4m3", dim)
+    decoded_key = codec.decode(cache.key, cache.key_scale)[pages.long()].reshape(1, -1, kv_heads, dim)[
+        :, : prefix_len + 1
+    ]
+    decoded_value = codec.decode(cache.value, cache.value_scale)[pages.long()].reshape(1, -1, kv_heads, dim)[
+        :, : prefix_len + 1
+    ]
+    query = model.model.q[prefix_len : prefix_len + 1].float().unsqueeze(0)
+    expected = _dense(query, decoded_key, decoded_value)
+    torch.testing.assert_close(actual.float(), expected, rtol=0.03, atol=0.008)

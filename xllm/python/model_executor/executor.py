@@ -420,13 +420,23 @@ class ModelExecutor:
         self.eager_runner.bind_layer_caches(layer_caches)
         if self.decode_graph_runner is not None:
             self.decode_graph_runner.bind_layer_caches(layer_caches)
+            from xllm.python.model_executor.runners.decode_cuda_graph import DecodeCudaGraphRunner
+
+            if isinstance(self.decode_graph_runner, DecodeCudaGraphRunner):
+                parameter = next(self.model.parameters())
+                # Capture before the first real forward writes any live KV.
+                # The synthetic warmup writes slot zero and must never run
+                # lazily after user prefill has populated the cache.
+                self.decode_graph_runner.warmup(parameter.device, parameter.dtype)
         if self.inductor_runner is not None:
             self.inductor_runner.bind_layer_caches(layer_caches)
         self._kv_bound = True
         native_info = getattr(self.attention_backend, "native_kv_runtime_info", None)
         if native_info is not None:
             evidence = native_info()
-            evidence["graph_enabled"] = self.decode_graph_runner is not None
+            captured = getattr(self.decode_graph_runner, "captured_batch_sizes", ())
+            evidence["graph_enabled"] = bool(captured)
+            evidence["graph_captured_batches"] = list(captured)
             evidence["graph_runner"] = type(self.decode_graph_runner).__name__ if self.decode_graph_runner else None
             logger.info("NATIVE_KV_BACKEND %s", json.dumps(evidence))
 

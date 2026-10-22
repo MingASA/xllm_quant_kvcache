@@ -121,6 +121,10 @@ def _evidence(log: Path, expected: str, graph: bool, block_size: int, profile: d
         }.items()
     ):
         raise ValueError(f"Unexpected actual backend: {backend}")
+    if graph:
+        replays = records("NATIVE_KV_GRAPH_REPLAY ")
+        if not backend.get("graph_captured_batches") or len(replays) != 1 or replays[0].get("class") != wanted_class:
+            raise ValueError("Graph check requires captured buckets and actual decode replay evidence")
     _validate_allocation(expected, allocations[0], profile, block_size)
     return {"backend": backend, "allocation": allocations[0]}
 
@@ -261,6 +265,7 @@ def main() -> None:
                 "xllm/python/attention/flashinfer_fp8.py",
                 "xllm/python/attention/native_kv.py",
                 "xllm/python/model_executor/executor.py",
+                "xllm/python/model_executor/runners/decode_cuda_graph.py",
                 "tools/check_native_flashinfer_service.py",
             )
         },

@@ -14,7 +14,7 @@
 | allocation | `FlashInferBackend.bind_kv_caches()` → `native_kv.cache_allocation()`，从实际 LayerCache tensors 记录 dtype/shape/bytes |
 | 运行时 marker | `ModelExecutor.bind_kv_caches()`，在绑定后每 Worker 一次 `NATIVE_KV_BACKEND {...}`；重复 bind 不再输出 |
 
-`class` 来自实际对象，`kv_cache_dtype` 来自对象的 cache codec，`attention_impl=flashinfer` 对应该对象；`graph_enabled` 来自真实 decode graph runner 是否创建，另记录 runner class。它表示启用了 decode graph 路线，不承诺每个 shape 都捕获/重放（prefill 和 bucket 外 decode 仍按 runner 的原有规则 eager）。marker 还含实际 FlashInfer version、Q/KV dtype、scale、FP8 view alias 检查等。外部脚本应同时检查 marker 与所有 48 层 `KV_ALLOCATION`，不能只检查启动参数或 HTTP 200。
+`class` 来自实际对象，`kv_cache_dtype` 来自对象的 cache codec，`attention_impl=flashinfer` 对应该对象；`graph_enabled` 来自真实 decode graph runner 已捕获的 bucket 是否非空，另记录 runner class。它表示 decode 图已捕获可用，不承诺每个 shape 都命中/重放（prefill 和 bucket 外 decode 仍按 runner 的原有规则 eager）。marker 还含实际 FlashInfer version、Q/KV dtype、scale、FP8 view alias 检查等。外部脚本应同时检查 marker 与所有 48 层 `KV_ALLOCATION`，不能只检查启动参数或 HTTP 200。
 
 配对配置只增加一个显式开关：`XLLM_FLASHINFER_NATIVE_KV=1`，两臂都使用 stock **FA2 + paged 初始 prefill**。它保留原 BF16 默认 auto/ragged 路线供其他用途；不要把 FA2 配对实验与 BF16 auto/FA3 最佳配置混为同一个 baseline。该 profile 锁定 FlashInfer `0.6.18.post1`，不支持就失败，不换成自定义 Attention。
 
@@ -53,6 +53,7 @@ xllm/python/attention/flashinfer.py
 xllm/python/attention/flashinfer_fp8.py
 xllm/python/attention/native_kv.py
 xllm/python/model_executor/executor.py
+xllm/python/model_executor/runners/decode_cuda_graph.py
 tools/check_native_flashinfer_service.py
 tests/python/test_flashinfer_attention.py
 tests/python/test_flashinfer_native_kv.py
@@ -130,3 +131,13 @@ Prefix Cache 的 payload/copy机制已有支持，固定 scales 与 byte views �
 验证记录：原生 GQA5 FP8 3 项、BF16 配对路径 1 项、FP8 empty/copy/reuse 1 项通过；原有 FlashInfer 回归 12 项、CPU evidence/SSE 12 项通过。executor 全文件为 89 passed / 4 failed，4 个 NPU 用例因本机不支持 NPU device/模块未通过，未算作通过。日志保存在 5060 的 `/mnt/e/AI/xllm-storage/reports/native-flashinfer-20261022/`。
 
 验证边界补充：BF16 GPU 单测在 pytest 的 runtime 隔离 stub 下使用已有 BF16 scatter writer 替身；FlashInfer planner/attention/graph 是实际 GPU 调用，但不等于已验证原 C++ writer 的真实服务。page copy 用例直接复制 payload 与 scale 来验证 view/索引复用；原 C++ copy 实现未改，本轮未重新编译或执行 C++ copy 测试。真实 writer、48 层 allocator 和完整服务须由上面的 H800 入口最终验证。
+
+## 复核修正：服务必须真正捕获并重放 Graph
+
+复核 `587155ae` 时发现一项重要遗漏：它对齐了后端的 Graph API，但没有把 `DecodeCudaGraphRunner.warmup()` 接入 `ModelExecutor`；真实服务会一直 miss 空的 bucket 表并走 eager。旧 marker 仅根据 runner 存在就标记 graph_enabled，不能作为 Graph 已生效的证据。旧 tiny kernel 捕获测试没有覆盖到这个运行时缺口。
+
+修复后在首次 `ModelExecutor.bind_kv_caches()`、尚未写入真实用户 KV 时，以 inference mode 完成 CUDA warmup/capture；不能延迟到 live prefill 之后，因为 synthetic warmup 会写 slot zero。捕获失败直接退出，不发出成功 marker、不自动回退。`graph_enabled` 改为实际已捕获 bucket 非空，同时记录 `graph_captured_batches`。首次真正 replay 额外记录一条 `NATIVE_KV_GRAPH_REPLAY`（每 Worker 一次）；Graph 服务验收必须同时看到捕获与 replay 证据。
+
+这项修复不替代 H800 14B 实测。首次请求会承担 capture 的冷启动成本，外部性能工具必须完成正常 warmup 后再计时；eager 配对入口不变。
+
+复核验证：14 个 CPU evidence/SSE/捕获失败用例和 1 个完整 ModelExecutor GQA5 GPU 路由用例一起运行，**15 passed**。GPU 测试显式禁止 decode 走 eager，仍与 dense reference 对齐并输出 replay 证据。它使用 tiny 模型而非 14B 权重，测试隔离环境下 metadata update op 用 in-place GPU copy 替身；FP8 writer、FlashInfer attention 和 CUDA Graph replay 为真实调用，因此仍不代替 H800 binary/metadata op/14B 完整服务验收。
