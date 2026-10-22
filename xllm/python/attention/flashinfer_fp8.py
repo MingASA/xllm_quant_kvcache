@@ -37,7 +37,7 @@ if TYPE_CHECKING:
 
 
 class FlashInferFP8Backend(FlashInferBackend):
-    """Eager paged FP8 backend with explicit, immutable scalar scales."""
+    """Paged FP8 backend with immutable scalar scales and shared decode graph plans."""
 
     def __init__(
         self,
@@ -56,15 +56,42 @@ class FlashInferFP8Backend(FlashInferBackend):
             raise ValueError("FlashInfer FP8 requires an FP8 cache dtype")
         if device.type != "cuda" or dtype not in (torch.bfloat16, torch.float16):
             raise ValueError("FlashInfer FP8 requires CUDA with BF16/FP16 queries")
-        if not all(math.isfinite(value) and value > 0 for value in (key_scale, value_scale)):
-            raise ValueError("FP8 K/V scales must be finite and positive")
+        fp32 = torch.finfo(torch.float32)
+        if not all(math.isfinite(value) and fp32.tiny <= value <= fp32.max for value in (key_scale, value_scale)):
+            raise ValueError("FP8 K/V scales must be finite and positive normal FP32 values")
         self._codec = KVCacheCodec(cache_dtype, head_dim)
         self._cache_dtype = torch.float8_e4m3fn if self._codec.cache_dtype == "fp8_e4m3" else torch.float8_e5m2
         self._fixed_scales = (key_scale, value_scale)
         self._fp8_caches: list[tuple[torch.Tensor, torch.Tensor]] = []
         super().__init__(num_heads, num_kv_heads, head_dim, scale, sliding_window, device, dtype)
 
+    @property
+    def _kv_format(self) -> str:
+        return self._codec.cache_dtype
+
+    @property
+    def _kv_data_type(self) -> torch.dtype:
+        return self._cache_dtype
+
+    def native_kv_runtime_info(self) -> dict:
+        return {
+            **super().native_kv_runtime_info(),
+            "kv_cache_dtype": self._codec.cache_dtype,
+            "paged_prefill": True,
+            "scale_strategy": "immutable_global_scalar_per_K_or_V",
+            "k_scale": self._fixed_scales[0],
+            "v_scale": self._fixed_scales[1],
+            "writer": "triton_quantize_scatter_only",
+            "attention_impl": "flashinfer",
+            "fp8_views_alias_resident_pages": all(
+                key.data_ptr() == cache.key.data_ptr() and value.data_ptr() == cache.value.data_ptr()
+                for cache, (key, value) in zip(self._kv_caches, self._fp8_caches)
+            ),
+        }
+
     def bind_kv_caches(self, kv_caches: list[LayerCache]) -> None:
+        if not kv_caches:
+            raise ValueError("FlashInfer FP8 requires resident cache layers")
         for cache in kv_caches:
             _validate_cache(cache, self._codec, self.num_kv_heads)
             if cache.key.device != self._decode_workspace.device:
@@ -77,8 +104,6 @@ class FlashInferFP8Backend(FlashInferBackend):
         ]
 
     def prepare(self, metadata: AttentionMetadata, *, graph_mode: bool = False) -> None:
-        if graph_mode:
-            raise ValueError("FlashInfer FP8 currently requires eager execution")
         if not self._kv_caches:
             raise RuntimeError("FP8 caches are not bound")
         prefill = metadata.is_prefill or metadata.is_chunked_prefill
@@ -100,7 +125,7 @@ class FlashInferFP8Backend(FlashInferBackend):
         if prefill:
             self._prefill_paged_wrapper.plan(query_indptr, *paging, *shape, causal=True, **options)
         else:
-            self._decode_wrapper.plan(*paging, *shape, **options)
+            self._prepare_decode(metadata, graph_mode, window_left)
 
     def write_cache(self, k: torch.Tensor, v: torch.Tensor, slots: torch.Tensor, layer_id: int) -> None:
         cache = self._kv_caches[layer_id]
@@ -146,7 +171,7 @@ class FlashInferFP8Backend(FlashInferBackend):
         wrapper = (
             self._prefill_paged_wrapper
             if (self._metadata.is_prefill or self._metadata.is_chunked_prefill)
-            else self._decode_wrapper
+            else self._active_decode_wrapper
         )
         output = wrapper.run(
             q.view(-1, self.num_heads, self.head_dim),

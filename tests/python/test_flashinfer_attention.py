@@ -111,8 +111,8 @@ def test_native_fp8_paged_attention(cache_dtype, queries):
     torch.testing.assert_close(actual.float(), expected, rtol=0.02, atol=0.005)
     assert torch.all(cache.key_scale.flatten(0, 1)[slots.long()] == 0.5)
     assert torch.all(cache.value_scale.flatten(0, 1)[slots.long()] == 2.0)
-    with pytest.raises(ValueError, match="eager"):
-        backend.prepare(metadata, graph_mode=True)
+    # Persistent decode graph metadata and fast-plan replay are covered by
+    # test_flashinfer_native_kv.py; ordinary prefill remains eager.
 
 
 @pytest.mark.parametrize("scale", [0.0, -1.0, float("nan"), float("inf")])

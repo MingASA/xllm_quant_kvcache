@@ -16,17 +16,20 @@
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING, Any
 
 import flashinfer
 import torch
 from flashinfer.decode import fast_decode_plan
 
+from scripts.logger import logger
 from xllm.python.attention.backend import (
     AttentionBackend,
     AttentionMetadata,
     LayerCache,
 )
+from xllm.python.attention.native_kv import KVScaleCalibration, cache_allocation
 
 if TYPE_CHECKING:
     from xllm.python.layers.attention import Attention
@@ -85,6 +88,19 @@ class FlashInferBackend(AttentionBackend):
         self.scale = scale
         self.sliding_window = sliding_window
         self.dtype = dtype
+        # Opt-in paired native profile: the same FA2 paged path for BF16/FP8.
+        self._native_kv_pair = os.environ.get("XLLM_FLASHINFER_NATIVE_KV", "0") == "1"
+        if self._native_kv_pair and flashinfer.__version__ != "0.6.18.post1":
+            raise RuntimeError(
+                "Native paired KV profile requires FlashInfer 0.6.18.post1; no alternate kernel fallback"
+            )
+        self._flashinfer_backend = "fa2" if self._native_kv_pair else "auto"
+        self._calibration = None
+        calibration_path = os.environ.get("XLLM_FP8_CALIBRATION_OUTPUT")
+        if calibration_path:
+            if quality_mode != "none" or type(self) is not FlashInferBackend:
+                raise ValueError("Scale calibration requires the untransformed native BF16 backend")
+            self._calibration = KVScaleCalibration(calibration_path)
         self._quality_transform = None
         if quality_mode != "none":
             from xllm.python.attention.kv_quality_transform import KVQualityTransform
@@ -97,14 +113,17 @@ class FlashInferBackend(AttentionBackend):
             self._decode_workspace,
             "NHD",
             use_tensor_cores=self._decode_use_tensor_cores,
+            backend=self._flashinfer_backend,
         )
         self._prefill_ragged_wrapper = flashinfer.BatchPrefillWithRaggedKVCacheWrapper(
             torch.empty(_WORKSPACE_SIZE, dtype=torch.uint8, device=device),
             "NHD",
+            backend=self._flashinfer_backend,
         )
         self._prefill_paged_wrapper = flashinfer.BatchPrefillWithPagedKVCacheWrapper(
             torch.empty(_WORKSPACE_SIZE, dtype=torch.uint8, device=device),
             "NHD",
+            backend=self._flashinfer_backend,
         )
 
         self._kv_caches: list[LayerCache] = []
@@ -117,7 +136,35 @@ class FlashInferBackend(AttentionBackend):
     def bind_kv_caches(self, kv_caches: list[LayerCache]) -> None:
         if not kv_caches:
             raise ValueError("FlashInferBackend requires at least one KV cache")
+        if self._graph_decode_wrappers and [
+            (cache.key.data_ptr(), cache.value.data_ptr()) for cache in self._kv_caches
+        ] != [(cache.key.data_ptr(), cache.value.data_ptr()) for cache in kv_caches]:
+            raise RuntimeError("Cannot replace KV cache storage after decode graph planning/capture")
         self._kv_caches = kv_caches
+        logger.info("KV_ALLOCATION %s", cache_allocation(kv_caches, self._kv_format))
+
+    @property
+    def _kv_format(self) -> str:
+        return "bf16" if self.dtype == torch.bfloat16 else "fp16"
+
+    @property
+    def _kv_data_type(self) -> torch.dtype:
+        return self.dtype
+
+    def native_kv_runtime_info(self) -> dict[str, Any]:
+        return {
+            "class": type(self).__name__,
+            "kv_cache_dtype": "auto",
+            "attention_impl": "flashinfer",
+            "planner_backend": self._flashinfer_backend,
+            "paged_prefill": self._native_kv_pair,
+            "decode_tensor_cores": self._decode_use_tensor_cores,
+            "flashinfer_version": flashinfer.__version__,
+            "q_data_type": str(self.dtype),
+            "kv_data_type": str(self._kv_data_type),
+            "scale_strategy": "none",
+            "quality_transform": self._quality_transform is not None,
+        }
 
     @property
     def num_kv_blocks(self) -> int:
@@ -159,7 +206,7 @@ class FlashInferBackend(AttentionBackend):
         # native attention convention). -1 disables the sliding window.
         window_left = self.sliding_window - 1 if self.sliding_window > 0 else -1
 
-        if metadata.is_prefill:
+        if metadata.is_prefill and not self._native_kv_pair:
             self._prefill_ragged_wrapper.plan(
                 metadata.q_cu_seq_lens,
                 metadata.kv_cu_seq_lens,
@@ -171,9 +218,9 @@ class FlashInferBackend(AttentionBackend):
                 window_left=window_left,
                 q_data_type=self.dtype,
             )
-        elif metadata.is_chunked_prefill:
+        elif metadata.is_prefill or metadata.is_chunked_prefill:
             self._prefill_paged_wrapper.plan(
-                metadata.qo_indptr,
+                metadata.qo_indptr if metadata.qo_indptr is not None else metadata.q_cu_seq_lens,
                 metadata.paged_kv_indptr,
                 metadata.paged_kv_indices,
                 metadata.paged_kv_last_page_len,
@@ -185,6 +232,7 @@ class FlashInferBackend(AttentionBackend):
                 sm_scale=self.scale,
                 window_left=window_left,
                 q_data_type=self.dtype,
+                kv_data_type=self._kv_data_type,
             )
         else:
             self._prepare_decode(metadata, graph_mode, window_left)
@@ -208,6 +256,7 @@ class FlashInferBackend(AttentionBackend):
                 sm_scale=self.scale,
                 window_left=window_left,
                 q_data_type=self.dtype,
+                kv_data_type=self._kv_data_type,
             )
             return
 
@@ -231,6 +280,7 @@ class FlashInferBackend(AttentionBackend):
                 sm_scale=self.scale,
                 window_left=window_left,
                 q_data_type=self.dtype,
+                kv_data_type=self._kv_data_type,
             )
             self._planned_graph_batches.add(batch_size)
             return
@@ -247,6 +297,7 @@ class FlashInferBackend(AttentionBackend):
             sm_scale=self.scale,
             window_left=window_left,
             q_data_type=self.dtype,
+            kv_data_type=self._kv_data_type,
             global_override_indptr_cpu=indptr_host,
         )
 
@@ -261,6 +312,7 @@ class FlashInferBackend(AttentionBackend):
                 paged_kv_indices_buffer=metadata.paged_kv_indices,
                 paged_kv_last_page_len_buffer=metadata.paged_kv_last_page_len,
                 use_tensor_cores=self._decode_use_tensor_cores,
+                backend=self._flashinfer_backend,
             )
             self._graph_decode_wrappers[batch_size] = wrapper
             self._graph_decode_buffer_ptrs[batch_size] = self._buffer_ptrs(metadata)
@@ -300,6 +352,9 @@ class FlashInferBackend(AttentionBackend):
         if self._quality_transform is not None:
             k_3d, v_3d = self._quality_transform.apply(k_3d, v_3d)
 
+        if self._calibration is not None:
+            self._calibration.observe(layer.layer_id, k_3d, v_3d, metadata, len(self._kv_caches))
+
         _get_runtime_kernels().reshape_paged_cache(metadata.slot_mapping, k_3d, v_3d, k_cache, v_cache)
         return self.execute_attention(q_3d, layer, k_3d, v_3d)
 
@@ -320,13 +375,13 @@ class FlashInferBackend(AttentionBackend):
         if metadata is None:
             raise RuntimeError("FlashInferBackend.prepare() was not called")
         q_3d = q.view(-1, layer.num_heads, layer.head_dim)
-        if metadata.is_prefill:
+        if metadata.is_prefill and not self._native_kv_pair:
             if k is None or v is None:
                 raise ValueError("Ragged prefill attention requires current K/V tensors")
             k_3d = _pack_head_axes(k.view(-1, layer.num_kv_heads, layer.head_dim))
             v_3d = _pack_head_axes(v.view(-1, layer.num_kv_heads, layer.head_dim))
             output = self._prefill_ragged_wrapper.run(q_3d, k_3d, v_3d)
-        elif metadata.is_chunked_prefill:
+        elif metadata.is_prefill or metadata.is_chunked_prefill:
             layer_cache = self._kv_caches[layer.layer_id]
             output = self._prefill_paged_wrapper.run(q_3d, (layer_cache.key, layer_cache.value))
         else:

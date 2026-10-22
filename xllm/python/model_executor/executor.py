@@ -14,11 +14,13 @@
 
 from __future__ import annotations
 
+import json
 import os
 
 import torch
 import torch.nn as nn
 
+from scripts.logger import logger
 from xllm.python import distributed
 from xllm.python.attention.backend import (
     AttentionBackend,
@@ -77,6 +79,8 @@ def _create_attention_backend(
     max_num_reqs: int = 1,
 ) -> AttentionBackend:
     config = config or {}
+    if os.environ.get("XLLM_FP8_CALIBRATION_OUTPUT") and _resolve_graph_backend(config) not in ("", "off", "none", "0"):
+        raise ValueError("KV scale measurement is eager-only; do not capture diagnostic CPU observations in a graph")
     quality_mode = os.environ.get("XLLM_KV_QUALITY_MODE", "none")
     if quality_mode != "none":
         if quality_mode not in ("v_only_int4", "int4_rht_g32", "k_only_fp8", "v_only_fp8"):
@@ -96,7 +100,15 @@ def _create_attention_backend(
     if cache_dtype != "auto" or os.environ.get("XLLM_QUANTIZED_BACKEND") in ("triton", "flashinfer_mixed"):
         if not current_platform.is_cuda():
             raise ValueError("Python quantized KV attention currently requires CUDA")
-        if _resolve_graph_backend(config) not in ("", "off", "none", "0") or config.get("enable_graph", False):
+        quantized_backend = os.environ.get("XLLM_QUANTIZED_BACKEND", "triton")
+        native_fp8_graph = (
+            quantized_backend == "flashinfer"
+            and cache_dtype in ("fp8", "fp8_e4m3", "fp8_e5m2")
+            and _resolve_graph_backend(config) == "cudagraphs"
+        )
+        if not native_fp8_graph and (
+            _resolve_graph_backend(config) not in ("", "off", "none", "0") or config.get("enable_graph", False)
+        ):
             raise ValueError("Quantized reference attention requires Python eager execution")
         if (
             config.get("enable_mla", False)
@@ -111,7 +123,6 @@ def _create_attention_backend(
             or first_attention.fia_use_attention_mask
         ):
             raise ValueError("Quantized reference attention supports ordinary MHA/GQA without CP, PD or speculation")
-        quantized_backend = os.environ.get("XLLM_QUANTIZED_BACKEND", "triton")
         if quantized_backend == "flashinfer_mixed":
             from xllm.python.attention.flashinfer_mixed import FlashInferMixedVBackend
 
@@ -127,6 +138,11 @@ def _create_attention_backend(
             )
         if quantized_backend == "flashinfer":
             from xllm.python.attention.flashinfer_fp8 import FlashInferFP8Backend
+
+            if os.environ.get("XLLM_FLASHINFER_NATIVE_KV", "0") == "1" and not all(
+                key in os.environ for key in ("XLLM_FP8_K_SCALE", "XLLM_FP8_V_SCALE")
+            ):
+                raise ValueError("Native FP8 comparison requires explicit measured K/V scales")
 
             return FlashInferFP8Backend(
                 num_heads=first_attention.num_heads,
@@ -407,6 +423,12 @@ class ModelExecutor:
         if self.inductor_runner is not None:
             self.inductor_runner.bind_layer_caches(layer_caches)
         self._kv_bound = True
+        native_info = getattr(self.attention_backend, "native_kv_runtime_info", None)
+        if native_info is not None:
+            evidence = native_info()
+            evidence["graph_enabled"] = self.decode_graph_runner is not None
+            evidence["graph_runner"] = type(self.decode_graph_runner).__name__ if self.decode_graph_runner else None
+            logger.info("NATIVE_KV_BACKEND %s", json.dumps(evidence))
 
     @torch.inference_mode()
     def execute(
