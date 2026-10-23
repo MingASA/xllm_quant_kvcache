@@ -22,6 +22,7 @@ cc_library(
     $<$<BOOL:${USE_XLITE}>:xlite_executor_impl.h>
     $<$<BOOL:${USE_MLU}>:mlu_graph_executor_impl.h>
     $<$<BOOL:${USE_CUDA}>:cuda_graph_executor_impl.h>
+    $<$<BOOL:${USE_CUDA}>:cuda_kv_cache_admission.h>
     $<$<BOOL:${USE_MUSA}>:musa_graph_executor_impl.h>
     py_executor_impl.h
     py_attention_metadata.h

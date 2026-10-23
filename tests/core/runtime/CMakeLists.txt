@@ -2,6 +2,16 @@ include(cc_test)
 
 cc_test(
   NAME
+    cuda_kv_cache_admission_test
+  SRCS
+    cuda_kv_cache_admission_test.cpp
+  DEPS
+    glog::glog
+    GTest::gtest_main
+)
+
+cc_test(
+  NAME
     acl_graph_bucket_policy_test
   SRCS
     acl_graph_bucket_policy_test.cpp

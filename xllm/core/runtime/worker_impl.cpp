@@ -62,6 +62,7 @@ limitations under the License.
 #include "core/framework/kv_cache/kv_cache_estimation.h"
 #include "core/platform/platform.h"
 #include "core/platform/sleepable_allocator.h"
+#include "core/runtime/cuda_kv_cache_admission.h"
 #if defined(USE_NPU)
 #include "platform/npu/device_capture_lock.h"
 #elif defined(USE_CUDA) || defined(USE_DCU) || defined(USE_MUSA)
@@ -93,6 +94,7 @@ limitations under the License.
 #if defined(USE_NPU)
 #include "layers/npu/loader/rolling_weight_buffer.h"
 #endif
+#include "util/env_var.h"
 #include "util/json_reader.h"
 #include "util/tensor_helper.h"
 #include "util/threadpool.h"
@@ -526,15 +528,30 @@ bool WorkerImpl::allocate_kv_cache_storage(
 
   if (enable_kv_cache_quant) {
 #if defined(USE_CUDA)
-    CHECK(ModelConfig::is_python_model_impl(
-        ModelConfig::get_instance().model_impl()))
+    const bool python_model = ModelConfig::is_python_model_impl(
+        ModelConfig::get_instance().model_impl());
+    CHECK(python_model)
         << "CUDA quantized KV cache requires --model_impl=python.";
-    CHECK(!options_.enable_graph() &&
-          !options_.enable_prefill_piecewise_graph() &&
-          ExecutionConfig::get_instance().python_graph_backend() == "off")
-        << "Reference quantized attention requires eager execution: "
+    const std::string native_kv =
+        util::get_optional_string_env("XLLM_FLASHINFER_NATIVE_KV").value_or("");
+    const std::string quantized_backend =
+        util::get_optional_string_env("XLLM_QUANTIZED_BACKEND").value_or("");
+    const CudaKVCacheExecutionConfig execution_config{
+        kv_cache_dtype,
+        python_model,
+        options_.enable_graph(),
+        options_.enable_prefill_piecewise_graph(),
+        ExecutionConfig::get_instance().python_graph_backend(),
+        native_kv,
+        quantized_backend};
+    CHECK(is_cuda_kv_cache_execution_mode_allowed(execution_config))
+        << "Quantized attention requires eager execution: "
            "--enable_graph=false --enable_prefill_piecewise_graph=false "
-           "--python_graph_backend=off.";
+           "--python_graph_backend=off. The only graph exception is native "
+           "FlashInfer FP8 E4M3 decode: --kv_cache_dtype=fp8_e4m3 "
+           "XLLM_FLASHINFER_NATIVE_KV=1 XLLM_QUANTIZED_BACKEND=flashinfer "
+           "--enable_graph=true --enable_prefill_piecewise_graph=false "
+           "--python_graph_backend=cudagraphs with --model_impl=python.";
     CHECK(!args.enable_mla() && !enable_linear_attention &&
           !enable_lighting_indexer && !has_grouped_cache)
         << "Reference quantized attention supports ordinary MHA/GQA only.";
@@ -543,8 +560,6 @@ bool WorkerImpl::allocate_kv_cache_storage(
     CHECK_EQ(options_.num_speculative_tokens(), 0)
         << "Reference quantized attention has not enabled speculative decode.";
     CHECK_EQ(options_.task_type(), "generate");
-    LOG(WARNING) << "Using experimental quantized KV attention with "
-                    "resident compressed payloads in Python eager.";
 #elif defined(USE_MLU)
     CHECK(kv_cache_dtype == KVCacheDtype::INT8)
         << "MLU KV cache quantization supports int8 only.";
@@ -565,6 +580,16 @@ bool WorkerImpl::allocate_kv_cache_storage(
       LOG(FATAL) << "KV Cache quantization is not supported in PD "
                     "disaggregation mode.";
     }
+#if defined(USE_CUDA)
+    if (is_native_flashinfer_fp8_decode_graph(execution_config)) {
+      LOG(INFO) << "Admitting native FlashInfer FP8 E4M3 resident KV cache "
+                   "with Python CUDA Graph decode; capture/replay is managed "
+                   "by the Python executor.";
+    } else {
+      LOG(WARNING) << "Using experimental quantized KV attention with "
+                      "resident compressed payloads in Python eager.";
+    }
+#endif
   }
 
   // Parse mamba_ssm_dtype if specified for linear attention layers.
