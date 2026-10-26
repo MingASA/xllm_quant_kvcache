@@ -1,0 +1,97 @@
+# Copyright 2026 The xLLM Authors.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at https://www.apache.org/licenses/LICENSE-2.0
+"""CPU policy/dispatch checks for explicit modern native production candidates."""
+
+from __future__ import annotations
+
+import importlib
+import sys
+import types
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
+import torch
+
+from xllm.python.attention.native_profile import resolve_native_profile
+
+
+def test_historical_default_and_unmodified_default_are_preserved() -> None:
+    assert resolve_native_profile({}, True, True)["planner"] == "fa2"
+    assert resolve_native_profile({}, False, False)["planner"] == "auto"
+
+
+def test_fa3_bf16_and_explicit_fp8_query_are_supported_profiles() -> None:
+    assert resolve_native_profile({"XLLM_FLASHINFER_NATIVE_PLANNER": "fa3"}, True, False)["query_fp8"] is False
+    profile = resolve_native_profile({"XLLM_FLASHINFER_NATIVE_PLANNER": "fa3", "XLLM_FLASHINFER_FP8_QUERY": "1",
+                                      "XLLM_FLASHINFER_FP8_Q_SCALE": "0.5"}, True, True)
+    assert profile["query_fp8"] is True and profile["query_scale"] == .5
+    assert profile["scope"] == "production_fa3"
+
+
+@pytest.mark.parametrize("native,fp8,environment", [
+    (False, True, {"XLLM_FLASHINFER_NATIVE_PLANNER": "fa3"}),
+    (True, True, {"XLLM_FLASHINFER_NATIVE_PLANNER": "auto"}),
+    (True, True, {"XLLM_FLASHINFER_NATIVE_PLANNER": "fa3"}),
+    (True, False, {"XLLM_FLASHINFER_NATIVE_PLANNER": "fa3", "XLLM_FLASHINFER_FP8_QUERY": "1"}),
+    (True, True, {"XLLM_FLASHINFER_FP8_QUERY": "1"}),
+    (True, True, {"XLLM_FLASHINFER_FP8_QUERY": "yes"}),
+    (True, True, {"XLLM_FLASHINFER_FP8_Q_SCALE": "1"}),
+])
+def test_unsupported_profiles_refuse_instead_of_falling_back(native: bool, fp8: bool, environment: dict) -> None:
+    with pytest.raises(ValueError):
+        resolve_native_profile(environment, native, fp8)
+
+
+@pytest.mark.parametrize("scale", ["nan", "inf", "0", "-1", "1e-50", "1e50"])
+def test_query_scale_is_a_finite_normal_positive_fp32_scalar(scale: str) -> None:
+    with pytest.raises(ValueError):
+        resolve_native_profile({"XLLM_FLASHINFER_NATIVE_PLANNER": "fa3", "XLLM_FLASHINFER_FP8_QUERY": "1",
+                                "XLLM_FLASHINFER_FP8_Q_SCALE": scale}, True, True)
+
+
+def test_fa3_fp8_dispatch_converts_query_passes_scale_and_returns_model_dtype(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Real xLLM dispatch with CPU tensors; the CUDA conversion and FI kernel are explicit fixtures.
+    fake_fi = types.ModuleType("flashinfer"); fake_fi.__version__ = "0.6.18.post1"
+    fake_decode = types.ModuleType("flashinfer.decode"); fake_decode.fast_decode_plan = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "flashinfer", fake_fi)
+    monkeypatch.setitem(sys.modules, "flashinfer.decode", fake_decode)
+    # Existing tests may have previously imported the native backend with real/fake FI.
+    module = importlib.import_module("xllm.python.attention.flashinfer_fp8")
+    backend = module.FlashInferFP8Backend.__new__(module.FlashInferFP8Backend)
+    backend.num_heads, backend.head_dim = 2, 8
+    backend._fixed_scales = (.125, .0625)
+    backend._fp8_query_enabled, backend._fp8_query_scale = True, .5
+    backend._metadata = SimpleNamespace(is_prefill=True, is_chunked_prefill=False)
+    backend._fp8_caches = [(torch.zeros(1), torch.zeros(1))]
+    calls = []
+
+    def _convert(query: torch.Tensor, scale: float) -> torch.Tensor:
+        calls.append((query.clone(), scale))
+        return (query / scale).to(torch.float8_e4m3fn)
+
+    class Wrapper:
+        def run(self, query: torch.Tensor, pages: tuple, **kwargs: Any) -> torch.Tensor:
+            assert query.dtype == torch.float8_e4m3fn
+            assert kwargs == {"q_scale": .5, "k_scale": .125, "v_scale": .0625}
+            return query.to(torch.bfloat16) * .5
+
+    monkeypatch.setattr(module, "quantize_query_fp8", _convert)
+    backend._prefill_paged_wrapper = Wrapper()
+    query = torch.ones(3, 2, 8, dtype=torch.bfloat16)
+    output = backend.execute_attention(query, SimpleNamespace(layer_id=0))
+    assert len(calls) == 1
+    assert output.dtype == torch.bfloat16 and output.shape == (3, 16)
+    torch.testing.assert_close(output, query.view(3, 16))
+
+
+def test_operator_acceptance_reference_uses_the_causal_context_offset() -> None:
+    from tools.check_native_fa3_operator import _reference
+    query = torch.zeros(2, 3, 2, 8)
+    key = torch.zeros(2, 5, 1, 8)
+    value = torch.arange(5, dtype=torch.float32).view(1, 5, 1, 1).expand(2, 5, 1, 8)
+    result = _reference(query, key, value, 3).view(2, 3, 2, 8)
+    expected = torch.tensor([1.0, 1.5, 2.0]).view(1, 3, 1, 1).expand(2, 3, 2, 8)
+    torch.testing.assert_close(result, expected)

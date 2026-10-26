@@ -31,6 +31,7 @@ from xllm.python.attention.backend import AttentionMetadata, LayerCache
 from xllm.python.attention.flashinfer import FlashInferBackend
 from xllm.python.attention.quantized import KVCacheCodec, _validate_cache
 from xllm.python.attention.quantized_triton import write_quantized_kv
+from xllm.python.attention.query_quantization import quantize_query_fp8
 
 if TYPE_CHECKING:
     from xllm.python.layers.attention import Attention
@@ -117,8 +118,9 @@ class FlashInferFP8Backend(FlashInferBackend):
         options = dict(
             sm_scale=self.scale,
             window_left=window_left,
-            q_data_type=self.dtype,
+            q_data_type=self._query_data_type,
             kv_data_type=self._cache_dtype,
+            o_data_type=self.dtype,
         )
         paging = (metadata.paged_kv_indptr, metadata.paged_kv_indices, metadata.paged_kv_last_page_len)
         shape = (self.num_heads, self.num_kv_heads, self.head_dim, self.page_size)
@@ -173,10 +175,14 @@ class FlashInferFP8Backend(FlashInferBackend):
             if (self._metadata.is_prefill or self._metadata.is_chunked_prefill)
             else self._active_decode_wrapper
         )
+        query = q.view(-1, self.num_heads, self.head_dim)
+        options = {"k_scale": self._fixed_scales[0], "v_scale": self._fixed_scales[1]}
+        if getattr(self, "_fp8_query_enabled", False):
+            query = quantize_query_fp8(query, self._fp8_query_scale)
+            options["q_scale"] = self._fp8_query_scale
         output = wrapper.run(
-            q.view(-1, self.num_heads, self.head_dim),
+            query,
             self._fp8_caches[layer.layer_id],
-            k_scale=self._fixed_scales[0],
-            v_scale=self._fixed_scales[1],
+            **options,
         )
         return output.view(-1, self.num_heads * self.head_dim)

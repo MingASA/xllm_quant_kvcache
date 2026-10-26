@@ -30,6 +30,7 @@ from xllm.python.attention.backend import (
     LayerCache,
 )
 from xllm.python.attention.native_kv import KVScaleCalibration, cache_allocation
+from xllm.python.attention.native_profile import resolve_native_profile
 
 if TYPE_CHECKING:
     from xllm.python.layers.attention import Attention
@@ -94,7 +95,11 @@ class FlashInferBackend(AttentionBackend):
             raise RuntimeError(
                 "Native paired KV profile requires FlashInfer 0.6.18.post1; no alternate kernel fallback"
             )
-        self._flashinfer_backend = "fa2" if self._native_kv_pair else "auto"
+        profile = resolve_native_profile(os.environ, self._native_kv_pair, hasattr(self, "_cache_dtype"))
+        self._flashinfer_backend = profile["planner"]
+        self._fp8_query_enabled = profile["query_fp8"]
+        self._fp8_query_scale = profile["query_scale"]
+        self._native_profile_scope = profile["scope"]
         self._calibration = None
         calibration_path = os.environ.get("XLLM_FP8_CALIBRATION_OUTPUT")
         if calibration_path:
@@ -151,6 +156,10 @@ class FlashInferBackend(AttentionBackend):
     def _kv_data_type(self) -> torch.dtype:
         return self.dtype
 
+    @property
+    def _query_data_type(self) -> torch.dtype:
+        return torch.float8_e4m3fn if getattr(self, "_fp8_query_enabled", False) else self.dtype
+
     def native_kv_runtime_info(self) -> dict[str, Any]:
         return {
             "class": type(self).__name__,
@@ -160,7 +169,9 @@ class FlashInferBackend(AttentionBackend):
             "paged_prefill": self._native_kv_pair,
             "decode_tensor_cores": self._decode_use_tensor_cores,
             "flashinfer_version": flashinfer.__version__,
-            "q_data_type": str(self.dtype),
+            "q_data_type": str(self._query_data_type),
+            "profile_scope": getattr(self, "_native_profile_scope", "historical_fa2"),
+            "q_scale": self._fp8_query_scale if getattr(self, "_fp8_query_enabled", False) else None,
             "kv_data_type": str(self._kv_data_type),
             "scale_strategy": "none",
             "quality_transform": self._quality_transform is not None,
@@ -216,7 +227,8 @@ class FlashInferBackend(AttentionBackend):
                 causal=True,
                 sm_scale=self.scale,
                 window_left=window_left,
-                q_data_type=self.dtype,
+                q_data_type=self._query_data_type,
+                o_data_type=self.dtype,
             )
         elif metadata.is_prefill or metadata.is_chunked_prefill:
             self._prefill_paged_wrapper.plan(
@@ -231,8 +243,9 @@ class FlashInferBackend(AttentionBackend):
                 causal=True,
                 sm_scale=self.scale,
                 window_left=window_left,
-                q_data_type=self.dtype,
+                q_data_type=self._query_data_type,
                 kv_data_type=self._kv_data_type,
+                o_data_type=self.dtype,
             )
         else:
             self._prepare_decode(metadata, graph_mode, window_left)
@@ -255,8 +268,9 @@ class FlashInferBackend(AttentionBackend):
                 self.page_size,
                 sm_scale=self.scale,
                 window_left=window_left,
-                q_data_type=self.dtype,
+                q_data_type=self._query_data_type,
                 kv_data_type=self._kv_data_type,
+                o_data_type=self.dtype,
             )
             return
 
@@ -279,8 +293,9 @@ class FlashInferBackend(AttentionBackend):
                 self.page_size,
                 sm_scale=self.scale,
                 window_left=window_left,
-                q_data_type=self.dtype,
+                q_data_type=self._query_data_type,
                 kv_data_type=self._kv_data_type,
+                o_data_type=self.dtype,
             )
             self._planned_graph_batches.add(batch_size)
             return
@@ -296,7 +311,7 @@ class FlashInferBackend(AttentionBackend):
             self.page_size,
             sm_scale=self.scale,
             window_left=window_left,
-            q_data_type=self.dtype,
+            q_data_type=self._query_data_type,
             kv_data_type=self._kv_data_type,
             global_override_indptr_cpu=indptr_host,
         )
