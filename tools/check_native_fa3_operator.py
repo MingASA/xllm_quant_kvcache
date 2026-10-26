@@ -36,9 +36,18 @@ def _reference(query: object, key: object, value: object, query_count: int) -> o
     return (torch.softmax(scores, dim=-1) @ values).transpose(1, 2).reshape(-1, heads * query.shape[-1])
 
 
+def _paging_metadata(pages: object, slots: object, context: int, query_count: int, page_size: int) -> object:
+    from tools.benchmark_kv_cache import _attention_metadata
+
+    metadata = _attention_metadata(pages, slots, context, query_count, page_size)
+    # The benchmark helper's reshape(...).to(int32) aliases an int32 page table.
+    # Keep graph-planner updates separate from the immutable reference mapping.
+    metadata.paged_kv_indices = metadata.paged_kv_indices.clone()
+    return metadata
+
+
 def check(arm: str) -> dict:
     import torch
-    from tools.benchmark_kv_cache import _attention_metadata
     from xllm.python.attention.backend import LayerCache
     from xllm.python.attention.flashinfer import FlashInferBackend
     from xllm.python.attention.flashinfer_fp8 import FlashInferFP8Backend
@@ -95,6 +104,7 @@ def check(arm: str) -> dict:
         error = actual.float() - expected
         relative = float((torch.linalg.vector_norm(error) / torch.linalg.vector_norm(expected).clamp_min(1e-9)).item())
         comparisons[name] = {"relative_l2": relative, "max_abs": float(error.abs().max().item())}
+        logger.info("OPERATOR_REFERENCE %s %s", name, comparisons[name])
         torch.testing.assert_close(actual.float(), expected, rtol=.08, atol=.015)
         if relative > .05:
             raise ValueError("Native operator differs from its representable reference: " + name)
@@ -102,7 +112,7 @@ def check(arm: str) -> dict:
     # Nonuniform logits make an incorrect Q/K scale visible to the reference.
     packed_query = torch.randn(batch, 17, heads + 2 * kv_heads, dim, device=device, dtype=torch.bfloat16) * 2
     query = packed_query[:, :, :heads]
-    metadata = _attention_metadata(pages, slots.view(batch, length)[:, -17:].flatten(), length, 17, page_size)
+    metadata = _paging_metadata(pages, slots.view(batch, length)[:, -17:].flatten(), length, 17, page_size)
     backend.prepare(metadata)
     actual = backend.execute_attention(query.flatten(0, 1), layer)
     _compare("prefill", actual, _expected(query, length))
@@ -111,7 +121,7 @@ def check(arm: str) -> dict:
     # Real capture/replay, followed by a different query and shorter live context.
     packed_query = torch.randn(batch, 1, heads + 2 * kv_heads, dim, device=device, dtype=torch.bfloat16) * 2
     query = packed_query[:, :, :heads]
-    metadata = _attention_metadata(pages, slots.view(batch, length)[:, -1:].flatten(), length, 1, page_size)
+    metadata = _paging_metadata(pages, slots.view(batch, length)[:, -1:].flatten(), length, 1, page_size)
     backend.prepare(metadata, graph_mode=True)
     for _ in range(3):
         backend.execute_attention(query.flatten(0, 1), layer)

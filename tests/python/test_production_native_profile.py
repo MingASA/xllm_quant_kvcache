@@ -98,6 +98,17 @@ def test_operator_acceptance_reference_uses_the_causal_context_offset() -> None:
     torch.testing.assert_close(result, expected)
 
 
+def test_operator_replan_cannot_mutate_the_reference_or_later_padded_page_mapping() -> None:
+    from tools.check_native_fa3_operator import _paging_metadata
+    pages = torch.tensor([[2, 0, 4], [3, 1, 5]], dtype=torch.int32)
+    reference = pages.clone()
+    metadata = _paging_metadata(pages, torch.zeros(2, dtype=torch.int32), 257, 1, 128)
+    metadata.paged_kv_indices[:4].copy_(pages[:, :2].flatten())
+    torch.testing.assert_close(pages, reference)
+    assert pages[:, :2].flatten().tolist() == [2, 0, 3, 1]
+    assert metadata.paged_kv_indices.data_ptr() != pages.data_ptr()
+
+
 def test_xqa_dispatch_passes_bf16_query_and_resident_alias_without_external_conversion(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_fi = types.ModuleType("flashinfer"); fake_fi.__version__ = "0.6.18.post1"
     fake_decode = types.ModuleType("flashinfer.decode"); fake_decode.fast_decode_plan = lambda *args, **kwargs: None
