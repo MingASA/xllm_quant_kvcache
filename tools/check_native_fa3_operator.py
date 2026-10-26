@@ -61,7 +61,7 @@ def check(arm: str) -> dict:
     torch.manual_seed(20261026)
     batch, length, page_size, heads, kv_heads, dim = 2, 257, 128, 40, 8, 128
     device = torch.device("cuda")
-    shape = (6, page_size, kv_heads, dim)
+    shape = (7, page_size, kv_heads, dim)
     is_fp8 = arm == "fp8_e4m3"
     initial = (255 if is_fp8 else float("nan")) if xqa else 0
     cache = LayerCache(torch.full(shape, initial, device=device, dtype=torch.uint8 if is_fp8 else torch.bfloat16),
@@ -75,7 +75,8 @@ def check(arm: str) -> dict:
     if xqa and any(torch.count_nonzero(payload).item() != 0 for payload in (cache.key, cache.value)):
         raise ValueError("XQA did not initialize its fresh dirty/NaN payload storage")
     poison = (126 if is_fp8 else 100.0) if xqa else (255 if is_fp8 else float("nan"))
-    pages = torch.tensor([[2, 0, 4], [3, 1, 5]], device=device, dtype=torch.int32)
+    # Match the production BlockManager: physical page0 is reserved for padding.
+    pages = torch.tensor([[3, 1, 5], [4, 2, 6]], device=device, dtype=torch.int32)
     positions = torch.arange(length, device=device)
     slots = (pages[:, positions // page_size] * page_size + positions % page_size).flatten()
     key = torch.randn(batch, length, kv_heads, dim, device=device, dtype=torch.bfloat16) * .25
@@ -145,6 +146,8 @@ def check(arm: str) -> dict:
     torch.cuda.synchronize()
     _compare("changed_context", output, _expected(query, 130))
     if xqa:
+        if any(torch.count_nonzero(payload[0]).item() for payload in (cache.key, cache.value)):
+            raise ValueError("Production reserved page0 was modified by the operator fixture")
         # Native graph buckets retain empty padding rows with indptr repeats.
         # Verify a different bucket with two live rows and two padded rows.
         host_indptr = torch.tensor([0, 2, 4, 4, 4], dtype=torch.int32)
@@ -184,6 +187,7 @@ def check(arm: str) -> dict:
             "arm": arm, "backend": backend.native_kv_runtime_info(), "device": torch.cuda.get_device_name(0),
             "prefill_planner": planner, "decode_impl": "xqa" if xqa else "flashinfer",
             "padded_graph_bucket_checked": xqa,
+            "reserved_page0_not_used_for_live_sequences": True,
             "noncontiguous_q_checked": True,
             "reference_comparisons": comparisons,
             "fresh_dirty_cache_initialized_to_zero": xqa,
