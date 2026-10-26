@@ -194,3 +194,9 @@ def test_fa3_quality_environment_and_production_prefix_are_explicit(tmp_path: Pa
 def test_quality_rejects_implicit_or_invalid_query_profile(tmp_path: Path, extra: list[str]) -> None:
     with pytest.raises(ValueError):
         runner._validate_args(_args(tmp_path, *extra))
+
+
+def test_quality_completion_fragment_cannot_claim_a_full_evaluation(tmp_path: Path) -> None:
+    args = _args(tmp_path, "--native-planner", "fa3", "--fp8-q-scale", "1.0", "--cohort-scope", "fragment")
+    paths = runner._validate_args(args)
+    assert runner._plan(args, paths)["scope"] == "evaluation_fragment_no_full_quality_claim"

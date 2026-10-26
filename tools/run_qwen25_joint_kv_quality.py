@@ -101,7 +101,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--fp8-v-scale", type=float)
     parser.add_argument("--native-planner", choices=("fa2", "fa3"), default="fa2")
     parser.add_argument("--fp8-q-scale", type=float)
-    parser.add_argument("--cohort-scope", choices=("pilot", "full"), default="full")
+    parser.add_argument("--cohort-scope", choices=("pilot", "fragment", "full"), default="full")
     parser.add_argument("--binary-source-commit", help="Source SHA of the existing binary; tools-only changes need no rebuild")
     parser.add_argument("--runtime-source-repo", type=Path,
                         help="Native controller: existing read-only runtime checkout, separate from frozen tools")
@@ -296,7 +296,8 @@ def _evaluator_command(
 
 def _plan(args: argparse.Namespace, paths: dict[str, Path]) -> dict[str, Any]:
     return {
-        "scope": "protocol_pilot_no_full_quality_claim" if _native_mode(args) and args.cohort_scope == "pilot"
+        "scope": "evaluation_fragment_no_full_quality_claim" if _native_mode(args) and args.cohort_scope == "fragment"
+        else "protocol_pilot_no_full_quality_claim" if _native_mode(args) and args.cohort_scope == "pilot"
         else "smoke_only" if args.limit else "one_unique_dataset_round",
         "tasks": list(paths),
         "arms": args.arms,
@@ -806,7 +807,8 @@ def _report(args: argparse.Namespace, paths: dict[str, Path], prepared: dict[str
         else {}
     )
     summary = {
-        "scope": "protocol_pilot_no_full_quality_claim" if _native_mode(args) and args.cohort_scope == "pilot"
+        "scope": "evaluation_fragment_no_full_quality_claim" if _native_mode(args) and args.cohort_scope == "fragment"
+        else "protocol_pilot_no_full_quality_claim" if _native_mode(args) and args.cohort_scope == "pilot"
         else "smoke_only" if args.limit else "one_unique_dataset_round",
         "tasks": table,
         "longbench_8_task_macro": macros,
