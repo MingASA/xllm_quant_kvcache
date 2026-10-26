@@ -100,6 +100,9 @@ class FlashInferBackend(AttentionBackend):
         self._fp8_query_enabled = profile["query_fp8"]
         self._fp8_query_scale = profile["query_scale"]
         self._native_profile_scope = profile["scope"]
+        self._decode_impl = profile["decode_impl"]
+        self._xqa_plans: dict[tuple[bool, int], Any] = {}
+        self._active_xqa_plan: Any = None
         self._calibration = None
         calibration_path = os.environ.get("XLLM_FP8_CALIBRATION_OUTPUT")
         if calibration_path:
@@ -114,6 +117,8 @@ class FlashInferBackend(AttentionBackend):
         self._decode_use_tensor_cores = _should_use_tensor_core_decode(dtype, num_heads, num_kv_heads)
 
         self._decode_workspace = torch.empty(_WORKSPACE_SIZE, dtype=torch.uint8, device=device)
+        if self._decode_impl == "xqa":
+            self._decode_workspace.zero_()
         self._decode_wrapper = flashinfer.BatchDecodeWithPagedKVCacheWrapper(
             self._decode_workspace,
             "NHD",
@@ -146,6 +151,12 @@ class FlashInferBackend(AttentionBackend):
         ] != [(cache.key.data_ptr(), cache.value.data_ptr()) for cache in kv_caches]:
             raise RuntimeError("Cannot replace KV cache storage after decode graph planning/capture")
         self._kv_caches = kv_caches
+        if self._decode_impl == "xqa":
+            # BlockManager reserves page0. Empty graph rows may safely read its
+            # first token; they never write KV slots or contribute user logits.
+            for cache in kv_caches:
+                cache.key[0].zero_()
+                cache.value[0].zero_()
         logger.info("KV_ALLOCATION %s", cache_allocation(kv_caches, self._kv_format))
 
     @property
@@ -166,6 +177,12 @@ class FlashInferBackend(AttentionBackend):
             "kv_cache_dtype": "auto",
             "attention_impl": "flashinfer",
             "planner_backend": self._flashinfer_backend,
+            "decode_impl": self._decode_impl,
+            "xqa_max_context": 32768 if self._decode_impl == "xqa" else None,
+            "xqa_enable_pdl": True if self._decode_impl == "xqa" else None,
+            "xqa_graph_padding": "reserved_page0_one_token_discard" if self._decode_impl == "xqa" else None,
+            "decode_internal_q_data_type": ("torch.float8_e4m3fn" if self._decode_impl == "xqa"
+                                            and self._kv_data_type == torch.float8_e4m3fn else str(self._query_data_type)),
             "paged_prefill": self._native_kv_pair,
             "decode_tensor_cores": self._decode_use_tensor_cores,
             "flashinfer_version": flashinfer.__version__,
@@ -256,6 +273,19 @@ class FlashInferBackend(AttentionBackend):
         graph_mode: bool,
         window_left: int,
     ) -> None:
+        if self._decode_impl == "xqa":
+            from xllm.python.attention.xqa_decode import XQADecodePlan
+
+            if window_left != -1:
+                raise ValueError("Production XQA v1 requires full attention")
+            key = (graph_mode, metadata.paged_kv_last_page_len.numel())
+            plan = self._xqa_plans.get(key)
+            if plan is None:
+                plan = XQADecodePlan(key[1], self.page_size, 32768, self._decode_workspace.device)
+                self._xqa_plans[key] = plan
+            plan.prepare(metadata, graph_mode=graph_mode)
+            self._active_xqa_plan = plan
+            return
         if not graph_mode:
             self._active_decode_wrapper = self._decode_wrapper
             self._decode_wrapper.plan(
@@ -399,6 +429,10 @@ class FlashInferBackend(AttentionBackend):
         elif metadata.is_prefill or metadata.is_chunked_prefill:
             layer_cache = self._kv_caches[layer.layer_id]
             output = self._prefill_paged_wrapper.run(q_3d, (layer_cache.key, layer_cache.value))
+        elif self._decode_impl == "xqa":
+            layer_cache = self._kv_caches[layer.layer_id]
+            output = self._active_xqa_plan.run(q_3d, (layer_cache.key, layer_cache.value),
+                                               self._decode_workspace, self.scale, 1.0, 1.0)
         else:
             layer_cache = self._kv_caches[layer.layer_id]
             output = self._active_decode_wrapper.run(q_3d, (layer_cache.key, layer_cache.value))

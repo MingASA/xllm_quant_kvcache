@@ -32,7 +32,7 @@ from scripts.logger import logger
 from tools import eval_kv_cache_quality as evaluator
 from tools.qwen25_experiment_model import checkpoint_provenance, read_profile, sha256_file
 from tools.native_kv_quality_contract import (
-    PROFILE as NATIVE_PROFILE, FA3_PROFILE, clean_native_environment, native_environment, native_evidence,
+    PROFILE as NATIVE_PROFILE, FA3_PROFILE, XQA_PROFILE, clean_native_environment, native_environment, native_evidence,
 )
 
 ARMS = ("auto", "int8", "fp8_e4m3", "int4")
@@ -100,6 +100,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--fp8-k-scale", type=float)
     parser.add_argument("--fp8-v-scale", type=float)
     parser.add_argument("--native-planner", choices=("fa2", "fa3"), default="fa2")
+    parser.add_argument("--native-decode", choices=("flashinfer", "xqa"), default="flashinfer")
     parser.add_argument("--fp8-q-scale", type=float)
     parser.add_argument("--cohort-scope", choices=("pilot", "fragment", "full"), default="full")
     parser.add_argument("--binary-source-commit", help="Source SHA of the existing binary; tools-only changes need no rebuild")
@@ -145,20 +146,20 @@ def _validate_args(args: argparse.Namespace) -> dict[str, Path]:
     if _native_mode(args):
         if any(arm not in ("auto", "fp8_e4m3") for arm in args.arms):
             raise ValueError("Native quality requires explicit --arms auto fp8_e4m3 (or one supervised arm)")
-        graph_limit = 128 if args.native_planner == "fa3" else 16
+        graph_limit = 128 if args.native_planner == "fa3" or args.native_decode == "xqa" else 16
         if args.max_seqs_per_batch > graph_limit:
             raise ValueError("Native quality requires an explicit bounded --max-seqs-per-batch <=" + str(graph_limit))
         if args.fp8_k_scale is None or args.fp8_v_scale is None:
             raise ValueError("Native paired quality requires explicit fixed K/V scales")
         native_environment("fp8_e4m3", args.fp8_k_scale, args.fp8_v_scale,
-                           planner=args.native_planner, query_scale=args.fp8_q_scale)
+                           planner=args.native_planner, query_scale=args.fp8_q_scale, decode=args.native_decode)
         if args.runtime_source_commit and not re.fullmatch(r"[0-9a-f]{40}", args.runtime_source_commit):
             raise ValueError("Native runtime source commit must be a full SHA")
         if (not args.binary_source_commit or len(args.binary_source_commit) != 40
                 or any(char not in "0123456789abcdef" for char in args.binary_source_commit)):
             raise ValueError("Native quality must explicitly pin --binary-source-commit")
     elif (args.graph_mode != "off" or args.fp8_k_scale is not None or args.fp8_v_scale is not None
-          or args.native_planner != "fa2" or args.fp8_q_scale is not None or args.runtime_source_commit is not None):
+          or args.native_planner != "fa2" or args.native_decode != "flashinfer" or args.fp8_q_scale is not None or args.runtime_source_commit is not None):
         raise ValueError("Graph/scales options require explicit native-flashinfer mode")
     return _task_paths(args)
 
@@ -221,7 +222,7 @@ def _server_command(args: argparse.Namespace, arm: str) -> list[str]:
         f"--enable_graph={'true' if graph else 'false'}",
         "--enable_prefill_piecewise_graph=false",
         f"--python_graph_backend={_graph_mode(args)}",
-        "--enable_prefix_cache=" + ("true" if _native_mode(args) and args.native_planner == "fa3" else "false"),
+        "--enable_prefix_cache=" + ("true" if _native_mode(args) and (args.native_planner == "fa3" or args.native_decode == "xqa") else "false"),
         f"--max_cache_size={args.max_cache_size}",
         f"--block_size={args.block_size}",
         f"--max_memory_utilization={args.max_memory_utilization}",
@@ -243,7 +244,7 @@ def _environment(args: argparse.Namespace, arm: str | None = None) -> dict[str, 
     if _native_mode(args):
         environment.pop("XLLM_QUANTIZED_BACKEND")
         environment.update(native_environment(arm or "auto", args.fp8_k_scale, args.fp8_v_scale,
-                                              planner=args.native_planner, query_scale=args.fp8_q_scale))
+                                              planner=args.native_planner, query_scale=args.fp8_q_scale, decode=args.native_decode))
     return environment
 
 
@@ -529,9 +530,9 @@ def _server_manifest(
         "server_attestation": evidence,
     }
     if _native_mode(args):
-        manifest.update(execution_profile=FA3_PROFILE if args.native_planner == "fa3" else NATIVE_PROFILE,
+        manifest.update(execution_profile=XQA_PROFILE if args.native_decode == "xqa" else FA3_PROFILE if args.native_planner == "fa3" else NATIVE_PROFILE,
                         paired_fp8_scales={"key": args.fp8_k_scale, "value": args.fp8_v_scale},
-                        native_planner=args.native_planner, fp8_query_scale=args.fp8_q_scale,
+                        native_planner=args.native_planner, native_decode=args.native_decode, fp8_query_scale=args.fp8_q_scale,
                         binary_source_commit=args.binary_source_commit,
                         runtime_source_commit=args.runtime_source_commit)
     return manifest
@@ -661,7 +662,7 @@ def _run_arm(
                 # Read again after the real multi-token bootstrap has replayed decode.
                 native = native_evidence((attempt / "server.log").read_text(errors="replace"), arm,
                                          args.graph_mode, (args.fp8_k_scale, args.fp8_v_scale),
-                                         planner=args.native_planner, query_scale=args.fp8_q_scale)
+                                         planner=args.native_planner, query_scale=args.fp8_q_scale, decode=args.native_decode)
                 _new_json(attempt / "native_evidence.json", native)
                 attestation.update(native_backend=native["backend"],
                                    native_evidence_sha256=sha256_file(attempt / "native_evidence.json"))

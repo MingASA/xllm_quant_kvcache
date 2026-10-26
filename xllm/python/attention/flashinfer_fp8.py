@@ -170,6 +170,11 @@ class FlashInferFP8Backend(FlashInferBackend):
     ) -> torch.Tensor:
         if self._metadata is None:
             raise RuntimeError("FlashInferFP8Backend.prepare() was not called")
+        if self._decode_impl == "xqa" and not (self._metadata.is_prefill or self._metadata.is_chunked_prefill):
+            output = self._active_xqa_plan.run(q.view(-1, self.num_heads, self.head_dim),
+                                               self._fp8_caches[layer.layer_id], self._decode_workspace,
+                                               self.scale, *self._fixed_scales)
+            return output.view(-1, self.num_heads * self.head_dim)
         wrapper = (
             self._prefill_paged_wrapper
             if (self._metadata.is_prefill or self._metadata.is_chunked_prefill)

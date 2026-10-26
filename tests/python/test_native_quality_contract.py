@@ -43,8 +43,9 @@ def _log(backend: dict) -> str:
     return "NATIVE_KV_BACKEND " + json.dumps(backend) + "\nNATIVE_KV_GRAPH_REPLAY " + json.dumps(replay)
 
 
-def _manifest(tmp_path: Path, arm: str = "fp8_e4m3", planner: str = "fa2") -> tuple[Path, dict]:
-    args = _args(tmp_path, *(["--native-planner", "fa3", "--fp8-q-scale", "1.0"] if planner == "fa3" else []))
+def _manifest(tmp_path: Path, arm: str = "fp8_e4m3", planner: str = "fa2", decode: str = "flashinfer") -> tuple[Path, dict]:
+    args = _args(tmp_path, *(["--native-planner", "fa3", "--fp8-q-scale", "1.0"] if planner == "fa3" else []),
+                 "--native-decode", decode)
     args.model.mkdir()
     (args.model / "config.json").write_text('{"model_type":"qwen2"}')
     (args.model / "tokenizer_config.json").write_text('{"chat_template":"frozen"}')
@@ -57,8 +58,14 @@ def _manifest(tmp_path: Path, arm: str = "fp8_e4m3", planner: str = "fa2") -> tu
                        q_data_type="torch.bfloat16" if arm == "auto" else "torch.float8_e4m3fn",
                        kv_data_type="torch.bfloat16" if arm == "auto" else "torch.float8_e4m3fn",
                        q_scale=None if arm == "auto" else 1.0)
+    if decode == "xqa":
+        backend.update(decode_impl="xqa", profile_scope="production_xqa", q_data_type="torch.bfloat16",
+                       kv_data_type="torch.bfloat16" if arm == "auto" else "torch.float8_e4m3fn",
+                       q_scale=None, decode_internal_q_data_type="torch.bfloat16" if arm == "auto" else "torch.float8_e4m3fn",
+                       xqa_max_context=32768, xqa_graph_padding="reserved_page0_one_token_discard")
+        backend["xqa_enable_pdl"] = True
     native = native_evidence(_log(backend), arm, "cudagraphs", (0.125, 0.0625), planner=planner,
-                             query_scale=1.0 if planner == "fa3" else None)
+                             query_scale=1.0 if planner == "fa3" else None, decode=decode)
     (attempt / "native_evidence.json").write_text(json.dumps(native))
     evidence = {"attempt": str(attempt), "allocation_verified": True,
                 "allocation_sha256": hashlib.sha256((attempt / "allocation.json").read_bytes()).hexdigest(),
@@ -200,3 +207,21 @@ def test_quality_completion_fragment_cannot_claim_a_full_evaluation(tmp_path: Pa
     args = _args(tmp_path, "--native-planner", "fa3", "--fp8-q-scale", "1.0", "--cohort-scope", "fragment")
     paths = runner._validate_args(args)
     assert runner._plan(args, paths)["scope"] == "evaluation_fragment_no_full_quality_claim"
+
+
+@pytest.mark.parametrize("arm", ["auto", "fp8_e4m3"])
+def test_xqa_raw_attestation_preserves_internal_query_precision(tmp_path: Path, arm: str) -> None:
+    path, manifest = _manifest(tmp_path, arm, decode="xqa")
+    observed = evaluator._load_server_manifest(path, arm.replace("_", "-"), manifest["model"], tmp_path / "model")
+    assert observed["execution_profile"] == "native-flashinfer-xqa-joint-v1"
+    if arm == "fp8_e4m3":
+        backend = dict(observed["server_attestation"]["native_backend"], decode_internal_q_data_type="torch.bfloat16")
+        with pytest.raises(ValueError, match="Actual XQA"):
+            native_evidence(_log(backend), arm, "cudagraphs", (.125, .0625), decode="xqa")
+
+
+def test_xqa_production_graph_and_prefix_cli_are_explicit(tmp_path: Path) -> None:
+    args = _args(tmp_path, "--native-decode", "xqa", "--max-seqs-per-batch", "128")
+    runner._validate_args(args)
+    assert "--enable_prefix_cache=true" in runner._server_command(args, "fp8_e4m3")
+    assert runner._environment(args, "fp8_e4m3")["XLLM_FLASHINFER_NATIVE_DECODE"] == "xqa"

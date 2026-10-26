@@ -45,8 +45,10 @@ def check(arm: str) -> dict:
 
     if torch.cuda.device_count() != 1 or torch.cuda.get_device_capability(0) != (9, 0):
         raise ValueError("This acceptance is specifically for one isolated H800/SM90 GPU")
-    if os.environ.get("XLLM_FLASHINFER_NATIVE_PLANNER") != "fa3":
-        raise ValueError("Explicit native FA3 is required")
+    xqa = os.environ.get("XLLM_FLASHINFER_NATIVE_DECODE") == "xqa"
+    planner = "fa2" if xqa else "fa3"
+    if os.environ.get("XLLM_FLASHINFER_NATIVE_PLANNER") != planner:
+        raise ValueError("Explicit matching native prefill planner is required")
     torch.manual_seed(20261026)
     batch, length, page_size, heads, kv_heads, dim = 2, 257, 128, 40, 8, 128
     device = torch.device("cuda")
@@ -79,19 +81,32 @@ def check(arm: str) -> dict:
     q_scale = backend._fp8_query_scale if is_fp8 else 1.0
 
     def _expected(query: torch.Tensor, context: int) -> torch.Tensor:
-        effective = (query.float() / q_scale).clamp(-448, 448).to(torch.float8_e4m3fn).float() * q_scale if is_fp8 else query.float()
+        quantized = is_fp8 and (not xqa or query.shape[1] == 1)
+        effective = (query.float() / q_scale).clamp(-448, 448).to(torch.float8_e4m3fn).float() * q_scale if quantized else query.float()
         return _reference(effective, reference_key[:, :context], reference_value[:, :context], query.shape[1])
 
-    # Partial pages and chunked prefill use the actual native FA3 planner/dispatch.
-    query = torch.randn(batch, 17, heads, dim, device=device, dtype=torch.bfloat16) * .25
+    comparisons = {}
+
+    def _compare(name: str, actual: torch.Tensor, expected: torch.Tensor) -> None:
+        error = actual.float() - expected
+        relative = float((torch.linalg.vector_norm(error) / torch.linalg.vector_norm(expected).clamp_min(1e-9)).item())
+        comparisons[name] = {"relative_l2": relative, "max_abs": float(error.abs().max().item())}
+        torch.testing.assert_close(actual.float(), expected, rtol=.08, atol=.015)
+        if relative > .05:
+            raise ValueError("Native operator differs from its representable reference: " + name)
+
+    # Nonuniform logits make an incorrect Q/K scale visible to the reference.
+    packed_query = torch.randn(batch, 17, heads + 2 * kv_heads, dim, device=device, dtype=torch.bfloat16) * 2
+    query = packed_query[:, :, :heads]
     metadata = _attention_metadata(pages, slots.view(batch, length)[:, -17:].flatten(), length, 17, page_size)
     backend.prepare(metadata)
     actual = backend.execute_attention(query.flatten(0, 1), layer)
-    torch.testing.assert_close(actual.float(), _expected(query, length), rtol=.08, atol=.015)
+    _compare("prefill", actual, _expected(query, length))
     if actual.dtype != torch.bfloat16:
         raise ValueError("FA3 attention must return model BF16, not FP8 output")
     # Real capture/replay, followed by a different query and shorter live context.
-    query = torch.randn(batch, 1, heads, dim, device=device, dtype=torch.bfloat16) * .25
+    packed_query = torch.randn(batch, 1, heads + 2 * kv_heads, dim, device=device, dtype=torch.bfloat16) * 2
+    query = packed_query[:, :, :heads]
     metadata = _attention_metadata(pages, slots.view(batch, length)[:, -1:].flatten(), length, 1, page_size)
     backend.prepare(metadata, graph_mode=True)
     for _ in range(3):
@@ -102,7 +117,7 @@ def check(arm: str) -> dict:
         output = backend.execute_attention(query.flatten(0, 1), layer)
     graph.replay()
     torch.cuda.synchronize()
-    torch.testing.assert_close(output.float(), _expected(query, length), rtol=.08, atol=.015)
+    _compare("capture_replay", output, _expected(query, length))
     query.mul_(1.5)
     metadata.paged_kv_indptr_host.copy_(torch.tensor([0, 2, 4], dtype=torch.int32))
     metadata.paged_kv_indptr.copy_(metadata.paged_kv_indptr_host)
@@ -114,12 +129,38 @@ def check(arm: str) -> dict:
     backend.prepare(metadata, graph_mode=True)
     graph.replay()
     torch.cuda.synchronize()
-    torch.testing.assert_close(output.float(), _expected(query, 130), rtol=.08, atol=.015)
+    _compare("changed_context", output, _expected(query, 130))
+    if xqa:
+        # Native graph buckets retain empty padding rows with indptr repeats.
+        # Verify a different bucket with two live rows and two padded rows.
+        host_indptr = torch.tensor([0, 2, 4, 4, 4], dtype=torch.int32)
+        host_last = torch.tensor([2, 2, 1, 1], dtype=torch.int32)
+        padded = SimpleNamespace(is_prefill=False, is_chunked_prefill=False, qo_indptr=None, q_cu_seq_lens=None,
+            paged_kv_indptr_host=host_indptr, paged_kv_last_page_len_host=host_last,
+            paged_kv_indptr=host_indptr.to(device), paged_kv_last_page_len=host_last.to(device),
+            paged_kv_indices=pages[:, :2].flatten().contiguous())
+        backend.prepare(padded, graph_mode=True)
+        padded_query = torch.cat((query.flatten(0, 1), torch.zeros_like(query.flatten(0, 1))))
+        for _ in range(3):
+            backend.execute_attention(padded_query, layer)
+        torch.cuda.synchronize()
+        padded_graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(padded_graph):
+            padded_output = backend.execute_attention(padded_query, layer)
+        padded_graph.replay()
+        torch.cuda.synchronize()
+        _compare("padded_graph", padded_output[:batch], _expected(query, 130))
+        if not torch.isfinite(padded_output).all().item():
+            raise ValueError("XQA graph padding produced nonfinite output")
     return {"schema": "kv-native-fa3-operator-acceptance-v1", "classification": "operator_correctness_only",
             "arm": arm, "backend": backend.native_kv_runtime_info(), "device": torch.cuda.get_device_name(0),
+            "prefill_planner": planner, "decode_impl": "xqa" if xqa else "flashinfer",
+            "padded_graph_bucket_checked": xqa,
+            "noncontiguous_q_checked": True,
+            "reference_comparisons": comparisons,
             "real_capture_and_replay": True, "partial_page_and_replan": True, "model_loaded": False,
             "service_performance_measured": False, "model_quality_validated": False,
-            "reference": "FP32 dense causal attention on the same representable Q/K/V; rtol .08, atol .015"}
+            "reference": "FP32 dense causal attention on the same representable Q/K/V; relative L2 <=.05 plus rtol .08, atol .015"}
 
 
 def main() -> None:
@@ -130,7 +171,7 @@ def main() -> None:
     result = check(args.arm)
     with args.out.open("x") as stream:
         json.dump(result, stream, sort_keys=True, indent=2); stream.write("\n")
-    logger.info("Native FA3 operator/Graph acceptance passed for %s; no model/service/quality claim", args.arm)
+    logger.info("Native production operator/Graph acceptance passed for %s; no model/service/quality claim", args.arm)
 
 
 if __name__ == "__main__":

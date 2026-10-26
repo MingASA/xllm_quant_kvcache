@@ -11,21 +11,27 @@ from typing import Any
 
 PROFILE = "native-flashinfer-joint-v1"
 FA3_PROFILE = "native-flashinfer-fa3-joint-v1"
+XQA_PROFILE = "native-flashinfer-xqa-joint-v1"
 
 
 def native_environment(arm: str, key_scale: float, value_scale: float, *,
-                       planner: str = "fa2", query_scale: float | None = None) -> dict[str, str]:
+                       planner: str = "fa2", query_scale: float | None = None,
+                       decode: str = "flashinfer") -> dict[str, str]:
     if arm not in ("auto", "fp8_e4m3"):
         raise ValueError("Native quality supports only auto/fp8_e4m3")
     if not all(math.isfinite(value) and value > 0 for value in (key_scale, value_scale)):
         raise ValueError("Native FP8 requires positive finite fixed scales")
     if planner not in ("fa2", "fa3"):
         raise ValueError("Unsupported native planner")
+    if decode not in ("flashinfer", "xqa") or (decode == "xqa" and planner != "fa2"):
+        raise ValueError("Explicit XQA quality requires FA2 BF16-Q prefill")
     if planner == "fa3" and (query_scale is None or not math.isfinite(query_scale) or query_scale <= 0):
         raise ValueError("FA3 quality requires an explicit positive finite FP8 query scale")
     if planner == "fa2" and query_scale is not None:
         raise ValueError("FP8 query scale requires the explicit FA3 profile")
     env = {"XLLM_FLASHINFER_NATIVE_KV": "1", "XLLM_KV_QUALITY_MODE": "none"}
+    if decode == "xqa":
+        env.update(XLLM_FLASHINFER_NATIVE_PLANNER="fa2", XLLM_FLASHINFER_NATIVE_DECODE="xqa")
     if planner == "fa3":
         env["XLLM_FLASHINFER_NATIVE_PLANNER"] = "fa3"
     if arm == "fp8_e4m3":
@@ -43,8 +49,9 @@ def clean_native_environment(inherited: dict[str, str], selected: dict[str, str]
 
 
 def native_evidence(text: str, arm: str, graph_mode: str, scales: tuple[float, float], *,
-                    planner: str = "fa2", query_scale: float | None = None) -> dict[str, Any]:
-    native_environment(arm, *scales, planner=planner, query_scale=query_scale)
+                    planner: str = "fa2", query_scale: float | None = None,
+                    decode: str = "flashinfer") -> dict[str, Any]:
+    native_environment(arm, *scales, planner=planner, query_scale=query_scale, decode=decode)
     backend_lines = [line for line in text.splitlines() if "NATIVE_KV_BACKEND " in line]
     replay_lines = [line for line in text.splitlines() if "NATIVE_KV_GRAPH_REPLAY " in line]
     if len(backend_lines) != 1:
@@ -65,6 +72,16 @@ def native_evidence(text: str, arm: str, graph_mode: str, scales: tuple[float, f
                 or backend.get("kv_data_type") != dtype
                 or backend.get("q_scale") != (None if arm == "auto" else query_scale)):
             raise ValueError("FA3 actual Q/KV dtype or query scale differs")
+    if decode == "xqa":
+        expected_internal = "torch.bfloat16" if arm == "auto" else "torch.float8_e4m3fn"
+        if any(backend.get(key) != value for key, value in {
+            "profile_scope": "production_xqa", "decode_impl": "xqa", "q_data_type": "torch.bfloat16",
+            "kv_data_type": expected_internal,
+            "q_scale": None, "decode_internal_q_data_type": expected_internal, "xqa_max_context": 32768,
+            "xqa_enable_pdl": True,
+            "xqa_graph_padding": "reserved_page0_one_token_discard",
+        }.items()):
+            raise ValueError("Actual XQA prefill/decode/padding precision differs")
     replays = [json.loads(line.split("NATIVE_KV_GRAPH_REPLAY ", 1)[1]) for line in replay_lines]
     captured = backend.get("graph_captured_batches", [])
     if graph_mode == "cudagraphs":
@@ -86,7 +103,7 @@ def native_evidence(text: str, arm: str, graph_mode: str, scales: tuple[float, f
 
 def validate_native_manifest(path: Path, manifest: dict[str, Any], arm: str) -> None:
     profile = manifest.get("execution_profile")
-    if profile not in (PROFILE, FA3_PROFILE) or manifest.get("backend") != "flashinfer":
+    if profile not in (PROFILE, FA3_PROFILE, XQA_PROFILE) or manifest.get("backend") != "flashinfer":
         raise ValueError("Native quality requires the explicit FlashInfer execution profile")
     if arm not in ("auto", "fp8-e4m3"):
         raise ValueError("Native quality manifest cannot attest legacy/mixed arms")
@@ -110,8 +127,13 @@ def validate_native_manifest(path: Path, manifest: dict[str, Any], arm: str) -> 
     planner = "fa3" if profile == FA3_PROFILE else "fa2"
     if profile == FA3_PROFILE and manifest.get("native_planner") != planner:
         raise ValueError("FA3 quality manifest must explicitly pin its planner")
+    if profile == XQA_PROFILE and (manifest.get("native_planner") != "fa2"
+                                  or manifest.get("native_decode") != "xqa"
+                                  or manifest.get("fp8_query_scale") is not None):
+        raise ValueError("XQA manifest must explicitly pin prefill/decode/query precision")
     observed = native_evidence(text, arm.replace("-", "_"), manifest["graph_mode"], selected,
-                               planner=planner, query_scale=manifest.get("fp8_query_scale"))
+                               planner=planner, query_scale=manifest.get("fp8_query_scale"),
+                               decode="xqa" if profile == XQA_PROFILE else "flashinfer")
     if observed["backend"] != snapshot["backend"] or observed["graph_replays"] != snapshot["graph_replays"]:
         raise ValueError("Native raw marker snapshot and structured evidence disagree")
     if evidence.get("native_backend") != observed["backend"]:

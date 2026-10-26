@@ -64,6 +64,7 @@ def test_fa3_fp8_dispatch_converts_query_passes_scale_and_returns_model_dtype(mo
     backend.num_heads, backend.head_dim = 2, 8
     backend._fixed_scales = (.125, .0625)
     backend._fp8_query_enabled, backend._fp8_query_scale = True, .5
+    backend._decode_impl = "flashinfer"
     backend._metadata = SimpleNamespace(is_prefill=True, is_chunked_prefill=False)
     backend._fp8_caches = [(torch.zeros(1), torch.zeros(1))]
     calls = []
@@ -95,3 +96,36 @@ def test_operator_acceptance_reference_uses_the_causal_context_offset() -> None:
     result = _reference(query, key, value, 3).view(2, 3, 2, 8)
     expected = torch.tensor([1.0, 1.5, 2.0]).view(1, 3, 1, 1).expand(2, 3, 2, 8)
     torch.testing.assert_close(result, expected)
+
+
+def test_xqa_dispatch_passes_bf16_query_and_resident_alias_without_external_conversion(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_fi = types.ModuleType("flashinfer"); fake_fi.__version__ = "0.6.18.post1"
+    fake_decode = types.ModuleType("flashinfer.decode"); fake_decode.fast_decode_plan = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "flashinfer", fake_fi)
+    monkeypatch.setitem(sys.modules, "flashinfer.decode", fake_decode)
+    module = importlib.import_module("xllm.python.attention.flashinfer_fp8")
+    backend = module.FlashInferFP8Backend.__new__(module.FlashInferFP8Backend)
+    backend.num_heads, backend.head_dim, backend.scale = 2, 8, 8 ** -.5
+    backend._decode_impl = "xqa"
+    backend._metadata = SimpleNamespace(is_prefill=False, is_chunked_prefill=False)
+    backend._fp8_caches = [(torch.zeros(1), torch.zeros(1))]
+    backend._fixed_scales = (.125, .0625)
+    backend._decode_workspace = torch.zeros(1, dtype=torch.uint8)
+    calls = []
+
+    class Plan:
+        def run(self, query: torch.Tensor, pages: tuple, workspace: torch.Tensor, *scales: float) -> torch.Tensor:
+            assert query.dtype == torch.bfloat16
+            assert pages is backend._fp8_caches[0]
+            assert workspace is backend._decode_workspace
+            calls.append(scales)
+            return query.clone()
+
+    def forbidden(*args: object) -> object:
+        raise AssertionError("XQA must not call the separate FA3 query converter")
+
+    backend._active_xqa_plan = Plan()
+    monkeypatch.setattr(module, "quantize_query_fp8", forbidden)
+    query = torch.ones(3, 2, 8, dtype=torch.bfloat16)
+    assert backend.execute_attention(query, SimpleNamespace(layer_id=0)).shape == (3, 16)
+    assert calls == [(8 ** -.5, .125, .0625)]

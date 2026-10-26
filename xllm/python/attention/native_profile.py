@@ -14,14 +14,19 @@ def resolve_native_profile(environment: Mapping[str, str], native: bool, fp8: bo
     """Keep the historical FA2 profile while allowing an explicit FP8-Q FA3 path."""
     planner = environment.get("XLLM_FLASHINFER_NATIVE_PLANNER", "fa2" if native else "auto")
     query_flag = environment.get("XLLM_FLASHINFER_FP8_QUERY", "0")
+    decode = environment.get("XLLM_FLASHINFER_NATIVE_DECODE", "flashinfer")
+    if decode not in ("flashinfer", "xqa"):
+        raise ValueError("Invalid explicit native decode selection")
     if query_flag not in ("0", "1") or planner not in ("auto", "fa2", "fa3"):
         raise ValueError("Invalid native planner/query selection")
-    explicit = "XLLM_FLASHINFER_NATIVE_PLANNER" in environment or query_flag == "1"
+    explicit = "XLLM_FLASHINFER_NATIVE_PLANNER" in environment or query_flag == "1" or decode == "xqa"
     if explicit and not native:
         raise ValueError("Explicit production profile requires the native paged KV opt-in")
     if native and planner == "auto":
         raise ValueError("Native production plans must name their actual planner, without silent fallback")
     query_fp8 = query_flag == "1"
+    if decode == "xqa" and (planner != "fa2" or query_fp8):
+        raise ValueError("Production XQA requires explicit FA2 BF16-Q prefill without external Q quantization")
     if query_fp8 and (not fp8 or planner != "fa3"):
         raise ValueError("FP8 query is supported only in explicit native FA3 with resident FP8 KV")
     if fp8 and planner == "fa3" and not query_fp8:
@@ -31,5 +36,6 @@ def resolve_native_profile(environment: Mapping[str, str], native: bool, fp8: bo
         raise ValueError("FP8 query scale must be a positive normal FP32 scalar")
     if "XLLM_FLASHINFER_FP8_Q_SCALE" in environment and not query_fp8:
         raise ValueError("Query scale requires explicit FP8 query quantization")
-    return {"planner": planner, "query_fp8": query_fp8, "query_scale": query_scale,
-            "scope": "production_fa3" if planner == "fa3" else "historical_fa2" if native else "default"}
+    return {"planner": planner, "query_fp8": query_fp8, "query_scale": query_scale, "decode_impl": decode,
+            "scope": "production_xqa" if decode == "xqa" else "production_fa3" if planner == "fa3"
+            else "historical_fa2" if native else "default"}
