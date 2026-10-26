@@ -461,7 +461,11 @@ def _load_server_manifest(path: Path, arm: str, model: str, tokenizer_path: Path
         raise ValueError(f"server manifest fields must be lowercase SHA256 hex: {', '.join(invalid_hashes)}")
     if manifest["model_impl"] != expected_impl:
         raise ValueError(f"{arm} manifest model_impl must be {expected_impl!r}")
-    if manifest["graph_mode"] not in (False, "off", "disabled"):
+    if manifest.get("execution_profile") == "native-flashinfer-joint-v1":
+        from tools.native_kv_quality_contract import validate_native_manifest
+
+        validate_native_manifest(path, manifest, arm)
+    elif manifest["graph_mode"] not in (False, "off", "disabled"):
         raise ValueError("quality comparison requires graph_mode off")
     if manifest["kv_cache_mode"] != expected_kv:
         raise ValueError(f"{arm} manifest kv_cache_mode must be {expected_kv!r}")

@@ -15,6 +15,7 @@ import io
 import json
 import math
 import os
+import re
 import signal
 import socket
 import subprocess
@@ -30,9 +31,20 @@ sys.path.insert(0, str(ROOT))
 from scripts.logger import logger
 from tools import eval_kv_cache_quality as evaluator
 from tools.qwen25_experiment_model import checkpoint_provenance, read_profile, sha256_file
+from tools.native_kv_quality_contract import (
+    PROFILE as NATIVE_PROFILE, clean_native_environment, native_environment, native_evidence,
+)
 
 ARMS = ("auto", "int8", "fp8_e4m3", "int4")
 EVALUATOR = ROOT / "tools/eval_kv_cache_quality.py"
+
+
+def _native_mode(args: argparse.Namespace) -> bool:
+    return getattr(args, "attention_backend", "triton") == "native-flashinfer"
+
+
+def _graph_mode(args: argparse.Namespace) -> str:
+    return getattr(args, "graph_mode", "off")
 
 
 def _digest(value: Any) -> str:
@@ -83,6 +95,15 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--dry-run", action="store_true", help="JSON plan/audit only; no GPU, services or output files")
+    parser.add_argument("--attention-backend", choices=("triton", "native-flashinfer"), default="triton")
+    parser.add_argument("--graph-mode", choices=("off", "cudagraphs"), default="off")
+    parser.add_argument("--fp8-k-scale", type=float)
+    parser.add_argument("--fp8-v-scale", type=float)
+    parser.add_argument("--cohort-scope", choices=("pilot", "full"), default="full")
+    parser.add_argument("--binary-source-commit", help="Source SHA of the existing binary; tools-only changes need no rebuild")
+    parser.add_argument("--runtime-source-repo", type=Path,
+                        help="Native controller: existing read-only runtime checkout, separate from frozen tools")
+    parser.add_argument("--runner-source-commit", help="Controller-pinned commit of copied tools; file hashes remain authoritative")
     return parser
 
 
@@ -118,6 +139,19 @@ def _validate_args(args: argparse.Namespace) -> dict[str, Path]:
         raise ValueError("Invalid cache/admission/limit")
     if len(set(args.arms)) != len(args.arms):
         raise ValueError("Duplicate arms")
+    if _native_mode(args):
+        if any(arm not in ("auto", "fp8_e4m3") for arm in args.arms):
+            raise ValueError("Native quality requires explicit --arms auto fp8_e4m3 (or one supervised arm)")
+        if args.max_seqs_per_batch > 16:
+            raise ValueError("Native quality requires an explicit bounded --max-seqs-per-batch <=16")
+        if args.fp8_k_scale is None or args.fp8_v_scale is None:
+            raise ValueError("Native paired quality requires explicit fixed K/V scales")
+        native_environment("fp8_e4m3", args.fp8_k_scale, args.fp8_v_scale)
+        if (not args.binary_source_commit or len(args.binary_source_commit) != 40
+                or any(char not in "0123456789abcdef" for char in args.binary_source_commit)):
+            raise ValueError("Native quality must explicitly pin --binary-source-commit")
+    elif args.graph_mode != "off" or args.fp8_k_scale is not None or args.fp8_v_scale is not None:
+        raise ValueError("Graph/scales options require explicit native-flashinfer mode")
     return _task_paths(args)
 
 
@@ -134,7 +168,10 @@ def _data_audit(args: argparse.Namespace, paths: dict[str, Path]) -> dict[str, A
         unique = len({_digest(item) for item in content})
         ids = [row.get("_id", row.get("id")) for row in rows]
         ids = [str(item) for item in ids if item is not None]
-        if unique != len(rows) or len(set(ids)) != len(ids):
+        native = _native_mode(args)
+        unique_records = len({_digest(row) for row in rows})
+        if ((not native or task == "gsm8k") and unique != len(rows)
+                or unique_records != len(rows) or len(set(ids)) != len(ids)):
             raise ValueError(f"Duplicate questions/IDs in {task}; do not concatenate repeated QDQ rounds")
         audit["datasets"][task] = {
             "path": str(path),
@@ -143,6 +180,10 @@ def _data_audit(args: argparse.Namespace, paths: dict[str, Path]) -> dict[str, A
             "unique_questions": unique,
             "selected_rows": len(rows[: args.limit]),
         }
+        if native:
+            audit["datasets"][task].update(unique_records=unique_records, duplicate_prompt_records=len(rows) - unique)
+            if args.cohort_scope == "full" and (args.limit is not None or len(rows) != (1319 if task == "gsm8k" else 50)):
+                raise ValueError("Native full cohort requires frozen GSM8K1319 / LongBench50 counts; use pilot explicitly")
     if "gsm8k" in paths:
         shots = json.loads(args.gsm8k_shots.read_text())
         if (
@@ -159,18 +200,19 @@ def _data_audit(args: argparse.Namespace, paths: dict[str, Path]) -> dict[str, A
 
 
 def _server_command(args: argparse.Namespace, arm: str) -> list[str]:
+    graph = _graph_mode(args) == "cudagraphs"
     return [
         str(args.server_binary.resolve()),
         f"--model={args.model.resolve()}",
         "--model_id=Qwen2.5-14B-Instruct",
         "--model_impl=python",
-        f"--python_model_path={ROOT}",
+        f"--python_model_path={getattr(args, 'runtime_source_repo', None) or ROOT}",
         "--host=127.0.0.1",
         f"--port={args.port}",
         f"--kv_cache_dtype={arm}",
-        "--enable_graph=false",
+        f"--enable_graph={'true' if graph else 'false'}",
         "--enable_prefill_piecewise_graph=false",
-        "--python_graph_backend=off",
+        f"--python_graph_backend={_graph_mode(args)}",
         "--enable_prefix_cache=false",
         f"--max_cache_size={args.max_cache_size}",
         f"--block_size={args.block_size}",
@@ -181,8 +223,8 @@ def _server_command(args: argparse.Namespace, arm: str) -> list[str]:
     ]
 
 
-def _environment(args: argparse.Namespace) -> dict[str, str]:
-    return {
+def _environment(args: argparse.Namespace, arm: str | None = None) -> dict[str, str]:
+    environment = {
         "CUDA_VISIBLE_DEVICES": args.gpu,
         "XLLM_QUANTIZED_BACKEND": "triton",
         "XLLM_KV_QUALITY_MODE": "none",
@@ -190,6 +232,10 @@ def _environment(args: argparse.Namespace) -> dict[str, str]:
         "TRANSFORMERS_OFFLINE": "1",
         "PYTHONDONTWRITEBYTECODE": "1",
     }
+    if _native_mode(args):
+        environment.pop("XLLM_QUANTIZED_BACKEND")
+        environment.update(native_environment(arm or "auto", args.fp8_k_scale, args.fp8_v_scale))
+    return environment
 
 
 def _evaluator_command(
@@ -241,10 +287,12 @@ def _evaluator_command(
 
 def _plan(args: argparse.Namespace, paths: dict[str, Path]) -> dict[str, Any]:
     return {
-        "scope": "smoke_only" if args.limit else "one_unique_dataset_round",
+        "scope": "protocol_pilot_no_full_quality_claim" if _native_mode(args) and args.cohort_scope == "pilot"
+        else "smoke_only" if args.limit else "one_unique_dataset_round",
         "tasks": list(paths),
         "arms": args.arms,
         "environment": _environment(args),
+        "environments_by_arm": {arm: _environment(args, arm) for arm in args.arms},
         "resource_configuration": {
             key: getattr(args, key)
             for key in (
@@ -414,6 +462,9 @@ def _verify_journal(args: argparse.Namespace, task: str, arm: str, prepared: dic
     _validate_allocation(
         arm, json.loads((attempt / "allocation.json").read_text()), provenance["profile"], args.block_size
     )
+    if _native_mode(args):
+        evaluator._load_server_manifest(attempt / "server_manifest.json", label,
+                                        "Qwen2.5-14B-Instruct", args.model)
     completed = evaluator._validate_resume_prefix(
         result, prepared["rows"], prepared["prompts"], prepared["counts"], prepared["chat"]
     )
@@ -442,13 +493,13 @@ def _server_manifest(
     args: argparse.Namespace, arm: str, provenance: dict[str, Any], evidence: dict[str, Any]
 ) -> dict[str, Any]:
     template = json.loads((args.model / "tokenizer_config.json").read_text()).get("chat_template")
-    return {
+    manifest = {
         "server_started": True,
         "model_impl": "python",
-        "graph_mode": "off",
+        "graph_mode": _graph_mode(args),
         "kv_cache_mode": arm,
         "quality_transform_mode": "none",
-        "backend": "triton",
+        "backend": "flashinfer" if _native_mode(args) else "triton",
         "model": "Qwen2.5-14B-Instruct",
         "checkpoint_path": str(args.model.resolve()),
         "checkpoint_sha256": provenance["weights"]["sha256"],
@@ -467,6 +518,11 @@ def _server_manifest(
         },
         "server_attestation": evidence,
     }
+    if _native_mode(args):
+        manifest.update(execution_profile=NATIVE_PROFILE,
+                        paired_fp8_scales={"key": args.fp8_k_scale, "value": args.fp8_v_scale},
+                        binary_source_commit=args.binary_source_commit)
+    return manifest
 
 
 def _wait_ready(process: subprocess.Popen, args: argparse.Namespace) -> None:
@@ -511,6 +567,21 @@ def _attempt(root: Path) -> Path:
     return path
 
 
+def _native_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
+    payload = {"model": "Qwen2.5-14B-Instruct", "prompt": "Count from one to one hundred.",
+               "max_tokens": 16, "temperature": 0, "ignore_eos": True}
+    request = urllib.request.Request(f"http://127.0.0.1:{args.port}/v1/completions",
+                                     data=json.dumps(payload).encode(),
+                                     headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(request, timeout=args.timeout) as stream:
+        response = json.load(stream)
+    choices = response.get("choices", [])
+    if (response.get("usage", {}).get("completion_tokens") != 16 or not choices
+            or choices[0].get("finish_reason") != "length"):
+        raise ValueError("Native Graph bootstrap did not honor fixed length")
+    return response
+
+
 def _run_arm(
     args: argparse.Namespace,
     paths: dict[str, Path],
@@ -530,7 +601,9 @@ def _run_arm(
     attempt = _attempt(args.output / "arms" / arm)
     logger.info("Starting %s: %d pending tasks; evidence in %s", arm, len(pending), attempt)
     command = _server_command(args, arm)
-    _new_json(attempt / "launch.json", {"command": command, "environment": _environment(args)})
+    if _native_mode(args):
+        env = clean_native_environment(env, _environment(args, arm))
+    _new_json(attempt / "launch.json", {"command": command, "environment": _environment(args, arm)})
     # Check only this loopback port; never stop another process or container.
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", args.port))
@@ -540,17 +613,20 @@ def _run_arm(
         )
         try:
             _wait_ready(process, args)
-            response = evaluator._api_call(
-                f"http://127.0.0.1:{args.port}/v1",
-                "Qwen2.5-14B-Instruct",
-                "Reply with one word.",
-                1,
-                args.seed,
-                args.timeout,
-                True,
-                [151645, 151643],
-                [],
-            )
+            if _native_mode(args):
+                response = _native_bootstrap(args)
+            else:
+                response = evaluator._api_call(
+                    f"http://127.0.0.1:{args.port}/v1",
+                    "Qwen2.5-14B-Instruct",
+                    "Reply with one word.",
+                    1,
+                    args.seed,
+                    args.timeout,
+                    True,
+                    [151645, 151643],
+                    [],
+                )
             if not response.get("choices"):
                 raise ValueError("Cache bootstrap failed")
             _new_json(attempt / "bootstrap.json", response)
@@ -567,17 +643,22 @@ def _run_arm(
             _validate_allocation(arm, allocations[0], provenance["profile"], args.block_size)
             _new_json(attempt / "allocation.json", allocations[0])
             manifest = attempt / "server_manifest.json"
+            attestation = {"attempt": str(attempt), "allocation_sha256": sha256_file(attempt / "allocation.json"),
+                           "allocation_verified": True}
+            if _native_mode(args):
+                # Read again after the real multi-token bootstrap has replayed decode.
+                native = native_evidence((attempt / "server.log").read_text(errors="replace"), arm,
+                                         args.graph_mode, (args.fp8_k_scale, args.fp8_v_scale))
+                _new_json(attempt / "native_evidence.json", native)
+                attestation.update(native_backend=native["backend"],
+                                   native_evidence_sha256=sha256_file(attempt / "native_evidence.json"))
             _new_json(
                 manifest,
                 _server_manifest(
                     args,
                     arm,
                     provenance,
-                    {
-                        "attempt": str(attempt),
-                        "allocation_sha256": sha256_file(attempt / "allocation.json"),
-                        "allocation_verified": True,
-                    },
+                    attestation,
                 ),
             )
             # Exercise the evaluator's manifest contract before launching its subprocess.
@@ -713,7 +794,8 @@ def _report(args: argparse.Namespace, paths: dict[str, Path], prepared: dict[str
         else {}
     )
     summary = {
-        "scope": "smoke_only" if args.limit else "one_unique_dataset_round",
+        "scope": "protocol_pilot_no_full_quality_claim" if _native_mode(args) and args.cohort_scope == "pilot"
+        else "smoke_only" if args.limit else "one_unique_dataset_round",
         "tasks": table,
         "longbench_8_task_macro": macros,
         "paired": "paired/<task>/<arm>/paired_scores.json"
@@ -775,21 +857,35 @@ def main(argv: list[str] | None = None) -> None:
     if not torch.cuda.is_available() or torch.cuda.device_count() != 1:
         raise ValueError("Exactly one visible CUDA GPU is required")
     versions = {name: importlib.metadata.version(name) for name in ("torch", "triton", "transformers")}
+    runtime_root = (args.runtime_source_repo or ROOT).resolve()
+    if args.runtime_source_repo and (
+        not _native_mode(args) or not re.fullmatch(r"[0-9a-f]{40}", args.runner_source_commit or "")
+    ):
+        raise ValueError("Separate native runtime requires pinned runner source commit")
+    runtime_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=runtime_root, text=True).strip()
+    if args.runtime_source_repo and runtime_commit != args.binary_source_commit:
+        raise ValueError("Runtime checkout differs from native binary source commit")
     sources = subprocess.check_output(
-        ["git", "ls-files", "xllm/python", "xllm/core/framework/kv_cache"], cwd=ROOT, text=True
+        ["git", "ls-files", "xllm/python", "xllm/core/framework/kv_cache"], cwd=runtime_root, text=True
     ).splitlines()
-    sources += [
+    tool_sources = [
         str(Path(__file__).relative_to(ROOT)),
         str(EVALUATOR.relative_to(ROOT)),
         "tools/qwen25_experiment_model.py",
     ]
+    if _native_mode(args):
+        tool_sources += ["tools/native_kv_quality_contract.py"]
+        sources += ["xllm/core/runtime/worker_impl.cpp"]
     manifest = {
         "schema_version": 1,
         "plan": plan,
         "data_audit": audit,
         "model_provenance": provenance,
-        "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
-        "source_sha256": {name: sha256_file(ROOT / name) for name in sources},
+        "source_commit": runtime_commit,
+        "source_sha256": {name: sha256_file(runtime_root / name) for name in sources},
+        "runner_source_commit": args.runner_source_commit or subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
+        "runner_source_sha256": {name: sha256_file(ROOT / name) for name in tool_sources},
         "binary_sha256": sha256_file(args.server_binary),
         "versions": versions,
         "gpu": {"name": torch.cuda.get_device_name(0), "capability": list(torch.cuda.get_device_capability(0))},
