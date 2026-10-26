@@ -54,14 +54,18 @@ def check(arm: str) -> dict:
     device = torch.device("cuda")
     shape = (6, page_size, kv_heads, dim)
     is_fp8 = arm == "fp8_e4m3"
-    cache = LayerCache(torch.zeros(shape, device=device, dtype=torch.uint8 if is_fp8 else torch.bfloat16),
-                       torch.zeros(shape, device=device, dtype=torch.uint8 if is_fp8 else torch.bfloat16),
+    initial = (255 if is_fp8 else float("nan")) if xqa else 0
+    cache = LayerCache(torch.full(shape, initial, device=device, dtype=torch.uint8 if is_fp8 else torch.bfloat16),
+                       torch.full(shape, initial, device=device, dtype=torch.uint8 if is_fp8 else torch.bfloat16),
                        key_scale=torch.ones(shape[:-1], device=device) if is_fp8 else None,
                        value_scale=torch.ones(shape[:-1], device=device) if is_fp8 else None)
     options = {"cache_dtype": "fp8_e4m3", "key_scale": .125, "value_scale": .0625} if is_fp8 else {}
     backend = (FlashInferFP8Backend if is_fp8 else FlashInferBackend)(
         heads, kv_heads, dim, dim**-.5, -1, device, torch.bfloat16, **options)
     backend.bind_kv_caches([cache])
+    if xqa and any(torch.count_nonzero(payload).item() != 0 for payload in (cache.key, cache.value)):
+        raise ValueError("XQA did not initialize its fresh dirty/NaN payload storage")
+    poison = (126 if is_fp8 else 100.0) if xqa else (255 if is_fp8 else float("nan"))
     pages = torch.tensor([[2, 0, 4], [3, 1, 5]], device=device, dtype=torch.int32)
     positions = torch.arange(length, device=device)
     slots = (pages[:, positions // page_size] * page_size + positions % page_size).flatten()
@@ -76,7 +80,7 @@ def check(arm: str) -> dict:
         cache.value.view(-1, kv_heads, dim)[slots.long()] = value.flatten(0, 1)
         reference_key, reference_value = key.float(), value.float()
     for payload in (cache.key, cache.value):
-        payload[pages[:, -1].long(), 1:] = 255 if is_fp8 else float("nan")
+        payload[pages[:, -1].long(), 1:] = poison
     layer = SimpleNamespace(layer_id=0, num_heads=heads, num_kv_heads=kv_heads, head_dim=dim)
     q_scale = backend._fp8_query_scale if is_fp8 else 1.0
 
@@ -125,7 +129,7 @@ def check(arm: str) -> dict:
     metadata.paged_kv_last_page_len.fill_(2)
     metadata.paged_kv_last_page_len_host.fill_(2)
     for payload in (cache.key, cache.value):
-        payload[pages[:, 1].long(), 2:] = 255 if is_fp8 else float("nan")
+        payload[pages[:, 1].long(), 2:] = poison
     backend.prepare(metadata, graph_mode=True)
     graph.replay()
     torch.cuda.synchronize()
@@ -152,12 +156,29 @@ def check(arm: str) -> dict:
         _compare("padded_graph", padded_output[:batch], _expected(query, 130))
         if not torch.isfinite(padded_output).all().item():
             raise ValueError("XQA graph padding produced nonfinite output")
+    padding_diagnostics = {}
+    if xqa:
+        # Controlled invalid-state probes retain the observed kernel limitation.
+        # Only one unused K/V tail changes; Q, live KV, graph and PDL stay fixed.
+        for name, payload in (("key", cache.key), ("value", cache.value)):
+            payload[pages[:, 1].long(), 2:] = 255 if is_fp8 else float("nan")
+            graph.replay()
+            torch.cuda.synchronize()
+            padding_diagnostics[name] = {"finite_outputs": int(torch.isfinite(output).sum().item()),
+                                         "total_outputs": output.numel()}
+            payload[pages[:, 1].long(), 2:] = poison
+        graph.replay()
+        torch.cuda.synchronize()
+        _compare("restored_finite_padding", output, _expected(query, 130))
     return {"schema": "kv-native-fa3-operator-acceptance-v1", "classification": "operator_correctness_only",
             "arm": arm, "backend": backend.native_kv_runtime_info(), "device": torch.cuda.get_device_name(0),
             "prefill_planner": planner, "decode_impl": "xqa" if xqa else "flashinfer",
             "padded_graph_bucket_checked": xqa,
             "noncontiguous_q_checked": True,
             "reference_comparisons": comparisons,
+            "fresh_dirty_cache_initialized_to_zero": xqa,
+            "unused_padding_reference": "maximum_finite_FP8_or_large_finite_BF16" if xqa else "NaN",
+            "invalid_nan_padding_diagnostics": padding_diagnostics,
             "real_capture_and_replay": True, "partial_page_and_replan": True, "model_loaded": False,
             "service_performance_measured": False, "model_quality_validated": False,
             "reference": "FP32 dense causal attention on the same representable Q/K/V; relative L2 <=.05 plus rtol .08, atol .015"}

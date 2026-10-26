@@ -64,6 +64,7 @@ def _manifest(tmp_path: Path, arm: str = "fp8_e4m3", planner: str = "fa2", decod
                        q_scale=None, decode_internal_q_data_type="torch.bfloat16" if arm == "auto" else "torch.float8_e4m3fn",
                        xqa_max_context=32768, xqa_graph_padding="reserved_page0_one_token_discard")
         backend["xqa_enable_pdl"] = True
+        backend["xqa_unused_kv_policy"] = "finite_full_initialization"
     native = native_evidence(_log(backend), arm, "cudagraphs", (0.125, 0.0625), planner=planner,
                              query_scale=1.0 if planner == "fa3" else None, decode=decode)
     (attempt / "native_evidence.json").write_text(json.dumps(native))

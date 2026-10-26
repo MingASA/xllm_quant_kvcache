@@ -146,17 +146,25 @@ class FlashInferBackend(AttentionBackend):
     def bind_kv_caches(self, kv_caches: list[LayerCache]) -> None:
         if not kv_caches:
             raise ValueError("FlashInferBackend requires at least one KV cache")
+        if self._decode_impl == "xqa" and self._kv_caches:
+            if [(cache.key.data_ptr(), cache.value.data_ptr()) for cache in self._kv_caches] != [
+                (cache.key.data_ptr(), cache.value.data_ptr()) for cache in kv_caches
+            ]:
+                raise RuntimeError("Cannot replace XQA resident storage after initial binding")
+            return
         if self._graph_decode_wrappers and [
             (cache.key.data_ptr(), cache.value.data_ptr()) for cache in self._kv_caches
         ] != [(cache.key.data_ptr(), cache.value.data_ptr()) for cache in kv_caches]:
             raise RuntimeError("Cannot replace KV cache storage after decode graph planning/capture")
         self._kv_caches = kv_caches
         if self._decode_impl == "xqa":
-            # BlockManager reserves page0. Empty graph rows may safely read its
-            # first token; they never write KV slots or contribute user logits.
+            # SM90 XQA may multiply masked probabilities by unused V lanes.
+            # Fresh empty storage can contain FP8 NaNs, so initialize every
+            # payload once before use. Reused pages then contain finite values.
+            # This must never clear an already-bound live/prefix cache.
             for cache in kv_caches:
-                cache.key[0].zero_()
-                cache.value[0].zero_()
+                cache.key.zero_()
+                cache.value.zero_()
         logger.info("KV_ALLOCATION %s", cache_allocation(kv_caches, self._kv_format))
 
     @property
@@ -180,6 +188,7 @@ class FlashInferBackend(AttentionBackend):
             "decode_impl": self._decode_impl,
             "xqa_max_context": 32768 if self._decode_impl == "xqa" else None,
             "xqa_enable_pdl": True if self._decode_impl == "xqa" else None,
+            "xqa_unused_kv_policy": "finite_full_initialization" if self._decode_impl == "xqa" else None,
             "xqa_graph_padding": "reserved_page0_one_token_discard" if self._decode_impl == "xqa" else None,
             "decode_internal_q_data_type": ("torch.float8_e4m3fn" if self._decode_impl == "xqa"
                                             and self._kv_data_type == torch.float8_e4m3fn else str(self._query_data_type)),

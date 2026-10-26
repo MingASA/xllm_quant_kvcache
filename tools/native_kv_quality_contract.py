@@ -79,6 +79,7 @@ def native_evidence(text: str, arm: str, graph_mode: str, scales: tuple[float, f
             "kv_data_type": expected_internal,
             "q_scale": None, "decode_internal_q_data_type": expected_internal, "xqa_max_context": 32768,
             "xqa_enable_pdl": True,
+            "xqa_unused_kv_policy": "finite_full_initialization",
             "xqa_graph_padding": "reserved_page0_one_token_discard",
         }.items()):
             raise ValueError("Actual XQA prefill/decode/padding precision differs")

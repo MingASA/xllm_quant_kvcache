@@ -5,6 +5,7 @@ import pytest
 import torch
 import types
 import sys
+import importlib
 
 from tools.native_kv_quality_contract import native_environment
 from xllm.python.attention.native_profile import resolve_native_profile
@@ -65,3 +66,26 @@ def test_xqa_raw_pointer_boundary_materializes_strided_queries(monkeypatch: pyte
     decode.xqa_batch_decode_with_kv_cache = fixture
     monkeypatch.setitem(sys.modules, "flashinfer.decode", decode)
     plan.run(query, pages, torch.zeros(1, dtype=torch.uint8), 128 ** -.5, .125, .0625)
+
+
+def test_finite_initialization_never_clears_live_or_rebound_storage(monkeypatch: pytest.MonkeyPatch) -> None:
+    fi = types.ModuleType("flashinfer"); fi.__version__ = "0.6.18.post1"
+    decode = types.ModuleType("flashinfer.decode"); decode.fast_decode_plan = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "flashinfer", fi)
+    monkeypatch.setitem(sys.modules, "flashinfer.decode", decode)
+    from xllm.python.attention.backend import LayerCache
+    backend_type = importlib.import_module("xllm.python.attention.flashinfer").FlashInferBackend
+    backend = backend_type.__new__(backend_type)
+    backend._decode_impl, backend.dtype = "xqa", torch.bfloat16
+    backend._kv_caches, backend._graph_decode_wrappers = [], {}
+    cache = LayerCache(torch.full((2, 128, 8, 128), float("nan")),
+                       torch.full((2, 128, 8, 128), float("nan")))
+    backend.bind_kv_caches([cache])
+    assert torch.count_nonzero(cache.key) == 0 and torch.count_nonzero(cache.value) == 0
+    cache.key.fill_(1); cache.value.fill_(2)
+    backend.bind_kv_caches([cache])
+    assert torch.all(cache.key == 1) and torch.all(cache.value == 2)
+    replacement = LayerCache(torch.zeros_like(cache.key), torch.zeros_like(cache.value))
+    with pytest.raises(RuntimeError, match="replace XQA"):
+        backend.bind_kv_caches([replacement])
+    assert torch.all(cache.key == 1)
