@@ -43,15 +43,22 @@ def _log(backend: dict) -> str:
     return "NATIVE_KV_BACKEND " + json.dumps(backend) + "\nNATIVE_KV_GRAPH_REPLAY " + json.dumps(replay)
 
 
-def _manifest(tmp_path: Path, arm: str = "fp8_e4m3") -> tuple[Path, dict]:
-    args = _args(tmp_path)
+def _manifest(tmp_path: Path, arm: str = "fp8_e4m3", planner: str = "fa2") -> tuple[Path, dict]:
+    args = _args(tmp_path, *(["--native-planner", "fa3", "--fp8-q-scale", "1.0"] if planner == "fa3" else []))
     args.model.mkdir()
     (args.model / "config.json").write_text('{"model_type":"qwen2"}')
     (args.model / "tokenizer_config.json").write_text('{"chat_template":"frozen"}')
     attempt = tmp_path / "attempt"
     attempt.mkdir()
     (attempt / "allocation.json").write_text('{"fixture":"allocation already verified by runner"}')
-    native = native_evidence(_log(_backend(arm)), arm, "cudagraphs", (0.125, 0.0625))
+    backend = _backend(arm)
+    if planner == "fa3":
+        backend.update(planner_backend="fa3", profile_scope="production_fa3",
+                       q_data_type="torch.bfloat16" if arm == "auto" else "torch.float8_e4m3fn",
+                       kv_data_type="torch.bfloat16" if arm == "auto" else "torch.float8_e4m3fn",
+                       q_scale=None if arm == "auto" else 1.0)
+    native = native_evidence(_log(backend), arm, "cudagraphs", (0.125, 0.0625), planner=planner,
+                             query_scale=1.0 if planner == "fa3" else None)
     (attempt / "native_evidence.json").write_text(json.dumps(native))
     evidence = {"attempt": str(attempt), "allocation_verified": True,
                 "allocation_sha256": hashlib.sha256((attempt / "allocation.json").read_bytes()).hexdigest(),
@@ -152,3 +159,38 @@ def test_bootstrap_forces_decode_but_quality_protocol_does_not(tmp_path: Path) -
     response["choices"][0]["finish_reason"] = "stop"
     with patch.object(runner.urllib.request, "urlopen", urlopen), pytest.raises(ValueError, match="fixed length"):
         runner._native_bootstrap(args)
+
+
+@pytest.mark.parametrize("arm", ["auto", "fp8_e4m3"])
+def test_fa3_quality_attests_actual_query_dtype_and_separate_profile(tmp_path: Path, arm: str) -> None:
+    path, manifest = _manifest(tmp_path, arm, "fa3")
+    observed = evaluator._load_server_manifest(path, arm.replace("_", "-"), manifest["model"], tmp_path / "model")
+    assert observed["execution_profile"] == "native-flashinfer-fa3-joint-v1"
+    snapshot = json.loads((path.parent / "native_evidence.json").read_text())
+    with pytest.raises(ValueError, match="planner/backend/Graph"):
+        native_evidence(_log(snapshot["backend"]), arm, "cudagraphs", (0.125, 0.0625))
+    for field, wrong in [("q_data_type", "torch.float32"), ("q_scale", 2.0), ("planner_backend", "fa2")]:
+        backend = copy.deepcopy(snapshot["backend"])
+        backend[field] = wrong
+        with pytest.raises(ValueError):
+            native_evidence(_log(backend), arm, "cudagraphs", (0.125, 0.0625), planner="fa3", query_scale=1.0)
+
+
+def test_fa3_quality_environment_and_production_prefix_are_explicit(tmp_path: Path) -> None:
+    args = _args(tmp_path, "--native-planner", "fa3", "--fp8-q-scale", "1.0", "--max-seqs-per-batch", "128")
+    runner._validate_args(args)
+    bf16, fp8 = runner._environment(args, "auto"), runner._environment(args, "fp8_e4m3")
+    assert bf16["XLLM_FLASHINFER_NATIVE_PLANNER"] == fp8["XLLM_FLASHINFER_NATIVE_PLANNER"] == "fa3"
+    assert "XLLM_FLASHINFER_FP8_QUERY" not in bf16
+    assert fp8["XLLM_FLASHINFER_FP8_QUERY"] == "1"
+    assert float(fp8["XLLM_FLASHINFER_FP8_Q_SCALE"]) == 1.0
+    assert "--enable_prefix_cache=true" in runner._server_command(args, "auto")
+
+
+@pytest.mark.parametrize("extra", [["--native-planner", "fa3"], ["--fp8-q-scale", "1.0"],
+                                  ["--native-planner", "fa3", "--fp8-q-scale", "nan"],
+                                  ["--native-planner", "fa3", "--fp8-q-scale", "0"],
+                                  ["--runtime-source-commit", "bad"]])
+def test_quality_rejects_implicit_or_invalid_query_profile(tmp_path: Path, extra: list[str]) -> None:
+    with pytest.raises(ValueError):
+        runner._validate_args(_args(tmp_path, *extra))
