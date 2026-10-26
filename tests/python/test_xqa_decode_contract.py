@@ -49,12 +49,13 @@ def test_unsupported_xqa_selection_never_falls_back(env: dict, native: bool) -> 
 
 def test_xqa_raw_pointer_boundary_materializes_strided_queries(monkeypatch: pytest.MonkeyPatch) -> None:
     plan = XQADecodePlan.__new__(XQADecodePlan)
-    plan._metadata_addresses, plan._batch_size, plan._maximum = (1, 2, 3), 2, 32768
+    plan._metadata_addresses, plan._batch_size, plan._maximum, plan._page_size = (1, 2, 3), 2, 32768, 128
     plan._table = torch.zeros((2, 256), dtype=torch.int32)
     plan._lengths = torch.ones(2, dtype=torch.uint32)
     query = torch.randn(2, 56, 128, dtype=torch.bfloat16)[:, :40]
     assert not query.is_contiguous()
-    pages = (torch.zeros(1), torch.zeros(1))
+    pages = (torch.zeros((2, 128, 8, 128), dtype=torch.bfloat16),
+             torch.zeros((2, 128, 8, 128), dtype=torch.bfloat16))
     decode = types.ModuleType("flashinfer.decode")
 
     def fixture(query_arg: torch.Tensor, cache_arg: tuple, *args: object, **kwargs: object) -> torch.Tensor:
@@ -66,6 +67,9 @@ def test_xqa_raw_pointer_boundary_materializes_strided_queries(monkeypatch: pyte
     decode.xqa_batch_decode_with_kv_cache = fixture
     monkeypatch.setitem(sys.modules, "flashinfer.decode", decode)
     plan.run(query, pages, torch.zeros(1, dtype=torch.uint8), 128 ** -.5, .125, .0625)
+    wrong_format = tuple(tensor.to(torch.float8_e5m2) for tensor in pages)
+    with pytest.raises(ValueError, match="E4M3 cache"):
+        plan.run(query, wrong_format, torch.zeros(1, dtype=torch.uint8), 128 ** -.5, .125, .0625)
 
 
 def test_finite_initialization_never_clears_live_or_rebound_storage(monkeypatch: pytest.MonkeyPatch) -> None:

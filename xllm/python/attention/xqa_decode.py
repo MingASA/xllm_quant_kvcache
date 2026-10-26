@@ -80,8 +80,15 @@ class XQADecodePlan:
 
         if self._metadata_addresses is None:
             raise RuntimeError("XQA decode must be prepared before execution")
-        if query.shape[0] != self._batch_size or query.dtype not in (torch.bfloat16, torch.float16):
+        if query.ndim != 3 or query.shape[0] != self._batch_size or query.dtype not in (torch.bfloat16, torch.float16):
             raise ValueError("XQA requires one BF16/FP16 query per planned sequence")
+        key, value = cache
+        if (key.dtype not in (query.dtype, torch.float8_e4m3fn) or value.dtype != key.dtype
+                or key.shape != value.shape or key.ndim != 4 or key.shape[1] != self._page_size
+                or key.shape[0] < 1 or key.shape[2] < 1 or key.shape[-1] != query.shape[-1]
+                or query.shape[1] % key.shape[2] or key.stride() != value.stride() or key.stride(-1) != 1
+                or any(tensor.device != self._table.device for tensor in (query, key, value))):
+            raise ValueError("XQA requires same-device NHD BF16/FP16 or E4M3 cache with compatible heads")
         # The SM90 wrapper forwards Q as a raw packed pointer without Q strides.
         # Fused QKV projections can leave token-stride gaps; materialize inside
         # capture rather than allowing reads into the adjacent K/V projections.
