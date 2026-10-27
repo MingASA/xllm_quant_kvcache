@@ -89,6 +89,7 @@ class FlashInferFP8Backend(FlashInferBackend):
             "v_scale": self._fixed_scales[1],
             "writer": "triton_quantize_scatter_only",
             "attention_impl": "flashinfer",
+            "full_BF16_KV_shadow": False,
             "fp8_views_alias_resident_pages": all(
                 key.data_ptr() == self._kv_caches[layer_id].key.data_ptr()
                 and value.data_ptr() == self._kv_caches[layer_id].value.data_ptr()
