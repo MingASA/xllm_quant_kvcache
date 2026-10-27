@@ -36,6 +36,20 @@ TEST(CudaKVCacheAdmissionTest, AllowsNativeFlashInferFp8DecodeGraph) {
   EXPECT_TRUE(is_cuda_kv_cache_execution_mode_allowed(config));
 }
 
+TEST(CudaKVCacheAdmissionTest, Nvfp4RequiresNativeFlashInferEvenWithoutGraph) {
+  CudaKVCacheExecutionConfig config = native_fp8_graph_config();
+  config.kv_cache_dtype = KVCacheDtype::NVFP4;
+  EXPECT_TRUE(is_native_flashinfer_quantized_kv(config));
+  EXPECT_TRUE(is_cuda_kv_cache_execution_mode_allowed(config));
+  config.quantized_backend = "triton";
+  EXPECT_FALSE(is_cuda_kv_cache_execution_mode_allowed(config));
+  config.enable_graph = false;
+  config.python_graph_backend = "off";
+  EXPECT_FALSE(is_cuda_kv_cache_execution_mode_allowed(config));
+  config.quantized_backend = "flashinfer";
+  EXPECT_TRUE(is_cuda_kv_cache_execution_mode_allowed(config));
+}
+
 TEST(CudaKVCacheAdmissionTest, RejectsTritonAndMixedBackendsWithFp8Graph) {
   for (const std::string_view backend : {"triton", "flashinfer_mixed", ""}) {
     CudaKVCacheExecutionConfig config = native_fp8_graph_config();

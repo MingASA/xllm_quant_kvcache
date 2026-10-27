@@ -30,7 +30,8 @@ enum class KVCacheDtype : int8_t {
   INT4,
   BF16_INT8,
   BF16_FP8_E4M3,
-  BF16_INT4
+  BF16_INT4,
+  NVFP4
 };
 
 inline KVCacheDtype parse_kv_cache_dtype(std::string_view dtype) {
@@ -49,6 +50,9 @@ inline KVCacheDtype parse_kv_cache_dtype(std::string_view dtype) {
   if (dtype == "int4") {
     return KVCacheDtype::INT4;
   }
+  if (dtype == "nvfp4") {
+    return KVCacheDtype::NVFP4;
+  }
   if (dtype == "bf16_int8") {
     return KVCacheDtype::BF16_INT8;
   }
@@ -60,7 +64,7 @@ inline KVCacheDtype parse_kv_cache_dtype(std::string_view dtype) {
   }
   LOG(FATAL) << "Invalid kv_cache_dtype=" << dtype
              << ". Expected auto, int8, fp8, fp8_e4m3, fp8_e5m2, int4, "
-                "bf16_int8, bf16_fp8_e4m3 or bf16_int4.";
+                "nvfp4, bf16_int8, bf16_fp8_e4m3 or bf16_int4.";
   return KVCacheDtype::AUTO;
 }
 
@@ -88,6 +92,11 @@ inline KVCacheDtype kv_cache_value_dtype(KVCacheDtype dtype) {
 // channels into the low/high nibble, padding the last channel if D is odd.
 inline int64_t kv_cache_storage_head_dim(KVCacheDtype dtype, int64_t head_dim) {
   CHECK_GT(head_dim, 0);
+  if (dtype == KVCacheDtype::NVFP4) {
+    CHECK_EQ(head_dim % 16, 0)
+        << "NVFP4 requires complete 16-channel scale blocks.";
+    return head_dim / 2;
+  }
   return dtype == KVCacheDtype::INT4 ? head_dim / 2 + head_dim % 2 : head_dim;
 }
 

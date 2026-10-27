@@ -17,6 +17,9 @@ limitations under the License.
 
 #include <glog/logging.h>
 
+#include <cmath>
+#include <limits>
+
 #include "core/common/global_flags.h"
 #include "core/framework/config/config_utils.h"
 #include "core/framework/kv_cache/kv_cache_dtype.h"
@@ -42,6 +45,8 @@ DEFINE_string(
     "cache dtype aligns with model dtype (no quantization). "
     "MLU supports int8. CUDA Python eager supports experimental int8, "
     "fp8 (alias for fp8_e4m3), fp8_e4m3, fp8_e5m2 and packed int4. "
+    "Native FlashInfer supports FP8 E4M3 and block-scaled NVFP4 resident "
+    "pages, including hybrid linear-state models and decode CUDA Graph. "
     "Mixed modes bf16_int8, bf16_fp8_e4m3 and bf16_int4 keep K in BF16 "
     "and compress only V. CUDA attention uses fused Triton kernels in Python "
     "eager.");
@@ -52,6 +57,20 @@ DEFINE_string(indexer_cache_dtype,
               "Indexer cache dtype aligns with model dtype (no "
               "quantization). \"int8\": Enables INT8 quantization when "
               "supported. Supported on NPU and MLU backends.");
+
+DEFINE_string(kv_cache_backend,
+              "auto",
+              "KV attention backend: auto preserves platform defaults; "
+              "flashinfer selects native paged BF16/FP8 E4M3/NVFP4 on CUDA; "
+              "reference selects the eager reference implementation.");
+DEFINE_double(kv_cache_k_scale,
+              1.0,
+              "Positive FP32-representable global K decode scale for native "
+              "low-precision KV.");
+DEFINE_double(kv_cache_v_scale,
+              1.0,
+              "Positive FP32-representable global V decode scale for native "
+              "low-precision KV.");
 
 DEFINE_bool(enable_prefix_cache,
             true,
@@ -87,6 +106,9 @@ void KVCacheConfig::from_flags() {
   XLLM_CONFIG_ASSIGN_FROM_FLAG(max_cache_size);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(max_memory_utilization);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(kv_cache_dtype);
+  XLLM_CONFIG_ASSIGN_FROM_FLAG(kv_cache_backend);
+  XLLM_CONFIG_ASSIGN_FROM_FLAG(kv_cache_k_scale);
+  XLLM_CONFIG_ASSIGN_FROM_FLAG(kv_cache_v_scale);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(indexer_cache_dtype);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(enable_prefix_cache);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(enable_in_batch_prefix_cache);
@@ -101,6 +123,9 @@ void KVCacheConfig::from_json(const JsonReader& json) {
   XLLM_CONFIG_ASSIGN_FROM_JSON(max_cache_size);
   XLLM_CONFIG_ASSIGN_FROM_JSON(max_memory_utilization);
   XLLM_CONFIG_ASSIGN_FROM_JSON(kv_cache_dtype);
+  XLLM_CONFIG_ASSIGN_FROM_JSON(kv_cache_backend);
+  XLLM_CONFIG_ASSIGN_FROM_JSON(kv_cache_k_scale);
+  XLLM_CONFIG_ASSIGN_FROM_JSON(kv_cache_v_scale);
   XLLM_CONFIG_ASSIGN_FROM_JSON(indexer_cache_dtype);
   XLLM_CONFIG_ASSIGN_FROM_JSON(enable_prefix_cache);
   XLLM_CONFIG_ASSIGN_FROM_JSON(enable_in_batch_prefix_cache);
@@ -121,6 +146,12 @@ void KVCacheConfig::append_config_json(
       config_json, default_config, max_memory_utilization);
   APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
       config_json, default_config, kv_cache_dtype);
+  APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
+      config_json, default_config, kv_cache_backend);
+  APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
+      config_json, default_config, kv_cache_k_scale);
+  APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
+      config_json, default_config, kv_cache_v_scale);
   APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
       config_json, default_config, indexer_cache_dtype);
   APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
@@ -152,6 +183,16 @@ void KVCacheConfig::initialize() {
 
 void KVCacheConfig::validate() const {
   parse_kv_cache_dtype(kv_cache_dtype_);
+  CHECK(kv_cache_dtype_ != "nvfp4" || kv_cache_backend_ != "reference")
+      << "NVFP4 requires native FlashInfer; no reference/QDQ fallback exists.";
+  CHECK(kv_cache_backend_ == "auto" || kv_cache_backend_ == "flashinfer" ||
+        kv_cache_backend_ == "reference")
+      << "Invalid kv_cache_backend.";
+  for (const double scale : {kv_cache_k_scale_, kv_cache_v_scale_}) {
+    CHECK(std::isfinite(scale) && scale >= std::numeric_limits<float>::min() &&
+          scale <= std::numeric_limits<float>::max())
+        << "Native KV decode scales must be positive normal FP32 values.";
+  }
   if (indexer_cache_dtype_ != "auto" && indexer_cache_dtype_ != "int8") {
     LOG(FATAL) << "Invalid indexer_cache_dtype=\"" << indexer_cache_dtype_
                << "\". Supported values are exactly \"auto\" and \"int8\".";

@@ -129,6 +129,9 @@ PyExecutorImpl::PyExecutorImpl(CausalLM* model,
   executor_config["speculative_algorithm"] = options_.speculative_algorithm();
   executor_config["is_draft_engine"] = options_.is_draft_engine();
   executor_config["kv_cache_dtype"] = options_.kv_cache_dtype();
+  executor_config["kv_cache_backend"] = options_.kv_cache_backend();
+  executor_config["kv_cache_k_scale"] = options_.kv_cache_k_scale();
+  executor_config["kv_cache_v_scale"] = options_.kv_cache_v_scale();
   py_executor_ = executor_module.attr("ModelExecutor")(
       py_causal_lm_->python_model(),
       executor_config,

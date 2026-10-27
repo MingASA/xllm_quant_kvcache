@@ -532,10 +532,18 @@ bool WorkerImpl::allocate_kv_cache_storage(
         ModelConfig::get_instance().model_impl());
     CHECK(python_model)
         << "CUDA quantized KV cache requires --model_impl=python.";
+    const bool configured_native = options_.kv_cache_backend() == "flashinfer";
     const std::string native_kv =
-        util::get_optional_string_env("XLLM_FLASHINFER_NATIVE_KV").value_or("");
+        configured_native
+            ? "1"
+            : util::get_optional_string_env("XLLM_FLASHINFER_NATIVE_KV")
+                  .value_or("");
     const std::string quantized_backend =
-        util::get_optional_string_env("XLLM_QUANTIZED_BACKEND").value_or("");
+        configured_native ? "flashinfer"
+        : options_.kv_cache_backend() == "reference"
+            ? "triton"
+            : util::get_optional_string_env("XLLM_QUANTIZED_BACKEND")
+                  .value_or("");
     const CudaKVCacheExecutionConfig execution_config{
         kv_cache_dtype,
         python_model,
@@ -547,14 +555,17 @@ bool WorkerImpl::allocate_kv_cache_storage(
     CHECK(is_cuda_kv_cache_execution_mode_allowed(execution_config))
         << "Quantized attention requires eager execution: "
            "--enable_graph=false --enable_prefill_piecewise_graph=false "
-           "--python_graph_backend=off. The only graph exception is native "
-           "FlashInfer FP8 E4M3 decode: --kv_cache_dtype=fp8_e4m3 "
+           "--python_graph_backend=off. Native FlashInfer FP8 E4M3/NVFP4 "
+           "decode also supports Graph: --kv_cache_dtype=fp8_e4m3 or nvfp4 "
            "XLLM_FLASHINFER_NATIVE_KV=1 XLLM_QUANTIZED_BACKEND=flashinfer "
            "--enable_graph=true --enable_prefill_piecewise_graph=false "
            "--python_graph_backend=cudagraphs with --model_impl=python.";
-    CHECK(!args.enable_mla() && !enable_linear_attention &&
+    CHECK(!args.enable_mla() &&
+          (!enable_linear_attention ||
+           is_native_flashinfer_quantized_kv(execution_config)) &&
           !enable_lighting_indexer && !has_grouped_cache)
-        << "Reference quantized attention supports ordinary MHA/GQA only.";
+        << "Quantized attention requires ordinary MHA/GQA; hybrid linear state "
+           "is supported only by native FlashInfer FP8 E4M3/NVFP4.";
     CHECK_EQ(options_.cp_size(), 1);
     CHECK_EQ(layerwise_split_size, 1);
     CHECK_EQ(options_.num_speculative_tokens(), 0)

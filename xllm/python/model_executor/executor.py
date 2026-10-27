@@ -97,13 +97,34 @@ def _create_attention_backend(
             raise ValueError("KV quality mode requires Qwen2 CUDA eager with the uncompressed auto cache")
     model_type = config.get("model_type", "")
     cache_dtype = config.get("kv_cache_dtype", "auto")
-    if cache_dtype != "auto" or os.environ.get("XLLM_QUANTIZED_BACKEND") in ("triton", "flashinfer_mixed"):
+    configured_backend = config.get("kv_cache_backend", "auto")
+    if configured_backend not in ("auto", "flashinfer", "reference"):
+        raise ValueError("Unknown configured KV cache backend")
+    configured_native = configured_backend == "flashinfer"
+    if configured_native and not current_platform.is_cuda():
+        raise ValueError("Native FlashInfer KV attention requires CUDA")
+    if configured_native and cache_dtype not in ("auto", "fp8", "fp8_e4m3", "nvfp4"):
+        raise ValueError("Native FlashInfer supports auto, FP8 E4M3 or NVFP4 KV pages")
+    if (
+        cache_dtype != "auto"
+        or configured_backend == "reference"
+        or not configured_native
+        and os.environ.get("XLLM_QUANTIZED_BACKEND") in ("triton", "flashinfer_mixed")
+    ):
         if not current_platform.is_cuda():
             raise ValueError("Python quantized KV attention currently requires CUDA")
-        quantized_backend = os.environ.get("XLLM_QUANTIZED_BACKEND", "triton")
+        quantized_backend = (
+            "flashinfer"
+            if configured_native
+            else "triton"
+            if configured_backend == "reference"
+            else os.environ.get("XLLM_QUANTIZED_BACKEND", "triton")
+        )
+        if cache_dtype == "nvfp4" and quantized_backend != "flashinfer":
+            raise ValueError("NVFP4 requires native FlashInfer; reference/QDQ attention is not a supported fallback")
         native_fp8_graph = (
             quantized_backend == "flashinfer"
-            and cache_dtype in ("fp8", "fp8_e4m3", "fp8_e5m2")
+            and cache_dtype in ("fp8", "fp8_e4m3", "fp8_e5m2", "nvfp4")
             and _resolve_graph_backend(config) == "cudagraphs"
         )
         if not native_fp8_graph and (
@@ -137,10 +158,39 @@ def _create_attention_backend(
                 dtype,
             )
         if quantized_backend == "flashinfer":
+            from xllm.python.attention.native_profile import NativeFlashInferConfig
+
+            native_config = NativeFlashInferConfig() if configured_native else None
+            if configured_native:
+                key_scale = float(config.get("kv_cache_k_scale", 1.0))
+                value_scale = float(config.get("kv_cache_v_scale", 1.0))
+            else:
+                key_scale = float(os.environ.get("XLLM_FP8_K_SCALE", "1.0"))
+                value_scale = float(os.environ.get("XLLM_FP8_V_SCALE", "1.0"))
+            if cache_dtype == "nvfp4":
+                from xllm.python.attention.flashinfer_nvfp4 import FlashInferNVFP4Backend
+
+                if not configured_native and not all(
+                    key in os.environ for key in ("XLLM_FP8_K_SCALE", "XLLM_FP8_V_SCALE")
+                ):
+                    raise ValueError("Native NVFP4 requires explicit global K/V decode scales")
+                return FlashInferNVFP4Backend(
+                    num_heads=first_attention.num_heads,
+                    num_kv_heads=first_attention.num_kv_heads,
+                    head_dim=first_attention.head_dim,
+                    scale=first_attention.scale,
+                    sliding_window=first_attention.sliding_window,
+                    device=device,
+                    dtype=dtype,
+                    key_scale=key_scale,
+                    value_scale=value_scale,
+                )
             from xllm.python.attention.flashinfer_fp8 import FlashInferFP8Backend
 
-            if os.environ.get("XLLM_FLASHINFER_NATIVE_KV", "0") == "1" and not all(
-                key in os.environ for key in ("XLLM_FP8_K_SCALE", "XLLM_FP8_V_SCALE")
+            if (
+                not configured_native
+                and os.environ.get("XLLM_FLASHINFER_NATIVE_KV", "0") == "1"
+                and not all(key in os.environ for key in ("XLLM_FP8_K_SCALE", "XLLM_FP8_V_SCALE"))
             ):
                 raise ValueError("Native FP8 comparison requires explicit measured K/V scales")
 
@@ -153,8 +203,9 @@ def _create_attention_backend(
                 device=device,
                 dtype=dtype,
                 cache_dtype=cache_dtype,
-                key_scale=float(os.environ.get("XLLM_FP8_K_SCALE", "1.0")),
-                value_scale=float(os.environ.get("XLLM_FP8_V_SCALE", "1.0")),
+                key_scale=key_scale,
+                value_scale=value_scale,
+                native_config=native_config,
             )
         if quantized_backend != "triton":
             raise ValueError(f"Unknown XLLM_QUANTIZED_BACKEND: {quantized_backend}")
@@ -217,6 +268,12 @@ def _create_attention_backend(
     if current_platform.is_cuda():
         from xllm.python.attention.flashinfer import FlashInferBackend
 
+        native_config = None
+        if configured_native:
+            from xllm.python.attention.native_profile import NativeFlashInferConfig
+
+            planner = "fa3" if torch.cuda.get_device_capability(device) == (9, 0) else "fa2"
+            native_config = NativeFlashInferConfig(planner)
         return FlashInferBackend(
             num_heads=first_attention.num_heads,
             num_kv_heads=first_attention.num_kv_heads,
@@ -226,6 +283,7 @@ def _create_attention_backend(
             device=device,
             dtype=dtype,
             quality_mode=quality_mode,
+            native_config=native_config,
         )
     raise NotImplementedError(f"No attention backend available for device type '{device.type}'")
 

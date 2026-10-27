@@ -75,6 +75,17 @@ TEST(KVCacheEstimationTest, CountsEightBitPayloadAndPerHeadScales) {
   }
 }
 
+TEST(KVCacheEstimationTest, CountsNvfp4PayloadAndBlockScaleBytes) {
+  ModelArgs model_args = make_standard_args();
+  KVCacheEstimateOptions options = make_estimate_options();
+  options.kv_cache_dtype = "nvfp4";
+  const KVCacheCapacity capacity =
+      estimate_kv_cache_capacity(model_args, options);
+  EXPECT_EQ(capacity.slot_size(), 32);
+  EXPECT_EQ(capacity.scale_slot_size(), 4);
+  EXPECT_EQ(capacity.n_blocks(), (1024 * 1024) / (4 * 16 * 36));
+}
+
 TEST(KVCacheEstimationTest, CountsPackedInt4PaddingAndScales) {
   ModelArgs model_args = make_standard_args();
   model_args.head_dim(17);

@@ -136,6 +136,9 @@ class LLM:
         use_cpp_chat_template: bool = True,
         disable_log_stats: bool = True,
         enable_sleep_mode: bool = False,
+        kv_cache_backend: str = "auto",
+        kv_cache_k_scale: float = 1.0,
+        kv_cache_v_scale: float = 1.0,
         **kwargs: Any,
     ) -> None:
         signal.signal(signal.SIGTERM, lambda s, f: sys.exit(0))
@@ -209,6 +212,9 @@ class LLM:
         options.input_shm_size = input_shm_size
         options.output_shm_size = output_shm_size
         options.kv_cache_dtype = kv_cache_dtype
+        options.kv_cache_backend = kv_cache_backend
+        options.kv_cache_k_scale = kv_cache_k_scale
+        options.kv_cache_v_scale = kv_cache_v_scale
         options.disable_log_stats = disable_log_stats
         options.enable_sleep_mode = enable_sleep_mode
         self._backend = backend

@@ -110,7 +110,10 @@ PYBIND11_MODULE(xllm_export, m) {
       .def_readwrite("output_shm_size", &Options::output_shm_size_)
       .def_readwrite("is_local", &Options::is_local_)
       .def_readwrite("enable_sleep_mode", &Options::enable_sleep_mode_)
-      .def_readwrite("kv_cache_dtype", &Options::kv_cache_dtype_);
+      .def_readwrite("kv_cache_dtype", &Options::kv_cache_dtype_)
+      .def_readwrite("kv_cache_backend", &Options::kv_cache_backend_)
+      .def_readwrite("kv_cache_k_scale", &Options::kv_cache_k_scale_)
+      .def_readwrite("kv_cache_v_scale", &Options::kv_cache_v_scale_);
 
   // 2. export LLMMaster
   py::class_<LLMMaster>(m, "LLMMaster")

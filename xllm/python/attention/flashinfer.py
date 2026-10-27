@@ -30,7 +30,7 @@ from xllm.python.attention.backend import (
     LayerCache,
 )
 from xllm.python.attention.native_kv import KVScaleCalibration, _full_attention_layers, cache_allocation
-from xllm.python.attention.native_profile import resolve_native_profile
+from xllm.python.attention.native_profile import NativeFlashInferConfig, resolve_native_profile
 
 if TYPE_CHECKING:
     from xllm.python.layers.attention import Attention
@@ -82,6 +82,7 @@ class FlashInferBackend(AttentionBackend):
         device: torch.device,
         dtype: torch.dtype,
         quality_mode: str = "none",
+        native_config: NativeFlashInferConfig | None = None,
     ) -> None:
         self.num_heads = num_heads
         self.num_kv_heads = num_kv_heads
@@ -90,12 +91,16 @@ class FlashInferBackend(AttentionBackend):
         self.sliding_window = sliding_window
         self.dtype = dtype
         # Opt-in paired native profile: the same FA2 paged path for BF16/FP8.
-        self._native_kv_pair = os.environ.get("XLLM_FLASHINFER_NATIVE_KV", "0") == "1"
-        if self._native_kv_pair and flashinfer.__version__ != "0.6.18.post1":
+        self._native_kv_pair = native_config is not None or os.environ.get("XLLM_FLASHINFER_NATIVE_KV", "0") == "1"
+        if native_config is None and self._native_kv_pair and flashinfer.__version__ != "0.6.18.post1":
             raise RuntimeError(
                 "Native paired KV profile requires FlashInfer 0.6.18.post1; no alternate kernel fallback"
             )
-        profile = resolve_native_profile(os.environ, self._native_kv_pair, hasattr(self, "_cache_dtype"))
+        profile = (
+            native_config.resolve(self._kv_data_type)
+            if native_config is not None
+            else resolve_native_profile(os.environ, self._native_kv_pair, hasattr(self, "_cache_dtype"))
+        )
         self._flashinfer_backend = profile["planner"]
         self._fp8_query_enabled = profile["query_fp8"]
         self._fp8_query_scale = profile["query_scale"]

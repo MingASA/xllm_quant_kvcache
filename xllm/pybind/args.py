@@ -213,8 +213,11 @@ class ArgumentParser:
             "--kv_cache_dtype",
             type=str,
             default="auto",
-            help='KV cache data type. "auto" (default) aligns with model dtype, CUDA Python eager also supports int8, fp8_e4m3, int4 and mixed bf16_int8, bf16_fp8_e4m3, bf16_int4.',
+            help="KV cache dtype: auto, fp8_e4m3, nvfp4, or legacy reference formats. Native low-precision pages require the flashinfer backend.",
         )
+        self.parser.add_argument("--kv_cache_backend", choices=("auto", "flashinfer", "reference"), default="auto")
+        self.parser.add_argument("--kv_cache_k_scale", type=float, default=1.0)
+        self.parser.add_argument("--kv_cache_v_scale", type=float, default=1.0)
         self.parser.add_argument(
             "--use_cpp_chat_template",
             nargs="?",

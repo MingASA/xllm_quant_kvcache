@@ -31,13 +31,25 @@ struct CudaKVCacheExecutionConfig {
   std::string_view quantized_backend;
 };
 
-inline bool is_native_flashinfer_fp8_decode_graph(
+inline bool is_native_flashinfer_quantized_kv(
     const CudaKVCacheExecutionConfig& config) {
   return config.python_model &&
-         config.kv_cache_dtype == KVCacheDtype::FP8_E4M3 &&
-         config.native_kv == "1" && config.quantized_backend == "flashinfer" &&
+         (config.kv_cache_dtype == KVCacheDtype::FP8_E4M3 ||
+          config.kv_cache_dtype == KVCacheDtype::NVFP4) &&
+         config.native_kv == "1" && config.quantized_backend == "flashinfer";
+}
+
+inline bool is_native_flashinfer_decode_graph(
+    const CudaKVCacheExecutionConfig& config) {
+  return is_native_flashinfer_quantized_kv(config) &&
          config.python_graph_backend == "cudagraphs" && config.enable_graph &&
          !config.enable_prefill_piecewise_graph;
+}
+
+inline bool is_native_flashinfer_fp8_decode_graph(
+    const CudaKVCacheExecutionConfig& config) {
+  return config.kv_cache_dtype == KVCacheDtype::FP8_E4M3 &&
+         is_native_flashinfer_decode_graph(config);
 }
 
 // This policy only admits an execution mode. WorkerImpl must still enforce
@@ -51,8 +63,12 @@ inline bool is_cuda_kv_cache_execution_mode_allowed(
   const bool eager = !config.enable_graph &&
                      !config.enable_prefill_piecewise_graph &&
                      config.python_graph_backend == "off";
+  if (config.kv_cache_dtype == KVCacheDtype::NVFP4 &&
+      !is_native_flashinfer_quantized_kv(config)) {
+    return false;
+  }
   return config.python_model &&
-         (eager || is_native_flashinfer_fp8_decode_graph(config));
+         (eager || is_native_flashinfer_decode_graph(config));
 }
 
 }  // namespace xllm

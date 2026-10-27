@@ -247,6 +247,9 @@ Options create_options(const std::string& instance_name, bool is_local) {
       .output_shm_size(execution_config.output_shm_size())
       .beam_width(beam_search_config.beam_width())
       .kv_cache_dtype(kv_cache_config.kv_cache_dtype())
+      .kv_cache_backend(kv_cache_config.kv_cache_backend())
+      .kv_cache_k_scale(kv_cache_config.kv_cache_k_scale())
+      .kv_cache_v_scale(kv_cache_config.kv_cache_v_scale())
       .rec_worker_max_concurrency(
           static_cast<int32_t>(rec_config.rec_worker_max_concurrency()))
       .is_local(is_local);

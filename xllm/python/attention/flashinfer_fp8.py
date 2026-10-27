@@ -30,6 +30,7 @@ import torch
 from xllm.python.attention.backend import AttentionMetadata, LayerCache
 from xllm.python.attention.flashinfer import FlashInferBackend
 from xllm.python.attention.native_kv import _full_attention_layers
+from xllm.python.attention.native_profile import NativeFlashInferConfig
 from xllm.python.attention.quantized import KVCacheCodec, _validate_cache
 from xllm.python.attention.quantized_triton import write_quantized_kv
 from xllm.python.attention.query_quantization import quantize_query_fp8
@@ -53,6 +54,7 @@ class FlashInferFP8Backend(FlashInferBackend):
         cache_dtype: str,
         key_scale: float = 1.0,
         value_scale: float = 1.0,
+        native_config: NativeFlashInferConfig | None = None,
     ) -> None:
         if cache_dtype not in ("fp8", "fp8_e4m3", "fp8_e5m2"):
             raise ValueError("FlashInfer FP8 requires an FP8 cache dtype")
@@ -65,7 +67,9 @@ class FlashInferFP8Backend(FlashInferBackend):
         self._cache_dtype = torch.float8_e4m3fn if self._codec.cache_dtype == "fp8_e4m3" else torch.float8_e5m2
         self._fixed_scales = (key_scale, value_scale)
         self._fp8_caches: dict[int, tuple[torch.Tensor, torch.Tensor]] = {}
-        super().__init__(num_heads, num_kv_heads, head_dim, scale, sliding_window, device, dtype)
+        super().__init__(
+            num_heads, num_kv_heads, head_dim, scale, sliding_window, device, dtype, native_config=native_config
+        )
 
     @property
     def _kv_format(self) -> str:

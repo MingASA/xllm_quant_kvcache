@@ -205,3 +205,31 @@ up the change.
    device logs the packages that do exist and ships none of them.
 6. Mark a model supported in `model_platform_support.py` only after its
    platform path passes functional tests.
+
+## Native low-precision KV pages
+
+The research branch adds `--kv_cache_backend=flashinfer` with
+`--kv_cache_dtype=auto|fp8_e4m3|nvfp4`. The equivalent Python options are
+`kv_cache_backend`, `kv_cache_dtype`, `kv_cache_k_scale`, and
+`kv_cache_v_scale`. Explicit configuration takes precedence over historical
+research environment flags. BF16 uses FA3 on SM90; low-precision KV uses FA2
+with BF16/FP16 queries. Unsupported combinations fail before backend use.
+
+FP8 pages use byte payloads and the existing scalar K/V decode scales. NVFP4
+pages pack two E2M1 channels per byte and allocate one E4M3 byte for every
+16-channel block of each token/head, plus persistent global K/V scale scalars.
+The FlashInfer slot-mapping writer updates these resident pages directly;
+FA2 consumes the compressed pages and block scales. SM90 performs in-kernel
+decoding, rather than Blackwell FP4 Tensor Core computation. The NVFP4 path
+requires FlashInfer's `nvfp4_quantize_append_paged_kv_cache_with_slot_mapping`
+and paged FA2 `kv_cache_sf` interfaces. It retains no whole-cache BF16 shadow.
+
+Hybrid models retain their original layer IDs. Full Attention K/V pages and
+GDN convolution/recurrent state are bound and accounted for separately; KV
+quantization does not quantize GDN state. Rebinding different payload, scale,
+or recurrent storage after model binding is rejected. Host offload, PD, MLA,
+and speculation remain outside this implementation's supported contract.
+
+CPU format/dispatch tests cover layout, scale validation, accounting and page
+identity. These do not certify NVFP4 numerical accuracy, CUDA Graph execution,
+model quality, or service performance; those require separate H800 evidence.

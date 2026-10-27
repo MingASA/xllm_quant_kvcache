@@ -57,8 +57,8 @@ int64_t kv_slot_size(const ModelArgs& model_args,
            options.n_local_kv_heads;
   }
   if (model_args.enable_mla()) {
-    CHECK(dtype != KVCacheDtype::INT4)
-        << "Packed INT4 KV cache does not support MLA.";
+    CHECK(dtype != KVCacheDtype::INT4 && dtype != KVCacheDtype::NVFP4)
+        << "Packed INT4/NVFP4 KV cache does not support MLA.";
 #if defined(USE_NPU)
     if ((model_args.model_type() == "deepseek_v3" ||
          model_args.model_type() == "deepseek_v3_mtp") &&
@@ -106,6 +106,12 @@ int64_t scale_slot_size(const ModelArgs& model_args,
                         const KVCacheEstimateOptions& options) {
   if (options.kv_cache_dtype == "auto") {
     return 0;
+  }
+  if (parse_kv_cache_dtype(options.kv_cache_dtype) == KVCacheDtype::NVFP4) {
+    CHECK(!model_args.enable_mla()) << "Dense NVFP4 KV does not support MLA.";
+    CHECK_EQ(model_args.head_dim() % 16, 0);
+    // Both K and V own one E4M3 byte for each 16-channel block.
+    return 2 * (model_args.head_dim() / 16) * options.n_local_kv_heads;
   }
   if (model_args.enable_mla()) {
     return sizeof(float);

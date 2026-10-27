@@ -327,12 +327,20 @@ QuantizedKVCacheTensors create_quantized_kv_cache_tensors(
       kv_cache_shape.key_cache_shape();
   std::vector<int64_t> key_scale_shape(key_cache_shape.begin(),
                                        key_cache_shape.end() - 1);
-
-  // One FP32 scale per token/head, independent of storage encoding.
+  const bool block_scaled_fp4 = dtype == KVCacheDtype::NVFP4;
+  if (block_scaled_fp4) {
+    CHECK_EQ(key_cache_shape.back() % 16, 0);
+    key_scale_shape.push_back(key_cache_shape.back() / 16);
+  }
+  // NVFP4 scales are E4M3 encodings in byte storage so page copies use the
+  // same supported byte operations as the payload. Python aliases them as
+  // float8 views. Other formats retain one FP32 scale per token/head.
+  const torch::ScalarType scale_dtype =
+      block_scaled_fp4 ? torch::kByte : torch::kFloat32;
   if (!bf16_key) {
     tensors.key_cache_scale = alloc_cache_tensor(KVCacheTensorRole::KEY_SCALE,
                                                  key_scale_shape,
-                                                 torch::kFloat32,
+                                                 scale_dtype,
                                                  create_options);
   }
   if (!kv_cache_shape.value_cache_shape().empty()) {
@@ -340,10 +348,14 @@ QuantizedKVCacheTensors create_quantized_kv_cache_tensors(
         kv_cache_shape.value_cache_shape();
     std::vector<int64_t> value_scale_shape(value_cache_shape.begin(),
                                            value_cache_shape.end() - 1);
+    if (block_scaled_fp4) {
+      CHECK_EQ(value_cache_shape.back() % 16, 0);
+      value_scale_shape.push_back(value_cache_shape.back() / 16);
+    }
     tensors.value_cache_scale =
         alloc_cache_tensor(KVCacheTensorRole::VALUE_SCALE,
                            value_scale_shape,
-                           torch::kFloat32,
+                           scale_dtype,
                            create_options);
   }
 

@@ -8,6 +8,32 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
+from dataclasses import dataclass
+
+import torch
+
+
+@dataclass(frozen=True, slots=True)
+class NativeFlashInferConfig:
+    """Explicit paged-backend selection independent of research environment flags."""
+
+    planner: str = "fa2"
+    decode_impl: str = "flashinfer"
+
+    def resolve(self, kv_dtype: torch.dtype) -> dict[str, object]:
+        if self.planner not in ("fa2", "fa3") or self.decode_impl not in ("flashinfer", "xqa"):
+            raise ValueError("Native FlashInfer requires an explicit supported prefill/decode backend")
+        if kv_dtype in (torch.float8_e4m3fn, torch.float8_e5m2, torch.uint8) and self.planner != "fa2":
+            raise ValueError("Native low-precision KV with BF16/FP16 queries requires FA2 prefill")
+        if kv_dtype == torch.uint8 and self.decode_impl != "flashinfer":
+            raise ValueError("SM90 NVFP4 requires the FA2 paged decode backend")
+        return {
+            "planner": self.planner,
+            "decode_impl": self.decode_impl,
+            "query_fp8": False,
+            "query_scale": 1.0,
+            "scope": "native_pages_constructor_config",
+        }
 
 
 def resolve_native_profile(environment: Mapping[str, str], native: bool, fp8: bool) -> dict[str, object]:
@@ -39,6 +65,16 @@ def resolve_native_profile(environment: Mapping[str, str], native: bool, fp8: bo
         raise ValueError("FP8 query scale must be a positive normal FP32 scalar")
     if "XLLM_FLASHINFER_FP8_Q_SCALE" in environment and not query_fp8:
         raise ValueError("Query scale requires explicit FP8 query quantization")
-    return {"planner": planner, "query_fp8": query_fp8, "query_scale": query_scale, "decode_impl": decode,
-            "scope": "production_xqa" if decode == "xqa" else "production_fa3" if planner == "fa3"
-            else "historical_fa2" if native else "default"}
+    return {
+        "planner": planner,
+        "query_fp8": query_fp8,
+        "query_scale": query_scale,
+        "decode_impl": decode,
+        "scope": "production_xqa"
+        if decode == "xqa"
+        else "production_fa3"
+        if planner == "fa3"
+        else "historical_fa2"
+        if native
+        else "default",
+    }
