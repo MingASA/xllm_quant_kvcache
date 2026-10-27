@@ -147,6 +147,14 @@ def test_explicit_native_configuration_has_no_implicit_FA3_or_XQA_NVFP4_fallback
     assert NativeFlashInferConfig("fa3", "xqa").resolve(torch.bfloat16)["query_fp8"] is False
 
 
+def test_NVFP4_decode_uses_FA2_tensor_cores_even_for_MHA_and_small_GQA(monkeypatch: pytest.MonkeyPatch) -> None:
+    _module(monkeypatch)
+    module = importlib.import_module("xllm.python.attention.flashinfer")
+    for heads in (1, 2, 3, 6):
+        assert module._should_use_tensor_core_decode(torch.bfloat16, heads, 1, torch.uint8)
+    assert not module._should_use_tensor_core_decode(torch.bfloat16, 1, 1, torch.bfloat16)
+
+
 @pytest.mark.parametrize("scale", [float("nan"), float("inf"), 0, -1, 1e-50, 1e50])
 def test_NVFP4_rejects_invalid_global_scales_before_allocating(monkeypatch: pytest.MonkeyPatch, scale: float) -> None:
     module, _ = _module(monkeypatch)

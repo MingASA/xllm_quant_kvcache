@@ -52,7 +52,12 @@ def _should_use_tensor_core_decode(
     dtype: torch.dtype,
     num_heads: int,
     num_kv_heads: int,
+    kv_dtype: torch.dtype | None = None,
 ) -> bool:
+    # Packed NVFP4 is implemented by the FA2 tensor-core/prefill decode path.
+    # It must not fall into the CUDA-core decoder for MHA or small GQA groups.
+    if kv_dtype == torch.uint8:
+        return True
     return dtype in (torch.float16, torch.bfloat16) and num_heads // num_kv_heads >= 4
 
 
@@ -119,7 +124,9 @@ class FlashInferBackend(AttentionBackend):
             from xllm.python.attention.kv_quality_transform import KVQualityTransform
 
             self._quality_transform = KVQualityTransform(quality_mode, head_dim, device, dtype)
-        self._decode_use_tensor_cores = _should_use_tensor_core_decode(dtype, num_heads, num_kv_heads)
+        self._decode_use_tensor_cores = _should_use_tensor_core_decode(
+            dtype, num_heads, num_kv_heads, self._kv_data_type
+        )
 
         self._decode_workspace = torch.empty(_WORKSPACE_SIZE, dtype=torch.uint8, device=device)
         if self._decode_impl == "xqa":

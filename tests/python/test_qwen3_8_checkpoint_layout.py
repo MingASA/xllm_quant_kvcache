@@ -9,9 +9,9 @@ RoPE correctness, GPU deployment or quality result follows from this test.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import sys
 import types
+from pathlib import Path
 
 import pytest
 import torch
@@ -41,16 +41,21 @@ class _MetaCheckpoint:
         return torch.empty(self._shapes[name], dtype=torch.bfloat16, device="meta")
 
 
-def test_official_27B_text_weights_map_to_native_hybrid_layers_on_meta(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(("tp_size", "tp_rank"), [(1, 0), (2, 0), (2, 1)])
+def test_official_27B_text_weights_map_to_native_hybrid_layers_on_meta(
+    monkeypatch: pytest.MonkeyPatch, tp_size: int, tp_rank: int
+) -> None:
     fixture = json.loads((Path(__file__).parent / "fixtures/qwen3_8_27b_checkpoint_shapes.json").read_text())
     config = dict(fixture["text_config"])
     rope = config["rope_parameters"]
     config.update(
         dtype="bfloat16",
         device="meta",
-        tp_size=1,
-        world_size=1,
-        moe_tp_size=1,
+        tp_size=tp_size,
+        tp_rank=tp_rank,
+        world_size=tp_size,
+        moe_tp_size=tp_size,
+        moe_tp_rank=tp_rank,
         rope_theta=rope["rope_theta"],
         partial_rotary_factor=rope["partial_rotary_factor"],
     )
@@ -59,7 +64,7 @@ def test_official_27B_text_weights_map_to_native_hybrid_layers_on_meta(monkeypat
     monkeypatch.setattr(kernels, "prepare_row_parallel_weight", lambda weight: (weight, False), raising=False)
     model = qwen3_5.Qwen3_5ForCausalLM(config)
     state = _MetaCheckpoint(fixture["tensors"])
-    model.load_weights([state], tp_rank=0, tp_size=1)
+    model.load_weights([state], tp_rank=tp_rank, tp_size=tp_size)
     expected = {
         row["name"]
         for row in fixture["tensors"]
@@ -69,6 +74,11 @@ def test_official_27B_text_weights_map_to_native_hybrid_layers_on_meta(monkeypat
     assert all(tensor.device.type == "meta" for tensor in model.parameters())
     full = [layer.layer_id for layer in model.modules() if isinstance(layer, Attention)]
     assert full == list(range(3, 64, 4))
+    assert all(
+        (layer.num_heads, layer.num_kv_heads) == (24 // tp_size, 4 // tp_size)
+        for layer in model.modules()
+        if isinstance(layer, Attention)
+    )
     assert sum(isinstance(layer, CudaQwen3_5GatedDeltaNet) for layer in model.modules()) == 48
     assert (model.cfg.n_heads, model.cfg.n_kv_heads, model.cfg.head_dim) == (24, 4, 256)
     assert not any("visual" in name or name.startswith("mtp.") for name in state.loaded)

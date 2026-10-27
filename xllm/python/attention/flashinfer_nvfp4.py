@@ -56,7 +56,7 @@ class FlashInferNVFP4Backend(FlashInferBackend):
             raise ValueError(
                 "This native NVFP4 FA2 path is qualified for SM90; other architectures require a capability gate"
             )
-        if head_dim not in (128, 256) or num_kv_heads <= 0 or num_heads % num_kv_heads:
+        if head_dim not in (128, 256) or num_heads <= 0 or num_kv_heads <= 0 or num_heads % num_kv_heads:
             raise ValueError("SM90 NVFP4 FA2 requires head_dim128/256 and a complete GQA group")
         if not hasattr(flashinfer.page, "nvfp4_quantize_append_paged_kv_cache_with_slot_mapping"):
             raise RuntimeError(
