@@ -14,8 +14,12 @@ import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 
 import torch
+
+if TYPE_CHECKING:
+    from xllm.python.attention.backend import LayerCache
 
 
 def _decode_rows(payload: torch.Tensor, block_scales: torch.Tensor | None, fmt: str, scale: float) -> torch.Tensor:
@@ -55,6 +59,20 @@ def _relative_error(actual: torch.Tensor, reference: torch.Tensor) -> float:
     return float((actual.float() - reference.float()).norm() / reference.float().norm().clamp_min(1e-12))
 
 
+def _allocate_operator_cache(fmt: str, dimension: int, device: torch.device) -> LayerCache:
+    from xllm.python.attention.backend import LayerCache
+
+    shape = (7, 64, 4, dimension if fmt != "nvfp4" else dimension // 2)
+    dtype = torch.bfloat16 if fmt == "bf16" else torch.uint8
+    options = {}
+    if fmt != "bf16":
+        sf_shape = (*shape[:-1], dimension // 16) if fmt == "nvfp4" else shape[:-1]
+        sf_dtype = torch.uint8 if fmt == "nvfp4" else torch.float32
+        options = {name: torch.zeros(sf_shape, dtype=sf_dtype, device=device) for name in ("key_scale", "value_scale")}
+    # LayerCache is frozen: payload and scale slots must be constructed together.
+    return LayerCache(*(torch.zeros(shape, dtype=dtype, device=device) for _ in range(2)), **options)
+
+
 def _run_case(fmt: str, phase: str, dimension: int, decode_impl: str, max_context_tokens: int) -> dict:
     from tools.benchmark_kv_cache import _attention_metadata
     from xllm.python.attention.backend import LayerCache
@@ -68,15 +86,7 @@ def _run_case(fmt: str, phase: str, dimension: int, decode_impl: str, max_contex
     batch, heads, kv_heads, page_size, context = 2, 24, 4, 64, 129
     queries = {"prefill": context, "chunked_prefill": 5, "decode": 1}[phase]
     scales = (0.25, 0.125)  # Non-unit, distinct K/V factors catch omitted/doubled global scaling.
-    shape = (7, page_size, kv_heads, dimension if fmt != "nvfp4" else dimension // 2)
-    storage_dtype = torch.bfloat16 if fmt == "bf16" else torch.uint8
-    cache = LayerCache(*(torch.zeros(shape, dtype=storage_dtype, device=device) for _ in range(2)))
-    if fmt != "bf16":
-        sf_shape = (*shape[:-1], dimension // 16) if fmt == "nvfp4" else shape[:-1]
-        sf_dtype = torch.uint8 if fmt == "nvfp4" else torch.float32
-        cache.key_scale, cache.value_scale = (
-            torch.zeros(sf_shape, dtype=sf_dtype, device=device) for _ in range(2)
-        )
+    cache = _allocate_operator_cache(fmt, dimension, device)
     linear = [
         LayerCache(None, None, conv=torch.ones(2, 8, 3, device=device), ssm=torch.ones(2, 4, 8, 8, device=device))
         for _ in range(3)

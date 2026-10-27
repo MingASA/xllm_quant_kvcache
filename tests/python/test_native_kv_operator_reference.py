@@ -6,7 +6,19 @@ from __future__ import annotations
 import pytest
 import torch
 
-from tools.validate_native_kv_pages import _decode_rows, _reference_attention
+from tools.validate_native_kv_pages import _allocate_operator_cache, _decode_rows, _reference_attention
+from xllm.python.attention.native_kv import cache_allocation
+
+
+@pytest.mark.parametrize(("fmt", "bytes_per_token"), [("bf16", 4096), ("fp8_e4m3", 2080), ("nvfp4", 1152)])
+def test_operator_constructs_all_immutable_payload_and_scale_slots_before_use(fmt: str, bytes_per_token: int) -> None:
+    import json
+
+    cache = _allocate_operator_cache(fmt, 256, torch.device("cpu"))
+    report = json.loads(cache_allocation([cache], fmt))
+    assert report["full_attention_resident_bytes"] == 448 * bytes_per_token
+    assert report["layers"][0]["bytes_per_token"] == bytes_per_token
+    assert cache.__dataclass_params__.frozen
 
 
 def test_NVFP4_all_nibbles_block16_scale_order_and_global_factor() -> None:
