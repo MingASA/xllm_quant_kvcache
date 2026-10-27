@@ -116,6 +116,11 @@ class FlashInferBackend(AttentionBackend):
         self._active_xqa_plan: Any = None
         self._calibration = None
         calibration_path = os.environ.get("XLLM_FP8_CALIBRATION_OUTPUT")
+        self._observation_path = os.environ.get("XLLM_KV_OBSERVATION_CONFIG")
+        self._range_observer = None
+        if self._observation_path and (type(self) is not FlashInferBackend or dtype != torch.bfloat16
+                                       or quality_mode != "none" or calibration_path):
+            raise ValueError("KV range observation requires the untransformed BF16 backend without legacy calibration")
         if calibration_path:
             if quality_mode != "none" or type(self) is not FlashInferBackend:
                 raise ValueError("Scale calibration requires the untransformed native BF16 backend")
@@ -167,6 +172,17 @@ class FlashInferBackend(AttentionBackend):
             raise RuntimeError("Cannot replace XQA resident storage after initial binding")
         if self._graph_decode_wrappers and old_storage != new_storage:
             raise RuntimeError("Cannot replace KV cache storage after decode graph planning/capture")
+        observer = getattr(self, "_range_observer", None)
+        if getattr(self, "_observation_path", None) and observer is None:
+            from xllm.python.attention.kv_observation import KVRangeObserver
+
+            observer = KVRangeObserver.from_config(
+                self._observation_path, [layer for layer, _ in full_layers],
+                self.num_kv_heads, self.head_dim, self._decode_workspace.device,
+            )
+        if observer is not None and observer.layer_ids != tuple(layer for layer, _ in full_layers):
+            raise RuntimeError("Cannot change the observed full-attention layer identities")
+        self._range_observer = observer
         self._kv_caches = kv_caches
         self._cache_storage_signature = new_storage
         if self._decode_impl == "xqa":
@@ -218,6 +234,9 @@ class FlashInferBackend(AttentionBackend):
             if self._decode_impl == "xqa" else None,
             "scale_strategy": "none",
             "quality_transform": self._quality_transform is not None,
+            "KV_observation_enabled": getattr(self, "_range_observer", None) is not None,
+            "KV_observation_counter_storage_bytes": self._range_observer.counter_storage_bytes
+            if getattr(self, "_range_observer", None) is not None else 0,
         }
 
     @property
@@ -432,6 +451,10 @@ class FlashInferBackend(AttentionBackend):
                 metadata,
                 sum(cache.key is not None for cache in self._kv_caches),
             )
+        observer = getattr(self, "_range_observer", None)
+        if observer is not None:
+            observer.observe(layer.layer_id, metadata.is_prefill or metadata.is_chunked_prefill,
+                             k_3d, v_3d, metadata.slot_mapping)
 
         _get_runtime_kernels().reshape_paged_cache(metadata.slot_mapping, k_3d, v_3d, k_cache, v_cache)
         return self.execute_attention(q_3d, layer, k_3d, v_3d)

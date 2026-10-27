@@ -233,3 +233,21 @@ and speculation remain outside this implementation's supported contract.
 CPU format/dispatch tests cover layout, scale validation, accounting and page
 identity. These do not certify NVFP4 numerical accuracy, CUDA Graph execution,
 model quality, or service performance; those require separate H800 evidence.
+
+Optional BF16 range calibration uses `XLLM_KV_OBSERVATION_CONFIG`, separate
+from serving performance runs. Its config declares the actual original Full
+Attention layer IDs, local KV-head count, head dimension, run ID, ticket
+request SHA, and an existing owned output directory. GDN state is not observed.
+The observer accumulates maxima and finite/nonfinite counts with ordinary
+tensor operations, including every executed decode Graph replay, without
+reading device values or retaining activations in the forward path. This
+implementation intent still requires a real GPU capture/replay gate.
+
+At drained request boundaries the controller writes `kv_observer_reset.json`
+and later `kv_observer_export.json`, each containing `action` and the matching
+`request_sha256`. Acknowledgments and the range snapshot are immutable files.
+The snapshot separates original layer IDs, prefill/decode, K/V, and KV heads;
+it proposes global FP8 and NVFP4 decode scales from observed maxima and a
+fixed 10% margin. These are candidates for later quality validation, without
+a guarantee for unseen requests. `counter_storage_bytes` excludes temporary
+reduction workspace. Timed serving must report `KV_observation_enabled=false`.
