@@ -11,6 +11,7 @@ The enclosing owned container's supervisor enforces resource/deadline limits.
 from __future__ import annotations
 
 import argparse
+from collections.abc import Mapping
 import json
 import os
 from pathlib import Path
@@ -21,6 +22,16 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from scripts.logger import logger
+from xllm.python.attention.native_profile import resolve_native_profile
+
+
+def _operator_profile(arm: str, environment: Mapping[str, str]) -> dict[str, object]:
+    if "XLLM_FLASHINFER_NATIVE_PLANNER" not in environment:
+        raise ValueError("Explicit native prefill planner is required")
+    profile = resolve_native_profile(environment, True, arm == "fp8_e4m3")
+    if profile["decode_impl"] != "xqa" and profile["planner"] != "fa3":
+        raise ValueError("This admission checks explicit FA3 or XQA production operators")
+    return profile
 
 
 def _reference(query: object, key: object, value: object, query_count: int) -> object:
@@ -54,10 +65,9 @@ def check(arm: str) -> dict:
 
     if torch.cuda.device_count() != 1 or torch.cuda.get_device_capability(0) != (9, 0):
         raise ValueError("This acceptance is specifically for one isolated H800/SM90 GPU")
-    xqa = os.environ.get("XLLM_FLASHINFER_NATIVE_DECODE") == "xqa"
-    planner = "fa2" if xqa else "fa3"
-    if os.environ.get("XLLM_FLASHINFER_NATIVE_PLANNER") != planner:
-        raise ValueError("Explicit matching native prefill planner is required")
+    profile = _operator_profile(arm, os.environ)
+    xqa = profile["decode_impl"] == "xqa"
+    planner = profile["planner"]
     torch.manual_seed(20261026)
     batch, length, page_size, heads, kv_heads, dim = 2, 257, 128, 40, 8, 128
     device = torch.device("cuda")

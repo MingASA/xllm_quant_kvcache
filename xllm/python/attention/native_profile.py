@@ -25,8 +25,11 @@ def resolve_native_profile(environment: Mapping[str, str], native: bool, fp8: bo
     if native and planner == "auto":
         raise ValueError("Native production plans must name their actual planner, without silent fallback")
     query_fp8 = query_flag == "1"
-    if decode == "xqa" and (planner != "fa2" or query_fp8):
-        raise ValueError("Production XQA requires explicit FA2 BF16-Q prefill without external Q quantization")
+    if decode == "xqa":
+        if query_fp8:
+            raise ValueError("XQA requires BF16 queries without external Q quantization")
+        if planner != "fa2" and (fp8 or planner != "fa3"):
+            raise ValueError("XQA requires FA2 prefill for FP8 KV, or FA2/FA3 prefill for BF16 KV")
     if query_fp8 and (not fp8 or planner != "fa3"):
         raise ValueError("FP8 query is supported only in explicit native FA3 with resident FP8 KV")
     if fp8 and planner == "fa3" and not query_fp8:

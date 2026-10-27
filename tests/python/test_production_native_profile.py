@@ -23,6 +23,52 @@ def test_historical_default_and_unmodified_default_are_preserved() -> None:
     assert resolve_native_profile({}, False, False)["planner"] == "auto"
 
 
+def test_bf16_fa3_prefill_xqa_decode_and_its_real_operator_admission() -> None:
+    from tools.check_native_fa3_operator import _operator_profile
+
+    environment = {"XLLM_FLASHINFER_NATIVE_PLANNER": "fa3", "XLLM_FLASHINFER_NATIVE_DECODE": "xqa"}
+    profile = resolve_native_profile(environment, True, False)
+    assert profile["planner"] == "fa3" and profile["decode_impl"] == "xqa"
+    assert profile["query_fp8"] is False
+    assert _operator_profile("bf16", environment) == profile
+    # The unsupported BF16-Q/FP8-KV FA3 prefill remains refused before execution.
+    with pytest.raises(ValueError):
+        _operator_profile("fp8_e4m3", environment)
+    with pytest.raises(ValueError):
+        _operator_profile("bf16", {"XLLM_FLASHINFER_NATIVE_DECODE": "xqa"})
+
+
+def test_bf16_xqa_dispatch_keeps_native_bf16_pages_and_unit_scales(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_fi = types.ModuleType("flashinfer"); fake_fi.__version__ = "0.6.18.post1"
+    fake_decode = types.ModuleType("flashinfer.decode"); fake_decode.fast_decode_plan = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "flashinfer", fake_fi)
+    monkeypatch.setitem(sys.modules, "flashinfer.decode", fake_decode)
+    from xllm.python.attention.backend import LayerCache
+
+    module = importlib.import_module("xllm.python.attention.flashinfer")
+    backend = module.FlashInferBackend.__new__(module.FlashInferBackend)
+    backend.num_heads, backend.head_dim, backend.scale = 2, 8, 8 ** -.5
+    backend._decode_impl = "xqa"
+    backend._metadata = SimpleNamespace(is_prefill=False, is_chunked_prefill=False)
+    cache = LayerCache(torch.zeros((1, 128, 1, 8), dtype=torch.bfloat16),
+                       torch.zeros((1, 128, 1, 8), dtype=torch.bfloat16))
+    backend._kv_caches = [cache]
+    backend._decode_workspace = torch.zeros(1, dtype=torch.uint8)
+
+    class Plan:
+        def run(self, query: torch.Tensor, pages: tuple, workspace: torch.Tensor, *scales: float) -> torch.Tensor:
+            assert query.dtype == torch.bfloat16
+            assert pages[0] is cache.key and pages[1] is cache.value
+            assert workspace is backend._decode_workspace
+            assert scales == (8 ** -.5, 1.0, 1.0)
+            return query.clone()
+
+    backend._active_xqa_plan = Plan()
+    query = torch.ones(3, 2, 8, dtype=torch.bfloat16)
+    layer = SimpleNamespace(layer_id=0, num_heads=2, head_dim=8)
+    torch.testing.assert_close(backend.execute_attention(query, layer), query.view(3, 16))
+
+
 def test_fa3_bf16_and_explicit_fp8_query_are_supported_profiles() -> None:
     assert resolve_native_profile({"XLLM_FLASHINFER_NATIVE_PLANNER": "fa3"}, True, False)["query_fp8"] is False
     profile = resolve_native_profile({"XLLM_FLASHINFER_NATIVE_PLANNER": "fa3", "XLLM_FLASHINFER_FP8_QUERY": "1",
