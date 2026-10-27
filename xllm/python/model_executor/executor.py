@@ -113,7 +113,7 @@ def _create_attention_backend(
         if (
             config.get("enable_mla", False)
             or int(config.get("index_n_heads", 0)) > 0
-            or int(config.get("full_attention_interval", 1)) > 1
+            or (int(config.get("full_attention_interval", 1)) > 1 and quantized_backend != "flashinfer")
             or int(config.get("cp_size", 1)) != 1
             or int(config.get("kv_split_size", 0)) > 1
             or int(config.get("layerwise_split_size", 1)) != 1
@@ -415,6 +415,8 @@ class ModelExecutor:
         if len(layer_caches) < required_layers:
             raise ValueError("cache layer count does not match the model layer layout")
         if self._kv_bound:
+            if tuple(cache.storage_signature() for cache in layer_caches) != self._cache_storage_signature:
+                raise RuntimeError("Cannot replace bound model cache storage, scales or linear state")
             return
         self.attention_backend.bind_kv_caches(layer_caches)
         self.eager_runner.bind_layer_caches(layer_caches)
@@ -430,6 +432,7 @@ class ModelExecutor:
                 self.decode_graph_runner.warmup(parameter.device, parameter.dtype)
         if self.inductor_runner is not None:
             self.inductor_runner.bind_layer_caches(layer_caches)
+        self._cache_storage_signature = tuple(cache.storage_signature() for cache in layer_caches)
         self._kv_bound = True
         native_info = getattr(self.attention_backend, "native_kv_runtime_info", None)
         if native_info is not None:

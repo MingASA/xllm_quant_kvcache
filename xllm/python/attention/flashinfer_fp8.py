@@ -29,6 +29,7 @@ import torch
 
 from xllm.python.attention.backend import AttentionMetadata, LayerCache
 from xllm.python.attention.flashinfer import FlashInferBackend
+from xllm.python.attention.native_kv import _full_attention_layers
 from xllm.python.attention.quantized import KVCacheCodec, _validate_cache
 from xllm.python.attention.quantized_triton import write_quantized_kv
 from xllm.python.attention.query_quantization import quantize_query_fp8
@@ -63,7 +64,7 @@ class FlashInferFP8Backend(FlashInferBackend):
         self._codec = KVCacheCodec(cache_dtype, head_dim)
         self._cache_dtype = torch.float8_e4m3fn if self._codec.cache_dtype == "fp8_e4m3" else torch.float8_e5m2
         self._fixed_scales = (key_scale, value_scale)
-        self._fp8_caches: list[tuple[torch.Tensor, torch.Tensor]] = []
+        self._fp8_caches: dict[int, tuple[torch.Tensor, torch.Tensor]] = {}
         super().__init__(num_heads, num_kv_heads, head_dim, scale, sliding_window, device, dtype)
 
     @property
@@ -85,24 +86,23 @@ class FlashInferFP8Backend(FlashInferBackend):
             "writer": "triton_quantize_scatter_only",
             "attention_impl": "flashinfer",
             "fp8_views_alias_resident_pages": all(
-                key.data_ptr() == cache.key.data_ptr() and value.data_ptr() == cache.value.data_ptr()
-                for cache, (key, value) in zip(self._kv_caches, self._fp8_caches)
+                key.data_ptr() == self._kv_caches[layer_id].key.data_ptr()
+                and value.data_ptr() == self._kv_caches[layer_id].value.data_ptr()
+                for layer_id, (key, value) in self._fp8_caches.items()
             ),
         }
 
     def bind_kv_caches(self, kv_caches: list[LayerCache]) -> None:
-        if not kv_caches:
-            raise ValueError("FlashInfer FP8 requires resident cache layers")
-        for cache in kv_caches:
+        full_layers = _full_attention_layers(kv_caches)
+        for _, cache in full_layers:
             _validate_cache(cache, self._codec, self.num_kv_heads)
             if cache.key.device != self._decode_workspace.device:
                 raise ValueError("FP8 cache must be on the backend CUDA device")
-            if cache.key.shape != kv_caches[0].key.shape:
-                raise ValueError("FP8 page layouts must match across layers")
         super().bind_kv_caches(kv_caches)
-        self._fp8_caches = [
-            (cache.key.view(self._cache_dtype), cache.value.view(self._cache_dtype)) for cache in kv_caches
-        ]
+        self._fp8_caches = {
+            layer_id: (cache.key.view(self._cache_dtype), cache.value.view(self._cache_dtype))
+            for layer_id, cache in full_layers
+        }
 
     def prepare(self, metadata: AttentionMetadata, *, graph_mode: bool = False) -> None:
         if not self._kv_caches:
@@ -171,9 +171,13 @@ class FlashInferFP8Backend(FlashInferBackend):
         if self._metadata is None:
             raise RuntimeError("FlashInferFP8Backend.prepare() was not called")
         if self._decode_impl == "xqa" and not (self._metadata.is_prefill or self._metadata.is_chunked_prefill):
-            output = self._active_xqa_plan.run(q.view(-1, self.num_heads, self.head_dim),
-                                               self._fp8_caches[layer.layer_id], self._decode_workspace,
-                                               self.scale, *self._fixed_scales)
+            output = self._active_xqa_plan.run(
+                q.view(-1, self.num_heads, self.head_dim),
+                self._fp8_caches[layer.layer_id],
+                self._decode_workspace,
+                self.scale,
+                *self._fixed_scales,
+            )
             return output.view(-1, self.num_heads * self.head_dim)
         wrapper = (
             self._prefill_paged_wrapper

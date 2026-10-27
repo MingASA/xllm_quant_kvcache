@@ -29,7 +29,7 @@ from xllm.python.attention.backend import (
     AttentionMetadata,
     LayerCache,
 )
-from xllm.python.attention.native_kv import KVScaleCalibration, cache_allocation
+from xllm.python.attention.native_kv import KVScaleCalibration, _full_attention_layers, cache_allocation
 from xllm.python.attention.native_profile import resolve_native_profile
 
 if TYPE_CHECKING:
@@ -137,6 +137,7 @@ class FlashInferBackend(AttentionBackend):
         )
 
         self._kv_caches: list[LayerCache] = []
+        self._cache_storage_signature: tuple = ()
         self._metadata: AttentionMetadata | None = None
         self._active_decode_wrapper = self._decode_wrapper
         self._graph_decode_wrappers: dict[int, flashinfer.BatchDecodeWithPagedKVCacheWrapper] = {}
@@ -144,25 +145,23 @@ class FlashInferBackend(AttentionBackend):
         self._planned_graph_batches: set[int] = set()
 
     def bind_kv_caches(self, kv_caches: list[LayerCache]) -> None:
-        if not kv_caches:
-            raise ValueError("FlashInferBackend requires at least one KV cache")
-        if self._decode_impl == "xqa" and self._kv_caches:
-            if [(cache.key.data_ptr(), cache.value.data_ptr()) for cache in self._kv_caches] != [
-                (cache.key.data_ptr(), cache.value.data_ptr()) for cache in kv_caches
-            ]:
-                raise RuntimeError("Cannot replace XQA resident storage after initial binding")
+        full_layers = _full_attention_layers(kv_caches)
+        old_storage = getattr(self, "_cache_storage_signature", ())
+        new_storage = tuple(cache.storage_signature() for cache in kv_caches)
+        if self._kv_caches and old_storage == new_storage:
             return
-        if self._graph_decode_wrappers and [
-            (cache.key.data_ptr(), cache.value.data_ptr()) for cache in self._kv_caches
-        ] != [(cache.key.data_ptr(), cache.value.data_ptr()) for cache in kv_caches]:
+        if self._decode_impl == "xqa" and self._kv_caches:
+            raise RuntimeError("Cannot replace XQA resident storage after initial binding")
+        if self._graph_decode_wrappers and old_storage != new_storage:
             raise RuntimeError("Cannot replace KV cache storage after decode graph planning/capture")
         self._kv_caches = kv_caches
+        self._cache_storage_signature = new_storage
         if self._decode_impl == "xqa":
             # SM90 XQA may multiply masked probabilities by unused V lanes.
             # Fresh empty storage can contain FP8 NaNs, so initialize every
             # payload once before use. Reused pages then contain finite values.
             # This must never clear an already-bound live/prefix cache.
-            for cache in kv_caches:
+            for _, cache in full_layers:
                 cache.key.zero_()
                 cache.value.zero_()
         logger.info("KV_ALLOCATION %s", cache_allocation(kv_caches, self._kv_format))
@@ -190,8 +189,11 @@ class FlashInferBackend(AttentionBackend):
             "xqa_enable_pdl": True if self._decode_impl == "xqa" else None,
             "xqa_unused_kv_policy": "finite_full_initialization" if self._decode_impl == "xqa" else None,
             "xqa_graph_padding": "reserved_page0_one_token_discard" if self._decode_impl == "xqa" else None,
-            "decode_internal_q_data_type": ("torch.float8_e4m3fn" if self._decode_impl == "xqa"
-                                            and self._kv_data_type == torch.float8_e4m3fn else str(self._query_data_type)),
+            "decode_internal_q_data_type": (
+                "torch.float8_e4m3fn"
+                if self._decode_impl == "xqa" and self._kv_data_type == torch.float8_e4m3fn
+                else str(self._query_data_type)
+            ),
             "paged_prefill": self._native_kv_pair,
             "decode_tensor_cores": self._decode_use_tensor_cores,
             "flashinfer_version": flashinfer.__version__,
@@ -407,7 +409,13 @@ class FlashInferBackend(AttentionBackend):
             k_3d, v_3d = self._quality_transform.apply(k_3d, v_3d)
 
         if self._calibration is not None:
-            self._calibration.observe(layer.layer_id, k_3d, v_3d, metadata, len(self._kv_caches))
+            self._calibration.observe(
+                layer.layer_id,
+                k_3d,
+                v_3d,
+                metadata,
+                sum(cache.key is not None for cache in self._kv_caches),
+            )
 
         _get_runtime_kernels().reshape_paged_cache(metadata.slot_mapping, k_3d, v_3d, k_cache, v_cache)
         return self.execute_attention(q_3d, layer, k_3d, v_3d)
@@ -440,8 +448,9 @@ class FlashInferBackend(AttentionBackend):
             output = self._prefill_paged_wrapper.run(q_3d, (layer_cache.key, layer_cache.value))
         elif self._decode_impl == "xqa":
             layer_cache = self._kv_caches[layer.layer_id]
-            output = self._active_xqa_plan.run(q_3d, (layer_cache.key, layer_cache.value),
-                                               self._decode_workspace, self.scale, 1.0, 1.0)
+            output = self._active_xqa_plan.run(
+                q_3d, (layer_cache.key, layer_cache.value), self._decode_workspace, self.scale, 1.0, 1.0
+            )
         else:
             layer_cache = self._kv_caches[layer.layer_id]
             output = self._active_decode_wrapper.run(q_3d, (layer_cache.key, layer_cache.value))

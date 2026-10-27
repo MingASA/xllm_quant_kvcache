@@ -12,11 +12,34 @@ import torch
 from xllm.python.attention.backend import AttentionMetadata, LayerCache
 
 
-def cache_allocation(caches: list[LayerCache], cache_format: str) -> str:
-    layers = []
-    for cache in caches:
-        if cache.key is None or not cache.key.numel():
+def _full_attention_layers(caches: list[LayerCache]) -> list[tuple[int, LayerCache]]:
+    """Validate paged K/V while preserving model layer IDs in hybrid models."""
+    layers: list[tuple[int, LayerCache]] = []
+    for layer_id, cache in enumerate(caches):
+        if cache.key is None and cache.value is None:
             continue
+        if cache.key is None or cache.value is None:
+            raise ValueError(f"Full-attention layer {layer_id} requires both K and V")
+        if cache.key.ndim != 4 or cache.key.shape != cache.value.shape or min(cache.key.shape) <= 0:
+            raise ValueError("Native FlashInfer requires matching positive [pages, page_size, heads, dim] K/V")
+        if cache.key.dtype != cache.value.dtype or cache.key.device != cache.value.device:
+            raise ValueError("Native K/V must have matching dtypes and devices")
+        if not cache.key.is_contiguous() or not cache.value.is_contiguous():
+            raise ValueError("Native FlashInfer requires contiguous K/V pages")
+        if layers:
+            first = layers[0][1].key
+            if cache.key.shape != first.shape or cache.key.device != first.device or cache.key.dtype != first.dtype:
+                raise ValueError("Native K/V page layouts must match across full-attention layers")
+        layers.append((layer_id, cache))
+    if not layers:
+        raise ValueError("Native FlashInfer requires resident full-attention K/V pages")
+    return layers
+
+
+def cache_allocation(caches: list[LayerCache], cache_format: str) -> str:
+    full_layers = _full_attention_layers(caches)
+    layers = []
+    for layer_id, cache in full_layers:
         tensors = {
             name: {
                 "dtype": str(tensor.dtype),
@@ -34,6 +57,7 @@ def cache_allocation(caches: list[LayerCache], cache_format: str) -> str:
         resident = sum(tensor["bytes"] for tensor in tensors.values())
         layers.append(
             {
+                "layer_id": layer_id,
                 "tensors": tensors,
                 "key_format": cache_format,
                 "value_format": cache_format,
@@ -41,13 +65,37 @@ def cache_allocation(caches: list[LayerCache], cache_format: str) -> str:
                 "bytes_per_token": resident // (cache.key.shape[0] * cache.key.shape[1]),
             }
         )
-    if not layers:
-        raise ValueError("Native FlashInfer requires resident full-attention K/V pages")
-    first = next(cache for cache in caches if cache.key is not None and cache.key.numel())
+    linear_layers = [
+        {
+            "layer_id": layer_id,
+            "tensors": {
+                name: {
+                    "dtype": str(tensor.dtype),
+                    "shape": list(tensor.shape),
+                    "bytes": tensor.numel() * tensor.element_size(),
+                }
+                for name, tensor in (("conv", cache.conv), ("ssm", cache.ssm))
+                if tensor is not None
+            },
+            "resident_bytes": sum(
+                tensor.numel() * tensor.element_size() for tensor in (cache.conv, cache.ssm) if tensor is not None
+            ),
+        }
+        for layer_id, cache in enumerate(caches)
+        if cache.conv is not None or cache.ssm is not None
+    ]
+    full_bytes = sum(layer["resident_bytes"] for layer in layers)
+    linear_bytes = sum(layer["resident_bytes"] for layer in linear_layers)
+    first = full_layers[0][1]
     return json.dumps(
         {
             "layers": layers,
-            "resident_bytes": sum(layer["resident_bytes"] for layer in layers),
+            "resident_bytes": full_bytes,
+            "full_attention_resident_bytes": full_bytes,
+            "full_attention_layer_ids": [layer_id for layer_id, _ in full_layers],
+            "linear_state_layers": linear_layers,
+            "linear_state_resident_bytes": linear_bytes,
+            "total_resident_bytes": full_bytes + linear_bytes,
             "token_capacity": first.key.shape[0] * first.key.shape[1],
         }
     )

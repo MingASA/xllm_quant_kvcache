@@ -303,8 +303,9 @@ def test_executor_captures_cuda_graphs_before_binding_completes(capture_fails: b
             assert not executor._kv_bound
             logger_mock.info.assert_not_called()
         else:
-            executor.bind_kv_caches([(torch.zeros(1), torch.zeros(1))])
-            executor.bind_kv_caches([(torch.zeros(1), torch.zeros(1))])
+            caches = [(torch.zeros(1), torch.zeros(1))]
+            executor.bind_kv_caches(caches)
+            executor.bind_kv_caches(caches)
             warmup.assert_called_once()
             assert executor._kv_bound
             evidence = json.loads(logger_mock.info.call_args.args[1])

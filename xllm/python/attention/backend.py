@@ -56,6 +56,19 @@ class LayerCache:
     key_scale: torch.Tensor | None = None
     value_scale: torch.Tensor | None = None
 
+    def storage_signature(self) -> tuple[tuple[object, ...] | None, ...]:
+        """Identify every resident slot, including linear state and scales.
+
+        Decode graphs retain tensor addresses and layouts. Matching K/V alone
+        cannot detect replacement of a hybrid layer's recurrent state.
+        """
+        return tuple(
+            None
+            if (tensor := getattr(self, name)) is None
+            else (tensor.data_ptr(), tuple(tensor.shape), tuple(tensor.stride()), tensor.dtype, tensor.device)
+            for name in _LAYER_CACHE_SLOTS
+        )
+
     @property
     def index_scale(self) -> torch.Tensor | None:
         """Legacy MLA alias for the shared indexer scale cache."""
