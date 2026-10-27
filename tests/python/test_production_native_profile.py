@@ -18,6 +18,50 @@ import torch
 from xllm.python.attention.native_profile import NativeFlashInferConfig, resolve_native_profile
 
 
+@pytest.mark.parametrize("kv_dtype,planner", [
+    (torch.bfloat16, "fa3"), (torch.float8_e4m3fn, "fa2"), (torch.uint8, "fa2"),
+])
+def test_typed_service_auto_uses_dtype_and_device_without_environment(
+    monkeypatch: pytest.MonkeyPatch, kv_dtype: torch.dtype, planner: str
+) -> None:
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda device: (9, 0))
+    monkeypatch.setenv("XLLM_FLASHINFER_NATIVE_PLANNER", "invalid_legacy_override")
+    profile = NativeFlashInferConfig.from_runtime_config(
+        {"max_position_embeddings": 262144}, torch.device("cuda:0"), kv_dtype
+    )
+    assert profile.planner == planner and profile.decode_impl == "flashinfer"
+    assert profile.max_context_tokens == 262144
+
+
+@pytest.mark.parametrize("kv_dtype,planner,decode", [
+    (torch.bfloat16, "fa3", "xqa"), (torch.float8_e4m3fn, "fa2", "xqa"),
+    (torch.uint8, "fa2", "flashinfer"),
+])
+def test_typed_service_explicit_kernels_preserve_requested_selection(
+    kv_dtype: torch.dtype, planner: str, decode: str
+) -> None:
+    profile = NativeFlashInferConfig.from_runtime_config(
+        {"kv_cache_prefill_backend": planner, "kv_cache_decode_backend": decode},
+        torch.device("cuda:0"), kv_dtype,
+    )
+    assert profile.resolve(kv_dtype)["planner"] == planner
+    assert profile.decode_impl == decode
+
+
+@pytest.mark.parametrize("kv_dtype,planner,decode", [
+    (torch.float8_e4m3fn, "fa3", "flashinfer"), (torch.uint8, "fa2", "xqa"),
+    (torch.bfloat16, "unknown", "flashinfer"), (torch.bfloat16, "fa2", "unknown"),
+])
+def test_typed_service_unsupported_kernels_never_silently_fallback(
+    kv_dtype: torch.dtype, planner: str, decode: str
+) -> None:
+    with pytest.raises(ValueError):
+        NativeFlashInferConfig.from_runtime_config(
+            {"kv_cache_prefill_backend": planner, "kv_cache_decode_backend": decode},
+            torch.device("cuda:0"), kv_dtype,
+        )
+
+
 @pytest.mark.parametrize("maximum", [65536, 131072, 262144])
 def test_native_XQA_declares_new_model_context_without_legacy_32K_limit(maximum: int) -> None:
     from xllm.python.attention.xqa_decode import validate_xqa_lengths

@@ -250,6 +250,8 @@ Options create_options(const std::string& instance_name, bool is_local) {
       .kv_cache_backend(kv_cache_config.kv_cache_backend())
       .kv_cache_k_scale(kv_cache_config.kv_cache_k_scale())
       .kv_cache_v_scale(kv_cache_config.kv_cache_v_scale())
+      .kv_cache_prefill_backend(kv_cache_config.kv_cache_prefill_backend())
+      .kv_cache_decode_backend(kv_cache_config.kv_cache_decode_backend())
       .rec_worker_max_concurrency(
           static_cast<int32_t>(rec_config.rec_worker_max_concurrency()))
       .is_local(is_local);

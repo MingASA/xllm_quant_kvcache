@@ -284,6 +284,8 @@ struct Options {
   PROPERTY(std::string, kv_cache_backend) = "auto";
   PROPERTY(double, kv_cache_k_scale) = 1.0;
   PROPERTY(double, kv_cache_v_scale) = 1.0;
+  PROPERTY(std::string, kv_cache_prefill_backend) = "auto";
+  PROPERTY(std::string, kv_cache_decode_backend) = "auto";
 
   // max concurrency for rec worker
   PROPERTY(int32_t, rec_worker_max_concurrency) = 1;

@@ -101,6 +101,11 @@ def _create_attention_backend(
     if configured_backend not in ("auto", "flashinfer", "reference"):
         raise ValueError("Unknown configured KV cache backend")
     configured_native = configured_backend == "flashinfer"
+    if not configured_native and any(
+        config.get(name, "auto") != "auto"
+        for name in ("kv_cache_prefill_backend", "kv_cache_decode_backend")
+    ):
+        raise ValueError("Explicit native kernels require kv_cache_backend=flashinfer")
     if configured_native and not current_platform.is_cuda():
         raise ValueError("Native FlashInfer KV attention requires CUDA")
     if configured_native and cache_dtype not in ("auto", "fp8", "fp8_e4m3", "nvfp4"):
@@ -161,7 +166,9 @@ def _create_attention_backend(
             from xllm.python.attention.native_profile import NativeFlashInferConfig
 
             native_config = (
-                NativeFlashInferConfig(max_context_tokens=int(config.get("max_position_embeddings", 32768)))
+                NativeFlashInferConfig.from_runtime_config(
+                    config, device, torch.uint8 if cache_dtype == "nvfp4" else torch.float8_e4m3fn
+                )
                 if configured_native else None
             )
             if configured_native:
@@ -275,10 +282,7 @@ def _create_attention_backend(
         if configured_native:
             from xllm.python.attention.native_profile import NativeFlashInferConfig
 
-            planner = "fa3" if torch.cuda.get_device_capability(device) == (9, 0) else "fa2"
-            native_config = NativeFlashInferConfig(
-                planner, max_context_tokens=int(config.get("max_position_embeddings", 32768))
-            )
+            native_config = NativeFlashInferConfig.from_runtime_config(config, device, dtype)
         return FlashInferBackend(
             num_heads=first_attention.num_heads,
             num_kv_heads=first_attention.num_kv_heads,

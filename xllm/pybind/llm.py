@@ -139,6 +139,8 @@ class LLM:
         kv_cache_backend: str = "auto",
         kv_cache_k_scale: float = 1.0,
         kv_cache_v_scale: float = 1.0,
+        kv_cache_prefill_backend: str = "auto",
+        kv_cache_decode_backend: str = "auto",
         **kwargs: Any,
     ) -> None:
         signal.signal(signal.SIGTERM, lambda s, f: sys.exit(0))
@@ -215,6 +217,8 @@ class LLM:
         options.kv_cache_backend = kv_cache_backend
         options.kv_cache_k_scale = kv_cache_k_scale
         options.kv_cache_v_scale = kv_cache_v_scale
+        options.kv_cache_prefill_backend = kv_cache_prefill_backend
+        options.kv_cache_decode_backend = kv_cache_decode_backend
         options.disable_log_stats = disable_log_stats
         options.enable_sleep_mode = enable_sleep_mode
         self._backend = backend

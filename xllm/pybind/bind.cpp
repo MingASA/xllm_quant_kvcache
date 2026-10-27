@@ -113,7 +113,11 @@ PYBIND11_MODULE(xllm_export, m) {
       .def_readwrite("kv_cache_dtype", &Options::kv_cache_dtype_)
       .def_readwrite("kv_cache_backend", &Options::kv_cache_backend_)
       .def_readwrite("kv_cache_k_scale", &Options::kv_cache_k_scale_)
-      .def_readwrite("kv_cache_v_scale", &Options::kv_cache_v_scale_);
+      .def_readwrite("kv_cache_v_scale", &Options::kv_cache_v_scale_)
+      .def_readwrite("kv_cache_prefill_backend",
+                     &Options::kv_cache_prefill_backend_)
+      .def_readwrite("kv_cache_decode_backend",
+                     &Options::kv_cache_decode_backend_);
 
   // 2. export LLMMaster
   py::class_<LLMMaster>(m, "LLMMaster")

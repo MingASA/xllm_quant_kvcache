@@ -21,6 +21,26 @@ class NativeFlashInferConfig:
     decode_impl: str = "flashinfer"
     max_context_tokens: int = 32768
 
+    @classmethod
+    def from_runtime_config(
+        cls, config: Mapping[str, object], device: torch.device, kv_dtype: torch.dtype
+    ) -> NativeFlashInferConfig:
+        """Resolve typed service flags before constructing any kernel or cache."""
+        planner = config.get("kv_cache_prefill_backend", "auto")
+        decode = config.get("kv_cache_decode_backend", "auto")
+        if planner not in ("auto", "fa2", "fa3") or decode not in ("auto", "flashinfer", "xqa"):
+            raise ValueError("Invalid configured native prefill/decode backend")
+        if planner == "auto":
+            unquantized = kv_dtype in (torch.bfloat16, torch.float16)
+            planner = "fa3" if unquantized and torch.cuda.get_device_capability(device) == (9, 0) else "fa2"
+        result = cls(
+            planner=str(planner),
+            decode_impl="flashinfer" if decode == "auto" else str(decode),
+            max_context_tokens=int(config.get("max_position_embeddings", 32768)),
+        )
+        result.resolve(kv_dtype)
+        return result
+
     def resolve(self, kv_dtype: torch.dtype) -> dict[str, object]:
         if self.planner not in ("fa2", "fa3") or self.decode_impl not in ("flashinfer", "xqa"):
             raise ValueError("Native FlashInfer requires an explicit supported prefill/decode backend")

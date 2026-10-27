@@ -218,6 +218,8 @@ class ArgumentParser:
         self.parser.add_argument("--kv_cache_backend", choices=("auto", "flashinfer", "reference"), default="auto")
         self.parser.add_argument("--kv_cache_k_scale", type=float, default=1.0)
         self.parser.add_argument("--kv_cache_v_scale", type=float, default=1.0)
+        self.parser.add_argument("--kv_cache_prefill_backend", choices=("auto", "fa2", "fa3"), default="auto")
+        self.parser.add_argument("--kv_cache_decode_backend", choices=("auto", "flashinfer", "xqa"), default="auto")
         self.parser.add_argument(
             "--use_cpp_chat_template",
             nargs="?",

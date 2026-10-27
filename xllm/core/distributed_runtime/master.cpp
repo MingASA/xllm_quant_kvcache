@@ -89,7 +89,9 @@ void apply_runtime_kv_cache_options(const Options& source,
       .kv_cache_dtype(source.kv_cache_dtype())
       .kv_cache_backend(source.kv_cache_backend())
       .kv_cache_k_scale(source.kv_cache_k_scale())
-      .kv_cache_v_scale(source.kv_cache_v_scale());
+      .kv_cache_v_scale(source.kv_cache_v_scale())
+      .kv_cache_prefill_backend(source.kv_cache_prefill_backend())
+      .kv_cache_decode_backend(source.kv_cache_decode_backend());
 }
 
 void validate_layerwise_split_size_startup_config(const Options& options,

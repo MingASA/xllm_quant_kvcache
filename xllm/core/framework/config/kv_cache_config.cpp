@@ -71,6 +71,15 @@ DEFINE_double(kv_cache_v_scale,
               1.0,
               "Positive FP32-representable global V decode scale for native "
               "low-precision KV.");
+DEFINE_string(kv_cache_prefill_backend,
+              "auto",
+              "Native FlashInfer prefill: auto selects FA3 for unquantized "
+              "SM90 KV and FA2 otherwise; fa2/fa3 select explicitly. "
+              "Low-precision KV with BF16 queries requires FA2.");
+DEFINE_string(kv_cache_decode_backend,
+              "auto",
+              "Native FlashInfer decode: auto/flashinfer use paged decode; "
+              "xqa selects XQA explicitly. NVFP4 requires flashinfer.");
 
 DEFINE_bool(enable_prefix_cache,
             true,
@@ -109,6 +118,8 @@ void KVCacheConfig::from_flags() {
   XLLM_CONFIG_ASSIGN_FROM_FLAG(kv_cache_backend);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(kv_cache_k_scale);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(kv_cache_v_scale);
+  XLLM_CONFIG_ASSIGN_FROM_FLAG(kv_cache_prefill_backend);
+  XLLM_CONFIG_ASSIGN_FROM_FLAG(kv_cache_decode_backend);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(indexer_cache_dtype);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(enable_prefix_cache);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(enable_in_batch_prefix_cache);
@@ -126,6 +137,8 @@ void KVCacheConfig::from_json(const JsonReader& json) {
   XLLM_CONFIG_ASSIGN_FROM_JSON(kv_cache_backend);
   XLLM_CONFIG_ASSIGN_FROM_JSON(kv_cache_k_scale);
   XLLM_CONFIG_ASSIGN_FROM_JSON(kv_cache_v_scale);
+  XLLM_CONFIG_ASSIGN_FROM_JSON(kv_cache_prefill_backend);
+  XLLM_CONFIG_ASSIGN_FROM_JSON(kv_cache_decode_backend);
   XLLM_CONFIG_ASSIGN_FROM_JSON(indexer_cache_dtype);
   XLLM_CONFIG_ASSIGN_FROM_JSON(enable_prefix_cache);
   XLLM_CONFIG_ASSIGN_FROM_JSON(enable_in_batch_prefix_cache);
@@ -152,6 +165,10 @@ void KVCacheConfig::append_config_json(
       config_json, default_config, kv_cache_k_scale);
   APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
       config_json, default_config, kv_cache_v_scale);
+  APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
+      config_json, default_config, kv_cache_prefill_backend);
+  APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
+      config_json, default_config, kv_cache_decode_backend);
   APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
       config_json, default_config, indexer_cache_dtype);
   APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
@@ -188,6 +205,22 @@ void KVCacheConfig::validate() const {
   CHECK(kv_cache_backend_ == "auto" || kv_cache_backend_ == "flashinfer" ||
         kv_cache_backend_ == "reference")
       << "Invalid kv_cache_backend.";
+  CHECK(kv_cache_prefill_backend_ == "auto" ||
+        kv_cache_prefill_backend_ == "fa2" ||
+        kv_cache_prefill_backend_ == "fa3")
+      << "Invalid kv_cache_prefill_backend.";
+  CHECK(kv_cache_decode_backend_ == "auto" ||
+        kv_cache_decode_backend_ == "flashinfer" ||
+        kv_cache_decode_backend_ == "xqa")
+      << "Invalid kv_cache_decode_backend.";
+  CHECK(kv_cache_backend_ == "flashinfer" ||
+        (kv_cache_prefill_backend_ == "auto" &&
+         kv_cache_decode_backend_ == "auto"))
+      << "Explicit native kernels require kv_cache_backend=flashinfer.";
+  CHECK(kv_cache_dtype_ == "auto" || kv_cache_prefill_backend_ != "fa3")
+      << "Low-precision KV with BF16 queries requires FA2 prefill.";
+  CHECK(kv_cache_dtype_ != "nvfp4" || kv_cache_decode_backend_ != "xqa")
+      << "NVFP4 requires FlashInfer paged decode.";
   for (const double scale : {kv_cache_k_scale_, kv_cache_v_scale_}) {
     CHECK(std::isfinite(scale) && scale >= std::numeric_limits<float>::min() &&
           scale <= std::numeric_limits<float>::max())
