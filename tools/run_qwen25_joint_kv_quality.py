@@ -32,7 +32,7 @@ from scripts.logger import logger
 from tools import eval_kv_cache_quality as evaluator
 from tools.qwen25_experiment_model import checkpoint_provenance, read_profile, sha256_file
 from tools.native_kv_quality_contract import (
-    PROFILE as NATIVE_PROFILE, FA3_PROFILE, XQA_PROFILE, clean_native_environment, native_environment, native_evidence,
+    PROFILE as NATIVE_PROFILE, FA3_PROFILE, XQA_PROFILE, BF16_XQA_PROFILE, clean_native_environment, native_environment, native_evidence,
 )
 
 ARMS = ("auto", "int8", "fp8_e4m3", "int4")
@@ -151,8 +151,9 @@ def _validate_args(args: argparse.Namespace) -> dict[str, Path]:
             raise ValueError("Native quality requires an explicit bounded --max-seqs-per-batch <=" + str(graph_limit))
         if args.fp8_k_scale is None or args.fp8_v_scale is None:
             raise ValueError("Native paired quality requires explicit fixed K/V scales")
-        native_environment("fp8_e4m3", args.fp8_k_scale, args.fp8_v_scale,
-                           planner=args.native_planner, query_scale=args.fp8_q_scale, decode=args.native_decode)
+        for arm in args.arms:
+            native_environment(arm, args.fp8_k_scale, args.fp8_v_scale,
+                               planner=args.native_planner, query_scale=args.fp8_q_scale, decode=args.native_decode)
         if args.runtime_source_commit and not re.fullmatch(r"[0-9a-f]{40}", args.runtime_source_commit):
             raise ValueError("Native runtime source commit must be a full SHA")
         if (not args.binary_source_commit or len(args.binary_source_commit) != 40
@@ -530,7 +531,10 @@ def _server_manifest(
         "server_attestation": evidence,
     }
     if _native_mode(args):
-        manifest.update(execution_profile=XQA_PROFILE if args.native_decode == "xqa" else FA3_PROFILE if args.native_planner == "fa3" else NATIVE_PROFILE,
+        selected_profile = (BF16_XQA_PROFILE if args.native_decode == "xqa" and args.native_planner == "fa3"
+                            else XQA_PROFILE if args.native_decode == "xqa"
+                            else FA3_PROFILE if args.native_planner == "fa3" else NATIVE_PROFILE)
+        manifest.update(execution_profile=selected_profile,
                         paired_fp8_scales={"key": args.fp8_k_scale, "value": args.fp8_v_scale},
                         native_planner=args.native_planner, native_decode=args.native_decode, fp8_query_scale=args.fp8_q_scale,
                         binary_source_commit=args.binary_source_commit,

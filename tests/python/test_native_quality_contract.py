@@ -44,8 +44,10 @@ def _log(backend: dict) -> str:
 
 
 def _manifest(tmp_path: Path, arm: str = "fp8_e4m3", planner: str = "fa2", decode: str = "flashinfer") -> tuple[Path, dict]:
-    args = _args(tmp_path, *(["--native-planner", "fa3", "--fp8-q-scale", "1.0"] if planner == "fa3" else []),
-                 "--native-decode", decode)
+    extra = ["--native-planner", planner, "--native-decode", decode]
+    if planner == "fa3" and decode != "xqa": extra += ["--fp8-q-scale", "1.0"]
+    if planner == "fa3" and decode == "xqa": extra += ["--arms", "auto"]
+    args = _args(tmp_path, *extra)
     args.model.mkdir()
     (args.model / "config.json").write_text('{"model_type":"qwen2"}')
     (args.model / "tokenizer_config.json").write_text('{"chat_template":"frozen"}')
@@ -66,7 +68,7 @@ def _manifest(tmp_path: Path, arm: str = "fp8_e4m3", planner: str = "fa2", decod
         backend["xqa_enable_pdl"] = True
         backend["xqa_unused_kv_policy"] = "finite_full_initialization"
     native = native_evidence(_log(backend), arm, "cudagraphs", (0.125, 0.0625), planner=planner,
-                             query_scale=1.0 if planner == "fa3" else None, decode=decode)
+                             query_scale=1.0 if planner == "fa3" and decode != "xqa" else None, decode=decode)
     (attempt / "native_evidence.json").write_text(json.dumps(native))
     evidence = {"attempt": str(attempt), "allocation_verified": True,
                 "allocation_sha256": hashlib.sha256((attempt / "allocation.json").read_bytes()).hexdigest(),
@@ -93,6 +95,28 @@ def test_native_arguments_and_per_arm_environment_are_explicit(tmp_path: Path) -
         assert "--python_graph_backend=cudagraphs" in command
         assert "--enable_graph=true" in command
         assert "--enable_prefix_cache=false" in command
+
+
+def test_bf16_fa3_xqa_reference_arguments_and_manifest_are_explicit(tmp_path: Path) -> None:
+    from tools.native_kv_quality_contract import BF16_XQA_PROFILE, validate_native_manifest
+
+    args = _args(tmp_path, "--native-planner", "fa3", "--native-decode", "xqa", "--arms", "auto")
+    runner._validate_args(args)
+    selected = runner._environment(args, "auto")
+    assert selected["XLLM_FLASHINFER_NATIVE_PLANNER"] == "fa3"
+    assert selected["XLLM_FLASHINFER_NATIVE_DECODE"] == "xqa"
+    assert "XLLM_FLASHINFER_FP8_QUERY" not in selected
+    path, manifest = _manifest(tmp_path, arm="auto", planner="fa3", decode="xqa")
+    assert manifest["execution_profile"] == BF16_XQA_PROFILE
+    validate_native_manifest(path, manifest, "auto")
+    observed = evaluator._load_server_manifest(path, "auto", manifest["model"], tmp_path / "model")
+    assert observed["execution_profile"] == BF16_XQA_PROFILE
+    command = runner._server_command(args, "auto")
+    assert "--enable_prefix_cache=true" in command
+    assert "--python_graph_backend=cudagraphs" in command
+    with pytest.raises(ValueError): validate_native_manifest(path, manifest, "fp8-e4m3")
+    args.arms = ["auto", "fp8_e4m3"]
+    with pytest.raises(ValueError): runner._validate_args(args)
 
 
 @pytest.mark.parametrize("extra", [["--arms", "int8"], ["--fp8-k-scale", "nan"],

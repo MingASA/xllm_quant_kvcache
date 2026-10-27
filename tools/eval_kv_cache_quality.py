@@ -461,7 +461,7 @@ def _load_server_manifest(path: Path, arm: str, model: str, tokenizer_path: Path
         raise ValueError(f"server manifest fields must be lowercase SHA256 hex: {', '.join(invalid_hashes)}")
     if manifest["model_impl"] != expected_impl:
         raise ValueError(f"{arm} manifest model_impl must be {expected_impl!r}")
-    if manifest.get("execution_profile") in ("native-flashinfer-joint-v1", "native-flashinfer-fa3-joint-v1", "native-flashinfer-xqa-joint-v1"):
+    if manifest.get("execution_profile") in ("native-flashinfer-joint-v1", "native-flashinfer-fa3-joint-v1", "native-flashinfer-xqa-joint-v1", "native-flashinfer-bf16-xqa-reference-v1"):
         from tools.native_kv_quality_contract import validate_native_manifest
 
         validate_native_manifest(path, manifest, arm)
