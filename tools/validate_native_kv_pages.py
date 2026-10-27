@@ -198,7 +198,8 @@ def _run_case(fmt: str, phase: str, dimension: int, decode_impl: str, max_contex
 def _main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--formats", nargs="+", choices=("bf16", "fp8_e4m3", "nvfp4"), default=["bf16", "fp8_e4m3", "nvfp4"])
+    parser.add_argument("--formats", nargs="+", choices=("bf16", "fp8_e4m3", "nvfp4"), default=["fp8_e4m3", "nvfp4"],
+                        help="BF16 additionally requires the engine's registered native xllm_ops")
     parser.add_argument("--head-dim", type=int, choices=(128, 256), default=256)
     parser.add_argument("--decode-impl", choices=("flashinfer", "xqa"), default="flashinfer",
                         help="BF16/FP8 decode selection; NVFP4 always uses native FA2 decode")
@@ -211,6 +212,12 @@ def _main() -> None:
         raise ValueError("Operator qualification needs exactly one externally admitted SM90 GPU")
     if os.environ.get("XLLM_FP8_CALIBRATION_OUTPUT"):
         raise ValueError("Operator qualification cannot include model calibration")
+    if "bf16" in args.formats:
+        if not hasattr(torch.ops.xllm_ops, "reshape_paged_cache"):
+            raise ValueError("BF16 native writer requires the engine's registered xllm_ops; standalone supports FP8/NVFP4")
+        from xllm.python import initialize_runtime
+
+        initialize_runtime()
     torch.set_num_threads(4)
     torch.manual_seed(20261027)
     args.out.mkdir(parents=True, exist_ok=False)

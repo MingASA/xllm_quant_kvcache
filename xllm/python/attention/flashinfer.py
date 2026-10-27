@@ -198,7 +198,7 @@ class FlashInferBackend(AttentionBackend):
             "attention_impl": "flashinfer",
             "planner_backend": self._flashinfer_backend,
             "decode_impl": self._decode_impl,
-            "xqa_max_context": 32768 if self._decode_impl == "xqa" else None,
+            "xqa_max_context": getattr(self, "_max_context_tokens", 32768) if self._decode_impl == "xqa" else None,
             "xqa_enable_pdl": True if self._decode_impl == "xqa" else None,
             "xqa_unused_kv_policy": "finite_full_initialization" if self._decode_impl == "xqa" else None,
             "xqa_graph_padding": "reserved_page0_one_token_discard" if self._decode_impl == "xqa" else None,
