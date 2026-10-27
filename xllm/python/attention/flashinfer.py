@@ -111,6 +111,7 @@ class FlashInferBackend(AttentionBackend):
         self._fp8_query_scale = profile["query_scale"]
         self._native_profile_scope = profile["scope"]
         self._decode_impl = profile["decode_impl"]
+        self._max_context_tokens = native_config.max_context_tokens if native_config is not None else 32768
         self._xqa_plans: dict[tuple[bool, int], Any] = {}
         self._active_xqa_plan: Any = None
         self._calibration = None
@@ -213,6 +214,8 @@ class FlashInferBackend(AttentionBackend):
             "profile_scope": getattr(self, "_native_profile_scope", "historical_fa2"),
             "q_scale": self._fp8_query_scale if getattr(self, "_fp8_query_enabled", False) else None,
             "kv_data_type": str(self._kv_data_type),
+            "xqa_max_context_tokens": getattr(self, "_max_context_tokens", 32768)
+            if self._decode_impl == "xqa" else None,
             "scale_strategy": "none",
             "quality_transform": self._quality_transform is not None,
         }
@@ -304,7 +307,8 @@ class FlashInferBackend(AttentionBackend):
             key = (graph_mode, metadata.paged_kv_last_page_len.numel())
             plan = self._xqa_plans.get(key)
             if plan is None:
-                plan = XQADecodePlan(key[1], self.page_size, 32768, self._decode_workspace.device)
+                maximum = (self._max_context_tokens + self.page_size - 1) // self.page_size * self.page_size
+                plan = XQADecodePlan(key[1], self.page_size, maximum, self._decode_workspace.device)
                 self._xqa_plans[key] = plan
             plan.prepare(metadata, graph_mode=graph_mode)
             self._active_xqa_plan = plan

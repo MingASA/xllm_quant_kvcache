@@ -160,7 +160,10 @@ def _create_attention_backend(
         if quantized_backend == "flashinfer":
             from xllm.python.attention.native_profile import NativeFlashInferConfig
 
-            native_config = NativeFlashInferConfig() if configured_native else None
+            native_config = (
+                NativeFlashInferConfig(max_context_tokens=int(config.get("max_position_embeddings", 32768)))
+                if configured_native else None
+            )
             if configured_native:
                 key_scale = float(config.get("kv_cache_k_scale", 1.0))
                 value_scale = float(config.get("kv_cache_v_scale", 1.0))
@@ -273,7 +276,9 @@ def _create_attention_backend(
             from xllm.python.attention.native_profile import NativeFlashInferConfig
 
             planner = "fa3" if torch.cuda.get_device_capability(device) == (9, 0) else "fa2"
-            native_config = NativeFlashInferConfig(planner)
+            native_config = NativeFlashInferConfig(
+                planner, max_context_tokens=int(config.get("max_position_embeddings", 32768))
+            )
         return FlashInferBackend(
             num_heads=first_attention.num_heads,
             num_kv_heads=first_attention.num_kv_heads,

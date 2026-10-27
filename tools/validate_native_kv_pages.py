@@ -55,7 +55,7 @@ def _relative_error(actual: torch.Tensor, reference: torch.Tensor) -> float:
     return float((actual.float() - reference.float()).norm() / reference.float().norm().clamp_min(1e-12))
 
 
-def _run_case(fmt: str, phase: str, dimension: int) -> dict:
+def _run_case(fmt: str, phase: str, dimension: int, decode_impl: str, max_context_tokens: int) -> dict:
     from tools.benchmark_kv_cache import _attention_metadata
     from xllm.python.attention.backend import LayerCache
     from xllm.python.attention.flashinfer import FlashInferBackend, _get_runtime_kernels
@@ -83,11 +83,11 @@ def _run_case(fmt: str, phase: str, dimension: int) -> dict:
     ]
     args = (heads, kv_heads, dimension, dimension**-0.5, -1, device, torch.bfloat16)
     if fmt == "bf16":
-        backend = FlashInferBackend(*args, native_config=NativeFlashInferConfig("fa3", "flashinfer"))
+        backend = FlashInferBackend(*args, native_config=NativeFlashInferConfig("fa3", decode_impl, max_context_tokens))
     elif fmt == "fp8_e4m3":
         backend = FlashInferFP8Backend(
             *args, cache_dtype=fmt, key_scale=scales[0], value_scale=scales[1],
-            native_config=NativeFlashInferConfig("fa2", "flashinfer"),
+            native_config=NativeFlashInferConfig("fa2", decode_impl, max_context_tokens),
         )
     else:
         backend = FlashInferNVFP4Backend(*args, key_scale=scales[0], value_scale=scales[1])
@@ -200,6 +200,10 @@ def _main() -> None:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--formats", nargs="+", choices=("bf16", "fp8_e4m3", "nvfp4"), default=["bf16", "fp8_e4m3", "nvfp4"])
     parser.add_argument("--head-dim", type=int, choices=(128, 256), default=256)
+    parser.add_argument("--decode-impl", choices=("flashinfer", "xqa"), default="flashinfer",
+                        help="BF16/FP8 decode selection; NVFP4 always uses native FA2 decode")
+    parser.add_argument("--max-context-tokens", type=int, default=32768,
+                        help="XQA metadata capacity; the numerical cases use 129/130 live tokens")
     args = parser.parse_args()
     if args.out.exists():
         raise FileExistsError(args.out)
@@ -212,7 +216,7 @@ def _main() -> None:
     args.out.mkdir(parents=True, exist_ok=False)
     for fmt in args.formats:
         for phase in ("prefill", "chunked_prefill", "decode"):
-            result = _run_case(fmt, phase, args.head_dim)
+            result = _run_case(fmt, phase, args.head_dim, args.decode_impl, args.max_context_tokens)
             with (args.out / f"{fmt}-{phase}.json").open("x") as stream:
                 json.dump(result, stream, indent=2, allow_nan=False)
                 stream.write("\n")
@@ -220,6 +224,8 @@ def _main() -> None:
     with (args.out / "acceptance.json").open("x") as stream:
         json.dump({"scope": "operator_qualification_not_model_quality_or_performance", "SM": 90,
                    "formats": args.formats, "head_dim": args.head_dim, "seed": 20261027,
+                   "BF16_FP8_decode_impl": args.decode_impl, "XQA_metadata_capacity": args.max_context_tokens,
+                   "actual_numerical_context_tokens": [129, 130],
                    "versions": {name: importlib.metadata.version(name) for name in ("torch", "flashinfer-python", "triton")}},
                   stream, indent=2)
         stream.write("\n")

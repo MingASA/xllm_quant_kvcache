@@ -15,7 +15,24 @@ from typing import Any
 import pytest
 import torch
 
-from xllm.python.attention.native_profile import resolve_native_profile
+from xllm.python.attention.native_profile import NativeFlashInferConfig, resolve_native_profile
+
+
+@pytest.mark.parametrize("maximum", [65536, 131072, 262144])
+def test_native_XQA_declares_new_model_context_without_legacy_32K_limit(maximum: int) -> None:
+    from xllm.python.attention.xqa_decode import validate_xqa_lengths
+
+    config = NativeFlashInferConfig("fa3", "xqa", max_context_tokens=maximum)
+    assert config.resolve(torch.bfloat16)["decode_impl"] == "xqa"
+    validate_xqa_lengths([0, maximum // 64], [64], 64, config.max_context_tokens)
+    with pytest.raises(ValueError, match="exceeds"):
+        validate_xqa_lengths([0, maximum // 64 + 1], [1], 64, config.max_context_tokens)
+
+
+@pytest.mark.parametrize("maximum", [0, -1, True, 1.5, 2**31])
+def test_native_context_declaration_rejects_invalid_token_bounds(maximum: object) -> None:
+    with pytest.raises(ValueError, match="positive int32"):
+        NativeFlashInferConfig(max_context_tokens=maximum).resolve(torch.bfloat16)
 
 
 def test_historical_default_and_unmodified_default_are_preserved() -> None:
@@ -39,8 +56,10 @@ def test_bf16_fa3_prefill_xqa_decode_and_its_real_operator_admission() -> None:
 
 
 def test_bf16_xqa_dispatch_keeps_native_bf16_pages_and_unit_scales(monkeypatch: pytest.MonkeyPatch) -> None:
-    fake_fi = types.ModuleType("flashinfer"); fake_fi.__version__ = "0.6.18.post1"
-    fake_decode = types.ModuleType("flashinfer.decode"); fake_decode.fast_decode_plan = lambda *args, **kwargs: None
+    fake_fi = types.ModuleType("flashinfer")
+    fake_fi.__version__ = "0.6.18.post1"
+    fake_decode = types.ModuleType("flashinfer.decode")
+    fake_decode.fast_decode_plan = lambda *args, **kwargs: None
     monkeypatch.setitem(sys.modules, "flashinfer", fake_fi)
     monkeypatch.setitem(sys.modules, "flashinfer.decode", fake_decode)
     from xllm.python.attention.backend import LayerCache
@@ -100,8 +119,10 @@ def test_query_scale_is_a_finite_normal_positive_fp32_scalar(scale: str) -> None
 
 def test_fa3_fp8_dispatch_converts_query_passes_scale_and_returns_model_dtype(monkeypatch: pytest.MonkeyPatch) -> None:
     # Real xLLM dispatch with CPU tensors; the CUDA conversion and FI kernel are explicit fixtures.
-    fake_fi = types.ModuleType("flashinfer"); fake_fi.__version__ = "0.6.18.post1"
-    fake_decode = types.ModuleType("flashinfer.decode"); fake_decode.fast_decode_plan = lambda *args, **kwargs: None
+    fake_fi = types.ModuleType("flashinfer")
+    fake_fi.__version__ = "0.6.18.post1"
+    fake_decode = types.ModuleType("flashinfer.decode")
+    fake_decode.fast_decode_plan = lambda *args, **kwargs: None
     monkeypatch.setitem(sys.modules, "flashinfer", fake_fi)
     monkeypatch.setitem(sys.modules, "flashinfer.decode", fake_decode)
     # Existing tests may have previously imported the native backend with real/fake FI.
@@ -156,8 +177,10 @@ def test_operator_replan_cannot_mutate_the_reference_or_later_padded_page_mappin
 
 
 def test_xqa_dispatch_passes_bf16_query_and_resident_alias_without_external_conversion(monkeypatch: pytest.MonkeyPatch) -> None:
-    fake_fi = types.ModuleType("flashinfer"); fake_fi.__version__ = "0.6.18.post1"
-    fake_decode = types.ModuleType("flashinfer.decode"); fake_decode.fast_decode_plan = lambda *args, **kwargs: None
+    fake_fi = types.ModuleType("flashinfer")
+    fake_fi.__version__ = "0.6.18.post1"
+    fake_decode = types.ModuleType("flashinfer.decode")
+    fake_decode.fast_decode_plan = lambda *args, **kwargs: None
     monkeypatch.setitem(sys.modules, "flashinfer", fake_fi)
     monkeypatch.setitem(sys.modules, "flashinfer.decode", fake_decode)
     module = importlib.import_module("xllm.python.attention.flashinfer_fp8")

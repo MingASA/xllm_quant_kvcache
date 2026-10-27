@@ -19,10 +19,13 @@ class NativeFlashInferConfig:
 
     planner: str = "fa2"
     decode_impl: str = "flashinfer"
+    max_context_tokens: int = 32768
 
     def resolve(self, kv_dtype: torch.dtype) -> dict[str, object]:
         if self.planner not in ("fa2", "fa3") or self.decode_impl not in ("flashinfer", "xqa"):
             raise ValueError("Native FlashInfer requires an explicit supported prefill/decode backend")
+        if type(self.max_context_tokens) is not int or not 1 <= self.max_context_tokens < 2**31:
+            raise ValueError("Native context capacity must be a positive int32 token count")
         if kv_dtype in (torch.float8_e4m3fn, torch.float8_e5m2, torch.uint8) and self.planner != "fa2":
             raise ValueError("Native low-precision KV with BF16/FP16 queries requires FA2 prefill")
         if kv_dtype == torch.uint8 and self.decode_impl != "flashinfer":
