@@ -54,7 +54,7 @@ class FlashInferNVFP4Backend(FlashInferBackend):
             raise ValueError("Native NVFP4 requires CUDA with BF16/FP16 queries")
         if torch.cuda.get_device_capability(device) != (9, 0):
             raise ValueError(
-                "This native NVFP4 FA2 path is qualified for SM90; other architectures require a capability gate"
+                "This native NVFP4 FA2 path targets SM90; other architectures require a capability gate"
             )
         if head_dim not in (128, 256) or num_heads <= 0 or num_kv_heads <= 0 or num_heads % num_kv_heads:
             raise ValueError("SM90 NVFP4 FA2 requires head_dim128/256 and a complete GQA group")
