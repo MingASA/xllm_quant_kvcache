@@ -223,6 +223,11 @@ class FlashInferBackend(AttentionBackend):
                 if self._decode_impl == "xqa" and self._kv_data_type == torch.float8_e4m3fn
                 else str(self._query_data_type)
             ),
+            "decode_probability_data_type": (
+                "torch.float8_e4m3fn"
+                if self._decode_impl == "xqa" and self._kv_data_type == torch.float8_e4m3fn
+                else None
+            ),
             "paged_prefill": self._native_kv_pair,
             "decode_tensor_cores": self._decode_use_tensor_cores,
             "flashinfer_version": flashinfer.__version__,

@@ -9,8 +9,8 @@ must provide shared-server resource admission and a container watchdog.
 from __future__ import annotations
 
 import argparse
-import importlib.metadata
 import hashlib
+import importlib.metadata
 import json
 import os
 from pathlib import Path

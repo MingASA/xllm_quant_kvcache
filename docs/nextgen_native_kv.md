@@ -19,6 +19,15 @@ Unsupported explicit selections fail before cache execution; they do not retry
 using another kernel. Legacy research environment profiles remain available
 only when the typed native backend is not selected.
 
+On the SM90 XQA FP8 path, BF16 queries at the API boundary are converted to
+E4M3 internally, and the intermediate exponential values are also rounded to
+E4M3 before the second GEMM. Runtime metadata exposes both approximations.
+Operator qualification must distinguish those intended arithmetic changes from
+KV encoding and numerical implementation error. The CPU tiled reference in
+`tools/sm90_xqa_fp8_reference.py` models this compute contract; actual GPU
+correlation remains required. Decode probes persist CPU input/output arrays
+before assertions so a failed gate can be investigated without losing evidence.
+
 FP8 E4M3 stores resident FP8 K/V pages. NVFP4 stores packed E2M1 pairs with one
 E4M3 block scale per 16 components, plus global K/V scales. FlashInfer consumes
 these compressed pages directly. BF16 queries require FA2 for both low-precision
