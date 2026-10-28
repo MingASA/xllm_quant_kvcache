@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.metadata
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -73,7 +74,10 @@ def _allocate_operator_cache(fmt: str, dimension: int, device: torch.device) -> 
     return LayerCache(*(torch.zeros(shape, dtype=dtype, device=device) for _ in range(2)), **options)
 
 
-def _run_case(fmt: str, phase: str, dimension: int, decode_impl: str, max_context_tokens: int) -> dict:
+def _run_case(
+    fmt: str, phase: str, dimension: int, decode_impl: str, max_context_tokens: int,
+    evidence_directory: Path | None = None,
+) -> dict:
     from tools.benchmark_kv_cache import _attention_metadata
     from xllm.python.attention.backend import LayerCache
     from xllm.python.attention.flashinfer import FlashInferBackend, _get_runtime_kernels
@@ -167,23 +171,73 @@ def _run_case(fmt: str, phase: str, dimension: int, decode_impl: str, max_contex
         torch.cuda.synchronize()
         index = slots.cpu().long().flatten()
         decoded = []
+        payload_rows = []
+        scale_rows = []
         for payload, sf, scale in zip((cache.key, cache.value), (cache.key_scale, cache.value_scale), scales):
             data = payload.cpu().flatten(0, 1).index_select(0, index)
             sf_data = None if sf is None else sf.cpu().flatten(0, 1).index_select(0, index)
+            payload_rows.append(data.contiguous().view(torch.uint8))
+            scale_rows.append(sf_data)
             decoded.append(_decode_rows(data, sf_data, fmt, scale).view(batch, context, kv_heads, dimension))
         q_cpu = query.cpu().view(batch, queries, heads, dimension)
         compressed_reference = _reference_attention(q_cpu, *decoded)
         original_reference = _reference_attention(q_cpu, key.cpu(), value.cpu())
-        error = _relative_error(actual.cpu(), compressed_reference)
+        compute_reference = compressed_reference
+        reference_name = "FP32_attention_BF16_query_decoded_resident_KV"
+        split_count = None
+        if fmt == "fp8_e4m3" and phase == "decode" and decode_impl == "xqa":
+            from tools.sm90_xqa_fp8_reference import reference_decode
+
+            override = int(os.environ.get("XQA_NB_SUB_SEQ", "0"))
+            processors = torch.cuda.get_device_properties(device).multi_processor_count
+            split_count = override if override > 0 else min(
+                max(1, int(((processors * 3) // (batch * kv_heads)) * .25 + .5)),
+                (max_context_tokens + 63) // 64,
+            )
+            compute_reference = reference_decode(q_cpu, *decoded, split_count=split_count)
+            reference_name = "SM90_XQA_FP8_Q_and_tile64_probability_FP8_with_FP32_denominator"
+        evidence = None
+        if evidence_directory is not None and phase == "decode":
+            import numpy as np
+
+            path = evidence_directory / f"{fmt}-{phase}-replay{replay}-reference.npz"
+            # Persist CPU arrays before assertions. Failed gates can then be
+            # diagnosed without another GPU run; no GPU BF16 shadow is created.
+            np.savez_compressed(
+                path, query=q_cpu.float().numpy(), decoded_key=decoded[0].numpy(),
+                decoded_value=decoded[1].numpy(), original_key=key.cpu().float().numpy(),
+                original_value=value.cpu().float().numpy(), actual_output=actual.cpu().float().numpy(),
+                resident_key_bytes=payload_rows[0].numpy(), resident_value_bytes=payload_rows[1].numpy(),
+                resident_key_scales=(scale_rows[0].numpy() if scale_rows[0] is not None else np.empty(0, dtype=np.uint8)),
+                resident_value_scales=(scale_rows[1].numpy() if scale_rows[1] is not None else np.empty(0, dtype=np.uint8)),
+                original_BF16_query_reference=compressed_reference.numpy(),
+                backend_compute_reference=compute_reference.numpy(),
+            )
+            evidence = {"file": path.name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+        error = _relative_error(actual.cpu(), compute_reference)
         if not torch.isfinite(actual).all() or not error <= 0.02:
-            raise ValueError(f"{fmt}/{phase} native attention disagrees with resident-byte reference: {error}")
+            failure = {"format": fmt, "phase": phase, "replay": replay, "context": context,
+                       "reference": reference_name, "split_count": split_count,
+                       "operator_relative_L2": error if torch.isfinite(torch.tensor(error)) else None,
+                       "actual_output_finite": bool(torch.isfinite(actual).all()),
+                       "CPU_reference_evidence": evidence, "operator_qualified": False}
+            if evidence_directory is not None:
+                with (evidence_directory / f"{fmt}-{phase}-failure.json").open("x") as stream:
+                    json.dump(failure, stream, indent=2, allow_nan=False)
+                    stream.write("\n")
+            raise ValueError(f"{fmt}/{phase} native attention disagrees with {reference_name}: {error}")
         writer_errors = [_relative_error(decoded[0], key.cpu()), _relative_error(decoded[1], value.cpu())]
         writer_bound = {"bf16": 0.0, "fp8_e4m3": 0.06, "nvfp4": 0.20}[fmt]
         if any(not 0 <= error <= writer_bound for error in writer_errors):
             raise ValueError(f"{fmt}/{phase} native writer exceeds its random-input encoding bound: {writer_errors}")
         observations.append({
             "context": context, "operator_relative_L2": error,
-            "quantization_relative_L2_vs_original_BF16": _relative_error(compressed_reference, original_reference),
+            "operator_reference": reference_name, "XQA_split_count": split_count,
+            "KV_only_quantization_relative_L2": _relative_error(compressed_reference, original_reference),
+            "additional_backend_Q_P_approximation_relative_L2": _relative_error(compute_reference, compressed_reference),
+            "quantization_relative_L2_vs_original_BF16": _relative_error(compute_reference, original_reference),
+            "actual_relative_L2_vs_original_BF16_query_decoded_KV": _relative_error(actual.cpu(), compressed_reference),
+            "CPU_reference_evidence": evidence,
             "writer_key_relative_L2": writer_errors[0],
             "writer_value_relative_L2": writer_errors[1],
             "random_input_writer_error_bound_not_model_quality_threshold": writer_bound,
@@ -233,7 +287,7 @@ def _main() -> None:
     args.out.mkdir(parents=True, exist_ok=False)
     for fmt in args.formats:
         for phase in ("prefill", "chunked_prefill", "decode"):
-            result = _run_case(fmt, phase, args.head_dim, args.decode_impl, args.max_context_tokens)
+            result = _run_case(fmt, phase, args.head_dim, args.decode_impl, args.max_context_tokens, args.out)
             with (args.out / f"{fmt}-{phase}.json").open("x") as stream:
                 json.dump(result, stream, indent=2, allow_nan=False)
                 stream.write("\n")
