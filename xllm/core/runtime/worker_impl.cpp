@@ -62,6 +62,7 @@ limitations under the License.
 #include "core/framework/config/speculative_config.h"
 #include "core/framework/model/model_args.h"
 #include "core/kv_cache/layout/kv_cache_estimation.h"
+#include "core/kv_cache/layout/native_kv_cache_format.h"
 #include "core/platform/platform.h"
 #if defined(USE_NPU)
 #include "core/platform/npu/npu_profiler.h"
@@ -564,6 +565,20 @@ bool WorkerImpl::allocate_kv_cache_storage(
   // "auto" (default): cache dtype aligns with model dtype (no quantization)
   // "int8": enables INT8 quantization
   const bool enable_kv_cache_quant = options_.kv_cache_dtype() == "int8";
+  const bool native_kv_cache =
+      is_native_kv_cache_format(options_.kv_cache_dtype());
+  if (native_kv_cache) {
+#if defined(USE_CUDA)
+    CHECK(ModelConfig::is_python_model_impl(
+        ModelConfig::get_instance().model_impl()))
+        << "Native FP8/NVFP4 KV requires the CUDA Python Executor.";
+    CHECK(!options_.enable_disagg_pd())
+        << "Native compressed KV transfer is not qualified for PD "
+           "disaggregation.";
+#else
+    LOG(FATAL) << "Native FP8/NVFP4 KV is supported only on CUDA.";
+#endif
+  }
 
   const bool enable_indexer_cache_quant =
       ::xllm::KVCacheConfig::get_instance().indexer_cache_dtype() == "int8";
@@ -622,6 +637,8 @@ bool WorkerImpl::allocate_kv_cache_storage(
 
   KVCacheCreateOptions create_options;
   create_options.device(device_)
+      .native_kv_cache_dtype(native_kv_cache ? options_.kv_cache_dtype()
+                                             : "auto")
       .dtype(dtype_)
       .ssm_dtype(ssm_dtype)
       .num_layers(num_layers)
