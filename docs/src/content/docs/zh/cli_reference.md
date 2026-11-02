@@ -67,7 +67,11 @@ xLLM 使用 gflags 管理服务启动参数。`--model <PATH>` 是唯一必填�
 | `block_size` | `int32` | `128` | 每个 KV Cache block 的 slot 数。 |
 | `max_cache_size` | `int64` | `0` | KV Cache 的容量上限，单位 byte；虚拟内存模式下限制 KV 与权重共享池的容量。`0` 表示不设显式字节上限，根据可用显存推导容量。 |
 | `max_memory_utilization` | `double` | `0.8` | 模型推理可使用的设备显存比例，包括模型权重和 KV Cache。原有物理 KV Cache 和固定 VMM 要求取值在 `(0, 1]` 内。弹性 VMM 仅在显式配置时应用该上限；不配置或设为 `0` 时按实时可用显存扩张。 |
-| `kv_cache_dtype` | `string` | `"auto"` | KV Cache 量化数据类型；`auto` 表示与模型 dtype 对齐且不量化，`int8` 表示启用 INT8 量化，仅 MLU 后端支持。 |
+| `kv_cache_dtype` | `string` | `"auto"` | KV Cache 格式。`auto` 与模型 dtype 对齐且不量化；`int8` 支持 MLU 及 NPU 的 GLM-5.2 SFA packed KV。SM90 上的 CUDA Python Executor 另外支持 `fp8_e4m3`、`nvfp4` 压缩 Full Attention 页；GDN 状态保留原 dtype。 |
+| `kv_cache_k_scale` | `double` | `1.0` | 原生量化 KV 的固定全局 K decode scale，须为正的正规 FP32 值。NVFP4 另外保存 E4M3 block scale；部署前须按模型校准。 |
+| `kv_cache_v_scale` | `double` | `1.0` | 原生量化 KV 的固定全局 V decode scale，须为正的正规 FP32 值；NVFP4 另外保存 E4M3 block scale。 |
+| `kv_cache_prefill_backend` | `string` | `"auto"` | 仅作用于原生量化路径：`auto`、`fa2`、`fa3`。SM90 的 `auto` 为 FP8 KV 选择 FP8 Query 的 FA3，为 NVFP4 选择 BF16 Query 的 FA2；NVFP4 与 `fa3` 组合在执行前拒绝。 |
+| `kv_cache_decode_backend` | `string` | `"auto"` | 仅作用于原生量化路径：`auto`、`flashinfer`、`xqa`。SM90 的 `auto` 为非 VMM FP8 KV 选择 BF16 Query 的 XQA，为 NVFP4 选择 FlashInfer；拒绝 NVFP4/XQA 与 XQA/VMM。本版本 CUDA 不支持 KV VMM。 |
 | `indexer_cache_dtype` | `string` | `"auto"` | 带 indexer cache 的模型所使用的 indexer cache 数据类型。支持 `auto` 和 `int8`；`auto` 表示与模型 dtype 对齐且不量化，`int8` 表示启用 INT8 indexer cache 量化。 |
 | `enable_prefix_cache` | `bool` | `true` | 是否在 block manager 中启用 prefix cache；详见 [Prefix Cache](/zh/features/prefix_cache/)。 |
 | `kv_events_config` | `string` | `""` | KV 驻留事件发布配置，为 JSON 对象字符串；空字符串禁用上报。JSON 字段和示例见下文。 |
