@@ -23,7 +23,8 @@ import triton.language as tl
 
 @triton.jit
 def _write_fp8(
-    key, value, slots, key_cache, value_cache,
+    key: tl.tensor, value: tl.tensor, slots: tl.tensor,
+    key_cache: tl.tensor, value_cache: tl.tensor,
     key_token_stride: tl.constexpr, key_head_stride: tl.constexpr, key_channel_stride: tl.constexpr,
     value_token_stride: tl.constexpr, value_head_stride: tl.constexpr, value_channel_stride: tl.constexpr,
     heads: tl.constexpr, dim: tl.constexpr, capacity: tl.constexpr,
