@@ -74,10 +74,14 @@ class FlashInferNativeKVBackend(FlashInferBackend):
         self._max_context_tokens = max_context_tokens
         self._xqa_plans = {}
         self._active_xqa_plan = None
+        self._virtual_memory = virtual_memory
         self._cache_format = cache_dtype
         self._cache_dtype = torch.float8_e4m3fn if cache_dtype == "fp8_e4m3" else torch.uint8
         self._fixed_scales = (key_scale, value_scale)
-        self._global_scales = tuple(torch.tensor([s], dtype=torch.float32, device=device) for s in self._fixed_scales)
+        self._global_scales = (
+            tuple(torch.tensor([s], dtype=torch.float32, device=device) for s in self._fixed_scales)
+            if cache_dtype == "nvfp4" else ()
+        )
         self._pages: dict[int, tuple[torch.Tensor, torch.Tensor]] = {}
         self._block_scales: dict[int, tuple[torch.Tensor, torch.Tensor]] = {}
         super().__init__(num_heads, num_kv_heads, head_dim, scale, sliding_window, device, dtype)
@@ -209,5 +213,9 @@ class FlashInferNativeKVBackend(FlashInferBackend):
             "decode_query_dtype": str(self.dtype), "max_context_tokens": self._max_context_tokens,
             "query_dtype": str(self.dtype), "SM90_FP4_tensor_core_compute": False,
             "full_BF16_KV_shadow": False,
-            "resident_KV_bytes": sum(c.key.numel() + c.value.numel() for c in self._kv_caches if c.key is not None),
+            "KV_tensor_address_bytes": sum(c.key.numel() + c.value.numel() for c in self._kv_caches if c.key is not None),
+            "VMM_virtual_address_capacity_not_residency": self._virtual_memory,
+            "resident_KV_bytes": (None if self._virtual_memory else
+                                  sum(c.key.numel() + c.value.numel() for c in self._kv_caches if c.key is not None)),
+            "resident_global_scale_bytes": sum(t.numel() * t.element_size() for t in self._global_scales),
         }
