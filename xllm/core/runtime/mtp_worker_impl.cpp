@@ -2567,7 +2567,9 @@ void MTPWorkerImpl<TargetInput>::prepare_draft_prefix(
     params.clear_linear_attention_state();
     params.is_spec_verify = false;
     params.mtp_topk_state.reset();
+#if defined(USE_NPU)
     clear_expanded_spec_verify_graph_input(params);
+#endif
     const auto row_context = specBuilder::make_decode_row_context(input);
     const int64_t kv_capacity =
         static_cast<int64_t>(row_context.block_table_stride) *
