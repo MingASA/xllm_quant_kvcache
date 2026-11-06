@@ -70,14 +70,12 @@ __device__ __forceinline__ float mxfp4_scale(uint8_t code) {
     return text
 
 
-@functools.cache
-def _load_mxfp4_module() -> tuple[Any, list[str], list[str]]:
-    """Compile/register once; eager and Graph wrappers share this module."""
+def mxfp4_jit_spec() -> tuple[Any, list[str], list[str]]:
+    """Create the pinned SM90 spec; CPU-only offline precompilation is allowed."""
     import flashinfer
     import torch
     from flashinfer.jit import env
     from flashinfer.jit.attention.modules import gen_customize_batch_prefill_module
-    from flashinfer.prefill import get_batch_prefill_jit_module
 
     original = Path(flashinfer.__file__).parent / "data/include/flashinfer/attention/prefill.cuh"
     adapted = _adapt_header(original.read_bytes())
@@ -102,7 +100,16 @@ def _load_mxfp4_module() -> tuple[Any, list[str], list[str]]:
         "#include<flashinfer/attention/variants.cuh>",
     )
     spec.extra_cuda_cflags = [*(spec.extra_cuda_cflags or []), "-include", str(header)]
-    module = get_batch_prefill_jit_module(name, spec.build_and_load())
+    return spec, tensors, scalars
+
+
+@functools.cache
+def _load_mxfp4_module() -> tuple[Any, list[str], list[str]]:
+    """Compile/register once; eager and Graph wrappers share this module."""
+    from flashinfer.prefill import get_batch_prefill_jit_module
+
+    spec, tensors, scalars = mxfp4_jit_spec()
+    module = get_batch_prefill_jit_module(spec.name, spec.build_and_load())
     return module, tensors, scalars
 
 
