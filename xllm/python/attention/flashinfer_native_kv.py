@@ -251,7 +251,8 @@ class FlashInferNativeKVBackend(FlashInferBackend):
             "prefill_query_dtype": str(self._prefill_query_dtype),
             "decode_query_dtype": str(self.dtype), "max_context_tokens": self._max_context_tokens,
             "query_dtype": str(self.dtype), "SM90_FP4_tensor_core_compute": False,
-            "mixed_FP8_decode": "XQA_subset_eager_attention_no_mixed_decode_graph",
+            "mixed_FP8_decode": ("XQA_subset_eager_attention_no_mixed_decode_graph"
+                                 if self._cache_format == "fp8_e4m3" and self._decode_backend == "xqa" else None),
             "full_BF16_KV_shadow": False,
             "KV_tensor_address_bytes": sum(c.key.numel() + c.value.numel() for c in self._kv_caches if c.key is not None),
             "VMM_virtual_address_capacity_not_residency": self._virtual_memory,
