@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 import torch
 
 from scripts.logger import logger
-from xllm.python.attention.backend import LayerCache
+from xllm.python.attention.backend import AttentionMetadata, LayerCache
 from xllm.python.attention.flashinfer import FlashInferBackend
 
 if TYPE_CHECKING:
@@ -71,9 +71,34 @@ class NumericFlashInferBackend(FlashInferBackend):
                 torch.zeros(shape, dtype=torch.float32, device=device),
             )
         self._calls = torch.zeros((len(self._layer_ids), 2), dtype=torch.int64, device=device)
+        self._step_counts = {"prefill_plan_calls":0, "mixed_plan_calls":0,
+                             "decode_rows_in_mixed":0, "prefill_tokens_in_mixed":0,
+                             "decode_plan_calls":0, "decode_graph_plan_calls":0}
         self._diagnostic_tensors = (*[t for group in self._stats.values() for t in group], self._calls)
         logger.info("FP8 numerical diagnostics enabled: method=%s; untimed BF16 only", METHOD)
         threading.Thread(target=self._control, args=(output,), daemon=True, name="FP8-quiescent-diagnostics").start()
+
+    def prepare(self, metadata: AttentionMetadata, *, graph_mode: bool = False) -> None:
+        super().prepare(metadata, graph_mode=graph_mode)
+        counts = getattr(self, "_step_counts", None)
+        if counts is None:
+            return
+        if metadata.is_prefill or metadata.is_chunked_prefill:
+            counts["prefill_plan_calls"] += 1
+            ends = metadata.q_cu_seq_lens_host_values
+            if ends:
+                if len(ends) == metadata.paged_kv_last_page_len.numel():
+                    ends = [0, *ends]
+                lengths = [b-a for a,b in zip(ends, ends[1:])]
+                decodes = sum(length == 1 for length in lengths)
+                prefills = sum(length for length in lengths if length > 1)
+                if decodes and prefills:
+                    counts["mixed_plan_calls"] += 1
+                    counts["decode_rows_in_mixed"] += decodes
+                    counts["prefill_tokens_in_mixed"] += prefills
+        else:
+            counts["decode_plan_calls"] += 1
+            counts["decode_graph_plan_calls"] += int(graph_mode)
 
     def execute(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, layer: Attention) -> torch.Tensor:
         self._observe(q, k, v, layer.layer_id)
@@ -116,6 +141,7 @@ class NumericFlashInferBackend(FlashInferBackend):
                                      "squared_error":errors[i][phase][head][0],
                                      "squared_signal":errors[i][phase][head][1], "absmax":maxima[i][phase][head]})
         return {"method":METHOD, "rows":rows, "phase_calls":self._calls.cpu().tolist(),
+                "host_plan_counts":dict(self._step_counts), "graph_plan_counts_are_not_actual_replay_proof":True,
                 "persistent_counter_bytes":sum(t.numel()*t.element_size() for t in self._diagnostic_tensors),
                 "activation_tensors_retained":False, "host_reads_in_forward":False,
                 "BF16_attention_outputs_transformed":False, "query_decode_FP8_error_is_hypothetical":True,
@@ -135,6 +161,7 @@ class NumericFlashInferBackend(FlashInferBackend):
                     torch.cuda.synchronize(self._decode_workspace.device)
                     for tensor in self._diagnostic_tensors:
                         tensor.zero_()
+                    self._step_counts = {key:0 for key in self._step_counts}
                     torch.cuda.synchronize(self._decode_workspace.device)
                 else:
                     _publish(output/"numeric_snapshot.json", {**self._snapshot(),
