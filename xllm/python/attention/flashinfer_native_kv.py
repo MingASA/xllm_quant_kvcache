@@ -86,6 +86,11 @@ class FlashInferNativeKVBackend(FlashInferBackend):
         self._pages: dict[int, tuple[torch.Tensor, torch.Tensor]] = {}
         self._block_scales: dict[int, tuple[torch.Tensor, torch.Tensor]] = {}
         super().__init__(num_heads, num_kv_heads, head_dim, scale, sliding_window, device, dtype)
+        if decode_backend == "xqa":
+            # FlashInfer requires a zeroed workspace on first use. In
+            # particular, its first 8MiB hold atomic CTA completion counters.
+            # Initialize once, before capture, without per-step clearing.
+            self._decode_workspace.zero_()
         # Reuse the official workspace allocation; only the quantized planner
         # selection changes. FlashInfer's FP8 FA3 path consumes FP8 Q explicitly.
         workspace = self._prefill_paged_wrapper._float_workspace_buffer
@@ -254,6 +259,7 @@ class FlashInferNativeKVBackend(FlashInferBackend):
             "prefill_backend": self._prefill_backend, "decode_backend": self._decode_backend,
             "prefill_query_dtype": str(self._prefill_query_dtype),
             "decode_query_dtype": str(self.dtype), "max_context_tokens": self._max_context_tokens,
+            "xqa_workspace_initialized": self._decode_backend == "xqa",
             "query_dtype": str(self.dtype), "SM90_FP4_tensor_core_compute": False,
             "mixed_FP8_decode": ("XQA_subset_eager_attention_no_mixed_decode_graph"
                                  if self._cache_format == "fp8_e4m3" and self._decode_backend == "xqa" else None),
