@@ -133,7 +133,10 @@ class FlashInferNativeKVBackend(FlashInferBackend):
         options = dict(sm_scale=self.scale, window_left=window_left,
                        q_data_type=self.dtype, kv_data_type=self._cache_dtype)
         if metadata.is_prefill or metadata.is_chunked_prefill:
-            if self._cache_format == "fp8_e4m3" and self._decode_backend == "xqa" and not graph_mode:
+            # The mixed path quantizes Q for FA3. FA2 keeps its BF16/FP16 Q
+            # contract and continues to process the full packed prefill batch.
+            if (self._cache_format == "fp8_e4m3" and self._prefill_backend == "fa3"
+                    and self._decode_backend == "xqa" and not graph_mode):
                 from xllm.python.attention.mixed_native_kv import split_mixed_attention
                 from xllm.python.attention.xqa_decode import XQADecodePlan
 
@@ -262,7 +265,8 @@ class FlashInferNativeKVBackend(FlashInferBackend):
             "xqa_workspace_initialized": self._decode_backend == "xqa",
             "query_dtype": str(self.dtype), "SM90_FP4_tensor_core_compute": False,
             "mixed_FP8_decode": ("XQA_subset_eager_attention_no_mixed_decode_graph"
-                                 if self._cache_format == "fp8_e4m3" and self._decode_backend == "xqa" else None),
+                                 if (self._cache_format == "fp8_e4m3" and self._prefill_backend == "fa3"
+                                     and self._decode_backend == "xqa") else None),
             "full_BF16_KV_shadow": False,
             "KV_tensor_address_bytes": sum(c.key.numel() + c.value.numel() for c in self._kv_caches if c.key is not None),
             "VMM_virtual_address_capacity_not_residency": self._virtual_memory,
