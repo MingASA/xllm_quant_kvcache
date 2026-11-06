@@ -16,6 +16,7 @@ CUDA Graph buckets are untouched. Mixed-batch XQA remains eager attention.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import accumulate
 from types import SimpleNamespace
 
 import torch
@@ -32,10 +33,20 @@ class AttentionSubset:
 
 def split_mixed_attention(metadata: AttentionMetadata) -> tuple[AttentionSubset, AttentionSubset] | None:
     """Return decode and prefill subsets without reading device tensors."""
-    ends = metadata.q_cu_seq_lens_host_values
-    if ends is None:
-        return None
     batch = metadata.paged_kv_last_page_len.numel()
+    ends = metadata.q_cu_seq_lens_host_values
+    if not ends:
+        # The CUDA common builder exposes cumulative lengths through the
+        # existing host tensor; its explicit cumulative vector is NPU-only.
+        # The newer Slot path instead fills the explicit vector above.
+        host = getattr(metadata, "q_seq_lens_host", None)
+        if host is None:
+            return None
+        if host.device.type != "cpu":
+            raise ValueError("Mixed attention requires existing host query lengths without device synchronization")
+        ends = host.tolist()
+        if len(ends) == batch:
+            ends = list(accumulate(ends, initial=0))
     if len(ends) == batch:
         ends = [0, *ends]
     if len(ends) != batch + 1 or ends[0] != 0:

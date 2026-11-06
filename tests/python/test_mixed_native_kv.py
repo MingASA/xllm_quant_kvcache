@@ -46,3 +46,20 @@ def test_uniform_phase_does_not_create_subset() -> None:
         metadata = SimpleNamespace(q_cu_seq_lens_host_values=ends,
                                    paged_kv_last_page_len=torch.ones(2, dtype=torch.int32))
         assert split_mixed_attention(metadata) is None
+
+
+def test_cuda_common_builder_uses_existing_host_tensor() -> None:
+    metadata = SimpleNamespace(
+        q_cu_seq_lens_host_values=[],
+        q_seq_lens_host=torch.tensor([0, 3, 4], dtype=torch.int32),
+        paged_kv_indptr_host=torch.tensor([0, 1, 3], dtype=torch.int32),
+        paged_kv_last_page_len_host=torch.tensor([3, 1], dtype=torch.int32),
+        paged_kv_indptr=torch.tensor([0, 1, 3], dtype=torch.int32),
+        paged_kv_indices=torch.tensor([9, 5, 7], dtype=torch.int32),
+        paged_kv_last_page_len=torch.tensor([3, 1], dtype=torch.int32),
+    )
+    decode, prefill = split_mixed_attention(metadata)
+    assert decode.query_indices.tolist() == [3]
+    assert decode.paging.paged_kv_indices.tolist() == [5, 7]
+    assert prefill.query_indices.tolist() == [0, 1, 2]
+    assert prefill.paging.paged_kv_indices.tolist() == [9]

@@ -75,7 +75,6 @@ class FlashInferNativeKVBackend(FlashInferBackend):
         self._xqa_plans = {}
         self._active_xqa_plan = None
         self._mixed_attention = None
-        self._mixed_xqa_plans = {}
         self._virtual_memory = virtual_memory
         self._cache_format = cache_dtype
         self._cache_dtype = torch.float8_e4m3fn if cache_dtype == "fp8_e4m3" else torch.uint8
@@ -137,11 +136,12 @@ class FlashInferNativeKVBackend(FlashInferBackend):
                 if subsets is not None:
                     decode, prefill = subsets
                     batch = decode.paging.paged_kv_last_page_len.numel()
-                    plan = self._mixed_xqa_plans.get(batch)
+                    plan_key = (False, batch)
+                    plan = self._xqa_plans.get(plan_key)
                     if plan is None:
                         maximum = ((self._max_context_tokens + self.page_size - 1) // self.page_size) * self.page_size
                         plan = XQADecodePlan(batch, self.page_size, maximum, self._decode_workspace.device)
-                        self._mixed_xqa_plans[batch] = plan
+                        self._xqa_plans[plan_key] = plan
                     plan.prepare(decode.paging, graph_mode=False)
                     self._mixed_attention = (decode, prefill, plan)
                     self._prefill_paged_wrapper.plan(
@@ -220,11 +220,15 @@ class FlashInferNativeKVBackend(FlashInferBackend):
             decode, prefill_rows, plan = self._mixed_attention
             decode_query = query.index_select(0, decode.query_indices)
             prefill_query = query.index_select(0, prefill_rows.query_indices)
-            prefill_query = quantize_query_fp8(prefill_query, 1.0)
+            prefill_fp8 = quantize_query_fp8(prefill_query, 1.0)
             decoded = plan.run(decode_query, pages, self._decode_workspace, self.scale, *self._fixed_scales)
+            # FP8 Q has separate storage; recycle the gathered BF16 Q buffer
+            # for the output instead of allocating another prefill-sized tensor.
             prefilled = self._prefill_paged_wrapper.run(
-                prefill_query, pages, q_scale=1.0, k_scale=self._fixed_scales[0], v_scale=self._fixed_scales[1],
+                prefill_fp8, pages, out=prefill_query, q_scale=1.0,
+                k_scale=self._fixed_scales[0], v_scale=self._fixed_scales[1],
             )
+            del prefill_fp8, decode_query
             output = torch.empty(query.shape, dtype=self.dtype, device=query.device)
             output.index_copy_(0, decode.query_indices, decoded)
             output.index_copy_(0, prefill_rows.query_indices, prefilled)
