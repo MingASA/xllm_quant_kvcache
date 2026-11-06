@@ -17,10 +17,12 @@ The BF16 attention output is unaffected by the hypothetical FP8 conversions.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 from pathlib import Path
 import threading
 import time
+from itertools import accumulate
 from typing import TYPE_CHECKING
 
 import torch
@@ -38,10 +40,17 @@ _RECIPES = (("key", .125, 4), ("value_current", .0625, 4),
             ("value_candidate", .5, 4), ("query", 1., 24))
 
 
-def _publish(path: Path, value: dict) -> None:
-    with path.open("x") as stream:
-        json.dump(value, stream, sort_keys=True, allow_nan=False)
-        stream.write("\n")
+def _publish(path: Path, value: dict) -> str:
+    data = (json.dumps(value, sort_keys=True, allow_nan=False) + "\n").encode()
+    if len(data) > 2**20:
+        raise ValueError("Numeric diagnostic export exceeded one MiB")
+    prepared = path.with_name("." + path.name + ".prepared")
+    with prepared.open("xb") as stream:
+        stream.write(data)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.link(prepared, path, follow_symlinks=False)
+    return hashlib.sha256(data).hexdigest()
 
 
 class NumericFlashInferBackend(FlashInferBackend):
@@ -86,6 +95,14 @@ class NumericFlashInferBackend(FlashInferBackend):
         if metadata.is_prefill or metadata.is_chunked_prefill:
             counts["prefill_plan_calls"] += 1
             ends = metadata.q_cu_seq_lens_host_values
+            if not ends:
+                host = getattr(metadata, "q_seq_lens_host", None)
+                if host is not None:
+                    if host.device.type != "cpu":
+                        raise ValueError("Numerical diagnostics cannot read query lengths from device")
+                    ends = host.tolist()
+                    if len(ends) == metadata.paged_kv_last_page_len.numel():
+                        ends = list(accumulate(ends, initial=0))
             if ends:
                 if len(ends) == metadata.paged_kv_last_page_len.numel():
                     ends = [0, *ends]
@@ -158,16 +175,18 @@ class NumericFlashInferBackend(FlashInferBackend):
                         or json.loads(command.read_text()) != {"action":action,"request_sha256":self._config["request_sha256"]}):
                     raise ValueError("Numeric diagnostic command identity mismatch")
                 if action == "reset":
+                    snapshot_sha256 = None
                     torch.cuda.synchronize(self._decode_workspace.device)
                     for tensor in self._diagnostic_tensors:
                         tensor.zero_()
                     self._step_counts = {key:0 for key in self._step_counts}
                     torch.cuda.synchronize(self._decode_workspace.device)
                 else:
-                    _publish(output/"numeric_snapshot.json", {**self._snapshot(),
+                    snapshot_sha256 = _publish(output/"numeric_snapshot.json", {**self._snapshot(),
                         "run_id":self._config["run_id"], "request_sha256":self._config["request_sha256"]})
                 _publish(output/("numeric_"+action+"_ack.json"),
-                         {"action":action,"request_sha256":self._config["request_sha256"]})
+                         {"action":action,"request_sha256":self._config["request_sha256"],
+                          "snapshot_sha256":snapshot_sha256})
         except (OSError, ValueError, RuntimeError) as error:
             _publish(output/"numeric_ERROR.json", {"error":type(error).__name__+": "+str(error)})
             logger.exception("Independent numerical diagnostic failed")
