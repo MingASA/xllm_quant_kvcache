@@ -33,12 +33,20 @@ def _write(
                          + (group[:, None] * 32 + channel[None, :]) * channel_stride).to(tl.float32)
         maximum = tl.max(tl.abs(values), axis=1)
         nonfinite = tl.max(((tl.abs(values) == float("inf")) | (values != values)).to(tl.int32), axis=1) != 0
-        exponent = tl.floor(tl.log2(maximum)).to(tl.int32) - 2
-        exponent = tl.where(maximum == 0, -127, tl.minimum(127, tl.maximum(-127, exponent)))
+        # Finite BF16 values have the same exponent field in FP32. Subnormal
+        # BF16 blocks all clamp to the minimum E8M0 exponent, so no log2 or
+        # approximate reciprocal is needed, including at exact powers of two.
+        exponent = (maximum.to(tl.uint32, bitcast=True) >> 23).to(tl.int32) - 129
+        exponent = tl.minimum(127, tl.maximum(-127, exponent))
         scale_code = exponent + 127
-        scale_bits = tl.where(scale_code == 0, 0x00400000, scale_code << 23)
-        scale = scale_bits.to(tl.float32, bitcast=True)
-        normalized = tl.abs(values / scale[:, None])
+        inverse_scale = ((127 - exponent) << 23).to(tl.float32, bitcast=True)
+        # Explicit non-FTZ multiplication preserves BF16 subnormals when the
+        # scale is 2**-127. The reciprocal itself is a normal FP32 value.
+        normalized = tl.abs(tl.inline_asm_elementwise(
+            "mul.rn.f32 $0, $1, $2;", constraints="=f,f,f",
+            args=[values, inverse_scale[:, None]], dtype=tl.float32,
+            is_pure=True, pack=1,
+        ))
         code = tl.where(normalized <= .25, 0,
                tl.where(normalized < .75, 1,
                tl.where(normalized <= 1.25, 2,
@@ -47,9 +55,6 @@ def _write(
                tl.where(normalized < 3.5, 5,
                tl.where(normalized <= 5, 6, 7)))))))
         sign = (values.to(tl.uint32, bitcast=True) >> 28) & 8
-        # CUDA may flush the smallest E8M0 scale during reciprocal lowering.
-        # A zero block must retain signed zero even if 0/scale became NaN.
-        code = tl.where(maximum[:, None] == 0, 0, code)
         code = tl.where(nonfinite[:, None], 0, code | sign).to(tl.uint8)
         pair = tl.reshape(code, (dimension // 2, 2))
         packed = tl.sum(pair.to(tl.uint32) << (tl.arange(0, 2)[None, :] * 4), axis=1)
