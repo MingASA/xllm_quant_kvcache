@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import os
 from typing import TYPE_CHECKING
 
 import torch
@@ -220,6 +221,9 @@ def _create_attention_backend(
                 virtual_memory=bool(config.get("enable_vmm_kvcache", False)),
             )
         from xllm.python.attention.flashinfer import FlashInferBackend
+
+        if os.environ.get("XLLM_FP8_RANGE_DIAGNOSTICS_CONFIG"):
+            from xllm.python.attention.fp8_numeric_diagnostics import NumericFlashInferBackend as FlashInferBackend
 
         return FlashInferBackend(
             num_heads=first_attention.num_heads,
