@@ -2,6 +2,10 @@
 
 # FP8 core review and narrow dispatch fix — 2026-11-06
 
+This is the historical review delivered at `be597590`. The subsequent frozen
+mixed-performance rejection and isolated candidate are recorded in
+[FP8_RETAINED_CANDIDATE_20261106.md](FP8_RETAINED_CANDIDATE_20261106.md).
+
 Review base: `d9f17a66a34a05d37b8474591961989cbe2f1c2a`, on official
 `261274e5f45449e98d7740144c3a958a29f1fd3e`; actual A remains `721afdabc`,
 original measured C remains `da7c6446`. No rebase or kernel retuning.
