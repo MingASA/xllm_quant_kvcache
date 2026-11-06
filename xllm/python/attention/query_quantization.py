@@ -23,19 +23,30 @@ import triton.language as tl
 
 @triton.jit
 def _quantize_query_kernel(source: tl.tensor, destination: tl.tensor, count: tl.constexpr,
-                           scale: tl.constexpr, block: tl.constexpr) -> None:
+                           heads: tl.constexpr, dimension: tl.constexpr,
+                           token_stride: tl.constexpr, head_stride: tl.constexpr,
+                           channel_stride: tl.constexpr, scale: tl.constexpr,
+                           block: tl.constexpr) -> None:
     offsets = tl.program_id(0) * block + tl.arange(0, block)
-    values = tl.load(source + offsets, offsets < count, other=0).to(tl.float32) / scale
+    channel = offsets % dimension
+    head = offsets // dimension % heads
+    token = offsets // (heads * dimension)
+    source_offsets = token * token_stride + head * head_stride + channel * channel_stride
+    values = tl.load(source + source_offsets, offsets < count, other=0).to(tl.float32) / scale
     values = tl.minimum(tl.maximum(values, -448.0), 448.0)
     tl.store(destination + offsets, values, offsets < count)
 
 
 def quantize_query_fp8(query: torch.Tensor, scale: float) -> torch.Tensor:
     """Quantize inside graph capture; the immutable scalar never requires a host sync."""
-    if query.device.type != "cuda" or query.dtype not in (torch.bfloat16, torch.float16):
-        raise ValueError("Native FP8 query conversion requires CUDA BF16/FP16 input")
-    source = query.contiguous()
-    output = torch.empty_like(source, dtype=torch.float8_e4m3fn)
-    if source.numel():
-        _quantize_query_kernel[(triton.cdiv(source.numel(), 256),)](source, output, source.numel(), scale, 256)
+    if query.device.type != "cuda" or query.dtype not in (torch.bfloat16, torch.float16) or query.ndim != 3:
+        raise ValueError("Native FP8 query conversion requires CUDA BF16/FP16 [token, head, channel] input")
+    # Read projection/rotary strides in the conversion kernel. A separate
+    # contiguous BF16 copy can otherwise precede the actual FP8 conversion.
+    output = torch.empty(query.shape, dtype=torch.float8_e4m3fn, device=query.device)
+    if query.numel():
+        _quantize_query_kernel[(triton.cdiv(query.numel(), 256),)](
+            query, output, query.numel(), query.shape[1], query.shape[2],
+            *query.stride(), scale, 256,
+        )
     return output
