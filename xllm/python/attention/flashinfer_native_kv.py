@@ -74,6 +74,8 @@ class FlashInferNativeKVBackend(FlashInferBackend):
         self._max_context_tokens = max_context_tokens
         self._xqa_plans = {}
         self._active_xqa_plan = None
+        self._mixed_attention = None
+        self._mixed_xqa_plans = {}
         self._virtual_memory = virtual_memory
         self._cache_format = cache_dtype
         self._cache_dtype = torch.float8_e4m3fn if cache_dtype == "fp8_e4m3" else torch.uint8
@@ -122,10 +124,33 @@ class FlashInferNativeKVBackend(FlashInferBackend):
 
     def prepare(self, metadata: AttentionMetadata, *, graph_mode: bool = False) -> None:
         self._metadata = metadata
+        self._mixed_attention = None
         window_left = self.sliding_window - 1 if self.sliding_window > 0 else -1
         options = dict(sm_scale=self.scale, window_left=window_left,
                        q_data_type=self.dtype, kv_data_type=self._cache_dtype)
         if metadata.is_prefill or metadata.is_chunked_prefill:
+            if self._cache_format == "fp8_e4m3" and self._decode_backend == "xqa" and not graph_mode:
+                from xllm.python.attention.mixed_native_kv import split_mixed_attention
+                from xllm.python.attention.xqa_decode import XQADecodePlan
+
+                subsets = split_mixed_attention(metadata)
+                if subsets is not None:
+                    decode, prefill = subsets
+                    batch = decode.paging.paged_kv_last_page_len.numel()
+                    plan = self._mixed_xqa_plans.get(batch)
+                    if plan is None:
+                        maximum = ((self._max_context_tokens + self.page_size - 1) // self.page_size) * self.page_size
+                        plan = XQADecodePlan(batch, self.page_size, maximum, self._decode_workspace.device)
+                        self._mixed_xqa_plans[batch] = plan
+                    plan.prepare(decode.paging, graph_mode=False)
+                    self._mixed_attention = (decode, prefill, plan)
+                    self._prefill_paged_wrapper.plan(
+                        prefill.query_indptr, prefill.paging.paged_kv_indptr_host,
+                        prefill.paging.paged_kv_indices, prefill.paging.paged_kv_last_page_len_host,
+                        self.num_heads, self.num_kv_heads, self.head_dim, self.page_size,
+                        causal=True, **{**options, "q_data_type": self._prefill_query_dtype, "o_data_type": self.dtype},
+                    )
+                    return
             query_indptr = metadata.qo_indptr if metadata.qo_indptr is not None else metadata.q_cu_seq_lens
             prefill_options = {**options, "q_data_type": self._prefill_query_dtype, "o_data_type": self.dtype}
             self._prefill_paged_wrapper.plan(
@@ -189,7 +214,21 @@ class FlashInferNativeKVBackend(FlashInferBackend):
             scale_options = {"kv_cache_sf": scales}
         prefill = metadata.is_prefill or metadata.is_chunked_prefill
         query = q.view(-1, self.num_heads, self.head_dim)
-        if not prefill and self._decode_backend == "xqa":
+        if self._mixed_attention is not None:
+            from xllm.python.attention.query_quantization import quantize_query_fp8
+
+            decode, prefill_rows, plan = self._mixed_attention
+            decode_query = query.index_select(0, decode.query_indices)
+            prefill_query = query.index_select(0, prefill_rows.query_indices)
+            prefill_query = quantize_query_fp8(prefill_query, 1.0)
+            decoded = plan.run(decode_query, pages, self._decode_workspace, self.scale, *self._fixed_scales)
+            prefilled = self._prefill_paged_wrapper.run(
+                prefill_query, pages, q_scale=1.0, k_scale=self._fixed_scales[0], v_scale=self._fixed_scales[1],
+            )
+            output = torch.empty(query.shape, dtype=self.dtype, device=query.device)
+            output.index_copy_(0, decode.query_indices, decoded)
+            output.index_copy_(0, prefill_rows.query_indices, prefilled)
+        elif not prefill and self._decode_backend == "xqa":
             output = self._active_xqa_plan.run(query, pages, self._decode_workspace, self.scale, *self._fixed_scales)
         else:
             if prefill and self._prefill_query_dtype == torch.float8_e4m3fn:
@@ -212,6 +251,7 @@ class FlashInferNativeKVBackend(FlashInferBackend):
             "prefill_query_dtype": str(self._prefill_query_dtype),
             "decode_query_dtype": str(self.dtype), "max_context_tokens": self._max_context_tokens,
             "query_dtype": str(self.dtype), "SM90_FP4_tensor_core_compute": False,
+            "mixed_FP8_decode": "XQA_subset_eager_attention_no_mixed_decode_graph",
             "full_BF16_KV_shadow": False,
             "KV_tensor_address_bytes": sum(c.key.numel() + c.value.numel() for c in self._kv_caches if c.key is not None),
             "VMM_virtual_address_capacity_not_residency": self._virtual_memory,
