@@ -205,7 +205,7 @@ def _create_attention_backend(
         )
     if current_platform.is_cuda():
         cache_dtype = config.get("kv_cache_dtype", "auto")
-        if cache_dtype in ("fp8_e4m3", "nvfp4"):
+        if cache_dtype in ("fp8_e4m3", "nvfp4", "mxfp4"):
             from xllm.python.attention.flashinfer_native_kv import FlashInferNativeKVBackend
 
             return FlashInferNativeKVBackend(

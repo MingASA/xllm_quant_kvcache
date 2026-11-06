@@ -18,6 +18,7 @@ Only paged SM90 BF16 D256 is exposed. This adapter requires GPU qualification.
 
 from __future__ import annotations
 
+import functools
 import hashlib
 from pathlib import Path
 import re
@@ -69,16 +70,15 @@ __device__ __forceinline__ float mxfp4_scale(uint8_t code) {
     return text
 
 
-def make_mxfp4_wrapper(workspace: Any, **graph_options: Any) -> Any:
-    """Construct a private JIT wrapper without changing the installed package."""
+@functools.cache
+def _load_mxfp4_module() -> tuple[Any, list[str], list[str]]:
+    """Compile/register once; eager and Graph wrappers share this module."""
     import flashinfer
     import torch
     from flashinfer.jit import env
     from flashinfer.jit.attention.modules import gen_customize_batch_prefill_module
     from flashinfer.prefill import get_batch_prefill_jit_module
 
-    if torch.cuda.get_device_capability(workspace.device) != (9, 0):
-        raise ValueError("MXFP4 FlashInfer adapter currently targets SM90 only")
     original = Path(flashinfer.__file__).parent / "data/include/flashinfer/attention/prefill.cuh"
     adapted = _adapt_header(original.read_bytes())
     fingerprint = hashlib.sha256(adapted.encode()).hexdigest()[:16]
@@ -103,6 +103,17 @@ def make_mxfp4_wrapper(workspace: Any, **graph_options: Any) -> Any:
     )
     spec.extra_cuda_cflags = [*(spec.extra_cuda_cflags or []), "-include", str(header)]
     module = get_batch_prefill_jit_module(name, spec.build_and_load())
+    return module, tensors, scalars
+
+
+def make_mxfp4_wrapper(workspace: Any, **graph_options: Any) -> Any:
+    """Construct a private JIT wrapper without changing the installed package."""
+    import flashinfer
+    import torch
+
+    if torch.cuda.get_device_capability(workspace.device) != (9, 0):
+        raise ValueError("MXFP4 FlashInfer adapter currently targets SM90 only")
+    module, tensors, scalars = _load_mxfp4_module()
     wrapper = flashinfer.BatchPrefillWithPagedKVCacheWrapper(workspace, "NHD", backend="fa2", **graph_options)
     wrapper._jit_module = module
     wrapper._jit_additional_tensor_names = tensors

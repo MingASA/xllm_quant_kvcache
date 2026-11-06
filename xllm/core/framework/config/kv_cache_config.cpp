@@ -60,7 +60,8 @@ DEFINE_string(kv_cache_dtype,
               "cache dtype aligns with model dtype (no quantization). "
               "\"int8\": Enables INT8 quantization on MLU, and on NPU for "
               "GLM-5.2 SFA packed KV cache. CUDA Python Executor additionally "
-              "supports native fp8_e4m3 and nvfp4 compressed pages.");
+              "supports native fp8_e4m3, nvfp4 and experimental OCP mxfp4 "
+              "compressed pages.");
 
 DEFINE_double(kv_cache_k_scale,
               1.0,
@@ -232,7 +233,8 @@ void KVCacheConfig::initialize() {
 
 void KVCacheConfig::validate() const {
   CHECK(kv_cache_dtype_ == "auto" || kv_cache_dtype_ == "int8" ||
-        kv_cache_dtype_ == "fp8_e4m3" || kv_cache_dtype_ == "nvfp4")
+        kv_cache_dtype_ == "fp8_e4m3" || kv_cache_dtype_ == "nvfp4" ||
+        kv_cache_dtype_ == "mxfp4")
       << "Unsupported kv_cache_dtype=" << kv_cache_dtype_;
   CHECK(std::isfinite(kv_cache_k_scale_) &&
         kv_cache_k_scale_ >= std::numeric_limits<float>::min() &&
@@ -250,6 +252,15 @@ void KVCacheConfig::validate() const {
     CHECK(kv_cache_prefill_backend_ != "fa3" &&
           kv_cache_decode_backend_ != "xqa")
         << "SM90 NVFP4 supports native FlashInfer FA2 only.";
+  }
+  if (kv_cache_dtype_ == "mxfp4") {
+    CHECK(kv_cache_prefill_backend_ != "fa3" &&
+          kv_cache_decode_backend_ != "xqa")
+        << "SM90 MXFP4 requires the private pinned FlashInfer FA2 adapter.";
+    CHECK_EQ(kv_cache_k_scale_, 1.0);
+    CHECK_EQ(kv_cache_v_scale_, 1.0);
+    CHECK(!enable_vmm_kvcache_)
+        << "MXFP4 CUDA VMM has no qualified execution path.";
   }
   CHECK(!enable_vmm_kvcache_ || kv_cache_decode_backend_ != "xqa")
       << "XQA requires finite initialized pages; this VMM path is not "

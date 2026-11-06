@@ -32,7 +32,7 @@ def _write(
         values = tl.load(source + token * token_stride + head * head_stride
                          + (group[:, None] * 32 + channel[None, :]) * channel_stride).to(tl.float32)
         maximum = tl.max(tl.abs(values), axis=1)
-        nonfinite = tl.max((tl.abs(values) == float("inf")) | (values != values), axis=1)
+        nonfinite = tl.max(((tl.abs(values) == float("inf")) | (values != values)).to(tl.int32), axis=1) != 0
         exponent = tl.floor(tl.log2(maximum)).to(tl.int32) - 2
         exponent = tl.where(maximum == 0, -127, tl.minimum(127, tl.maximum(-127, exponent)))
         scale_code = exponent + 127
@@ -47,6 +47,9 @@ def _write(
                tl.where(normalized < 3.5, 5,
                tl.where(normalized <= 5, 6, 7)))))))
         sign = (values.to(tl.uint32, bitcast=True) >> 28) & 8
+        # CUDA may flush the smallest E8M0 scale during reciprocal lowering.
+        # A zero block must retain signed zero even if 0/scale became NaN.
+        code = tl.where(maximum[:, None] == 0, 0, code)
         code = tl.where(nonfinite[:, None], 0, code | sign).to(tl.uint8)
         pair = tl.reshape(code, (dimension // 2, 2))
         packed = tl.sum(pair.to(tl.uint32) << (tl.arange(0, 2)[None, :] * 4), axis=1)

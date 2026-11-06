@@ -67,7 +67,7 @@ xLLM 使用 gflags 管理服务启动参数。`--model <PATH>` 是唯一必填�
 | `block_size` | `int32` | `128` | 每个 KV Cache block 的 slot 数。 |
 | `max_cache_size` | `int64` | `0` | KV Cache 的容量上限，单位 byte；虚拟内存模式下限制 KV 与权重共享池的容量。`0` 表示不设显式字节上限，根据可用显存推导容量。 |
 | `max_memory_utilization` | `double` | `0.8` | 模型推理可使用的设备显存比例，包括模型权重和 KV Cache。原有物理 KV Cache 和固定 VMM 要求取值在 `(0, 1]` 内。弹性 VMM 仅在显式配置时应用该上限；不配置或设为 `0` 时按实时可用显存扩张。 |
-| `kv_cache_dtype` | `string` | `"auto"` | KV Cache 格式。`auto` 与模型 dtype 对齐且不量化；`int8` 支持 MLU 及 NPU 的 GLM-5.2 SFA packed KV。SM90 上的 CUDA Python Executor 另外支持 `fp8_e4m3`、`nvfp4` 压缩 Full Attention 页；GDN 状态保留原 dtype。 |
+| `kv_cache_dtype` | `string` | `"auto"` | KV Cache 格式。`auto` 与模型 dtype 对齐且不量化；`int8` 支持 MLU 及 NPU 的 GLM-5.2 SFA packed KV。SM90 上的 CUDA Python Executor 另外支持 `fp8_e4m3`、`nvfp4` 压缩 Full Attention 页；GDN 状态保留原 dtype。实验性 `mxfp4` 为 OCP E2M1/block32/E8M0，使用固定版本私有 FlashInfer FA2 适配器；仅限 BF16 Q24/KV4/D256、page128、Full Attention、单位全局 Scale、非 VMM CUDA。部署前须取得实际模型质量与服务资格证据。 |
 | `kv_cache_k_scale` | `double` | `1.0` | 原生量化 KV 的固定全局 K decode scale，须为正的正规 FP32 值。NVFP4 另外保存 E4M3 block scale；部署前须按模型校准。 |
 | `kv_cache_v_scale` | `double` | `1.0` | 原生量化 KV 的固定全局 V decode scale，须为正的正规 FP32 值；NVFP4 另外保存 E4M3 block scale。 |
 | `kv_cache_prefill_backend` | `string` | `"auto"` | 仅作用于原生量化路径：`auto`、`fa2`、`fa3`。SM90 的 `auto` 为 FP8 KV 选择 FP8 Query 的 FA3，为 NVFP4 选择 BF16 Query 的 FA2；NVFP4 与 `fa3` 组合在执行前拒绝。 |

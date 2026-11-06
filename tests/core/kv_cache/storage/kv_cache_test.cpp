@@ -255,7 +255,7 @@ void ExpectMluCompressedStateLayout(const std::vector<KVCache>& caches,
 
 #if !defined(USE_MLU) && !defined(USE_NPU)
 TEST(NativeKVCacheTest, BytePagesCopyInlineScalesAndKeepLinearStateDtypes) {
-  for (const std::string format : {"fp8_e4m3", "nvfp4"}) {
+  for (const std::string format : {"fp8_e4m3", "nvfp4", "mxfp4"}) {
     SCOPED_TRACE(format);
     KVCacheCapacity capacity;
     capacity.n_blocks(4)
@@ -296,13 +296,17 @@ TEST(NativeKVCacheTest, BytePagesCopyInlineScalesAndKeepLinearStateDtypes) {
       const torch::Tensor key = caches[layer].get_k_cache();
       const torch::Tensor value = caches[layer].get_v_cache();
       EXPECT_EQ(key.scalar_type(), torch::kByte);
-      EXPECT_EQ(key.size(3), format == "nvfp4" ? 144 : 256);
+      const int64_t physical_head_dim = format == "nvfp4"   ? 144
+                                        : format == "mxfp4" ? 136
+                                                            : 256;
+      EXPECT_EQ(key.size(3), physical_head_dim);
       EXPECT_FALSE(caches[layer].get_k_cache_scale().has_value());
       key[0].fill_(17);
       value[0].fill_(29);
-      if (format == "nvfp4") {
-        key[0].reshape({-1}).narrow(0, 16 * 4 * 128, 16 * 4 * 16).fill_(83);
-        value[0].reshape({-1}).narrow(0, 16 * 4 * 128, 16 * 4 * 16).fill_(91);
+      if (format != "fp8_e4m3") {
+        const int64_t scale_bytes = 16 * 4 * (physical_head_dim - 128);
+        key[0].reshape({-1}).narrow(0, 16 * 4 * 128, scale_bytes).fill_(83);
+        value[0].reshape({-1}).narrow(0, 16 * 4 * 128, scale_bytes).fill_(91);
       }
       const torch::Tensor expected_key = key[0].clone();
       const torch::Tensor expected_value = value[0].clone();

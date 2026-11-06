@@ -60,7 +60,7 @@ int64_t kv_cache_dtype_size(const std::string& kv_cache_dtype,
     return 1;
   }
   if (kv_cache_dtype == "fp8_e4m3" || kv_cache_dtype == "fp8_e5m2" ||
-      kv_cache_dtype == "nvfp4") {
+      kv_cache_dtype == "nvfp4" || kv_cache_dtype == "mxfp4") {
     return 1;
   }
   return model_dtype_size;
