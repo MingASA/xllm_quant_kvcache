@@ -147,11 +147,18 @@ def _writer_case(case: dict[str, int], measure: bool) -> dict[str, Any]:
     public()
     candidate()
     eager_packed_equal, eager_scale_equal = equal_bytes()
-    # Direct noncontiguous inputs are covered too, before the backend's retained
-    # contiguous() call. Both routes still execute the same native operator.
+    # The native operator permits strided outer dimensions, but requires a
+    # contiguous head dimension. Production retains contiguous() above; cover
+    # the supported strided ABI here without claiming arbitrary strides work.
+    strided_key, strided_value = [
+        torch.empty((rows + 2, KV_HEADS * 2, HEAD_DIM), device="cuda", dtype=key.dtype)[:, ::2, :]
+        for _ in range(2)
+    ]
+    strided_key.copy_(key)
+    strided_value.copy_(value)
     flashinfer.page.nvfp4_quantize_append_paged_kv_cache_with_slot_mapping(
-        key, value, slots, control_pages, control_sf, *public_scales, kv_layout="NHD")
-    writer.append(key, value, slots, 0)
+        strided_key, strided_value, slots, control_pages, control_sf, *public_scales, kv_layout="NHD")
+    writer.append(strided_key, strided_value, slots, 0)
     noncontiguous_packed_equal, noncontiguous_scale_equal = equal_bytes()
     for _ in range(3):
         candidate()
