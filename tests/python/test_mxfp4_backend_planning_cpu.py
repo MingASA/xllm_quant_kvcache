@@ -44,7 +44,7 @@ class BackendPlanningTest(unittest.TestCase):
                      flags=__future__.annotations.compiler_flag), namespace)
         self.prepare = namespace[method.name]
         self.backend = SimpleNamespace(
-            _mxfp4_graph_wrappers={}, _mxfp4_decode_planners={}, _mxfp4_eager_query_indptr={},
+            _mxfp4_graph_wrappers={}, _mxfp4_eager_query_indptr={},
             _mxfp4_eager_decode_wrapper=Mock(), _decode_workspace=SimpleNamespace(device="cuda:0"),
             num_heads=24, num_kv_heads=4, head_dim=256, page_size=128, scale=1/16, dtype="bfloat16",
         )
@@ -56,26 +56,27 @@ class BackendPlanningTest(unittest.TestCase):
         )
         self.metadata.paged_kv_last_page_len_host = Mock(numel=lambda: 2)
 
-    def test_graph_reuses_planner_but_passes_every_fresh_metadata_view(self) -> None:
+    def test_graph_full_plan_passes_every_fresh_metadata_view(self) -> None:
         self.prepare(self.backend, self.metadata, graph_mode=True)
-        first = self.planner.return_value
+        first = self.factory.return_value
         self.metadata.paged_kv_indptr_host = object()
         self.metadata.paged_kv_last_page_len_host = Mock(numel=lambda: 2)
         self.prepare(self.backend, self.metadata, graph_mode=True)
         self.assertEqual(self.factory.call_count, 1)
-        self.assertEqual(self.planner.call_count, 1)
+        self.planner.assert_not_called()
         self.assertEqual(self.arange.call_count, 1)
         self.assertEqual(first.plan.call_count, 2)
-        first.plan.assert_called_with(self.metadata.paged_kv_indptr_host,
-                                      self.metadata.paged_kv_indices,
-                                      self.metadata.paged_kv_last_page_len_host)
+        self.assertEqual(first.plan.call_args.args[1:4],
+                         (self.metadata.paged_kv_indptr_host,
+                          self.metadata.paged_kv_indices,
+                          self.metadata.paged_kv_last_page_len_host))
 
     def test_graph_address_change_fails_before_replanning(self) -> None:
         self.prepare(self.backend, self.metadata, graph_mode=True)
         self.metadata.paged_kv_indices = Mock(data_ptr=lambda: 999)
         with self.assertRaisesRegex(RuntimeError, "addresses changed"):
             self.prepare(self.backend, self.metadata, graph_mode=True)
-        self.assertEqual(self.planner.return_value.plan.call_count, 1)
+        self.assertEqual(self.factory.return_value.plan.call_count, 1)
 
     def test_eager_uses_actual_device_csr_without_host_only_pybind_properties(self) -> None:
         del self.metadata.paged_kv_indptr_host
