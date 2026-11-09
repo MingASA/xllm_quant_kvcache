@@ -27,6 +27,7 @@ from xllm.python.attention.backend import (
     AttentionMetadata,
     LayerCache,
 )
+from xllm.python.attention.flashinfer_metadata import _prefill_query_indptr
 
 if TYPE_CHECKING:
     from xllm.python.layers.attention import Attention
@@ -158,7 +159,7 @@ class FlashInferBackend(AttentionBackend):
 
         if metadata.is_prefill:
             self._prefill_ragged_wrapper.plan(
-                metadata.q_cu_seq_lens,
+                _prefill_query_indptr(metadata, metadata.q_cu_seq_lens),
                 metadata.kv_cu_seq_lens,
                 self.num_heads,
                 self.num_kv_heads,
@@ -167,10 +168,11 @@ class FlashInferBackend(AttentionBackend):
                 sm_scale=self.scale,
                 window_left=window_left,
                 q_data_type=self.dtype,
+                non_blocking=False,
             )
         elif metadata.is_chunked_prefill:
             self._prefill_paged_wrapper.plan(
-                metadata.qo_indptr,
+                _prefill_query_indptr(metadata, metadata.qo_indptr),
                 metadata.paged_kv_indptr,
                 metadata.paged_kv_indices,
                 metadata.paged_kv_last_page_len,
@@ -182,6 +184,7 @@ class FlashInferBackend(AttentionBackend):
                 sm_scale=self.scale,
                 window_left=window_left,
                 q_data_type=self.dtype,
+                non_blocking=False,
             )
         else:
             self._prepare_decode(metadata, graph_mode, window_left)

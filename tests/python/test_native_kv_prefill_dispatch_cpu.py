@@ -50,7 +50,8 @@ def _load_method(
 
 class NativeKVPrefillDispatchTest(unittest.TestCase):
     def test_prefill_preserves_query_dtype_and_full_packed_metadata(self) -> None:
-        prepare = _load_method("prepare")
+        select_query = Mock(side_effect=lambda metadata, query: query)
+        prepare = _load_method("prepare", globals_={"_prefill_query_indptr": select_query})
         for dtype in ("BF16", "FP16"):
             for prefill in ("fa2", "fa3"):
                 for phase in ("prefill", "chunked"):
@@ -72,8 +73,10 @@ class NativeKVPrefillDispatchTest(unittest.TestCase):
                         prepare(backend, metadata)
                         backend._prefill_paged_wrapper.plan.assert_called_once_with(
                             *pointers, 24, 4, 256, 128, causal=True, sm_scale=256**-0.5,
-                            window_left=-1, q_data_type=query_dtype, kv_data_type="FP8", o_data_type=dtype,
+                            non_blocking=False, window_left=-1, q_data_type=query_dtype,
+                            kv_data_type="FP8", o_data_type=dtype,
                         )
+                        select_query.assert_called_with(metadata, pointers[0])
 
     def test_pure_decode_preserves_eager_and_graph_xqa_plan(self) -> None:
         constructor = Mock()

@@ -32,6 +32,7 @@ from scripts.logger import logger
 
 from xllm.python.attention.backend import AttentionMetadata, LayerCache
 from xllm.python.attention.flashinfer import FlashInferBackend
+from xllm.python.attention.flashinfer_metadata import _prefill_query_indptr
 from xllm.python.attention.native_kv_writer import write_fp8_kv
 from xllm.python.attention.native_kv_layout import nvfp4_page_views
 
@@ -134,9 +135,9 @@ class FlashInferNativeKVBackend(FlashInferBackend):
             query_indptr = metadata.qo_indptr if metadata.qo_indptr is not None else metadata.q_cu_seq_lens
             prefill_options = {**options, "q_data_type": self._prefill_query_dtype, "o_data_type": self.dtype}
             self._prefill_paged_wrapper.plan(
-                query_indptr, metadata.paged_kv_indptr, metadata.paged_kv_indices,
+                _prefill_query_indptr(metadata, query_indptr), metadata.paged_kv_indptr, metadata.paged_kv_indices,
                 metadata.paged_kv_last_page_len, self.num_heads, self.num_kv_heads,
-                self.head_dim, self.page_size, causal=True, **prefill_options,
+                self.head_dim, self.page_size, causal=True, non_blocking=False, **prefill_options,
             )
             return
         if self._decode_backend == "xqa":
