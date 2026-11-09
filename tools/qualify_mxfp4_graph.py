@@ -140,17 +140,21 @@ def _case(batch: int, kv_len: int, qlen: int, *, fast_plan: bool,
     import torch
     from xllm.python.attention.mxfp4_flashinfer import make_mxfp4_wrapper
     from xllm.python.attention.mxfp4_decode_plan import Mxfp4DecodePlanner
+    from xllm.python.attention.mxfp4_writer import mxfp4_page_views
 
-    torch.manual_seed(1701 + batch + kv_len)
+    seed = 20261109 + batch + kv_len
+    torch.manual_seed(seed)
     device = torch.device("cuda:0")
     max_pages_per_row = max(math.ceil(kv_len / 128) + 2, 5)
     physical_pages = batch * max_pages_per_row + 8
-    cache_shape = (physical_pages, 128, 4, 128)
-    scale_shape = (physical_pages, 128, 4, 8)
-    key = torch.randint(0, 256, cache_shape, dtype=torch.uint8, device=device)
-    value = torch.randint(0, 256, cache_shape, dtype=torch.uint8, device=device)
-    key_sf = torch.randint(124, 128, scale_shape, dtype=torch.uint8, device=device)
-    value_sf = torch.randint(124, 128, scale_shape, dtype=torch.uint8, device=device)
+    owners = [torch.empty((physical_pages, 128, 4, 136), dtype=torch.uint8, device=device)
+              for _ in range(2)]
+    key, key_sf = mxfp4_page_views(owners[0], 256)
+    value, value_sf = mxfp4_page_views(owners[1], 256)
+    for data in (key, value):
+        data.random_(0, 256)
+    for scales in (key_sf, value_sf):
+        scales.random_(124, 128)
     q = (torch.randn(batch * qlen, 24, 256, device=device) * .25).to(torch.bfloat16)
     original_q = q.clone()
     inputs = {name: _tensor_sha(tensor) for name, tensor in
@@ -159,7 +163,10 @@ def _case(batch: int, kv_len: int, qlen: int, *, fast_plan: bool,
     baseline_outputs: list[Any] = []
     result: dict[str, Any] = {"batch": batch, "kv_len": kv_len, "query_len": qlen,
                               "head_dim": 256, "query_heads": 24, "kv_heads": 4,
-                              "page_size": 128, "inputs_sha256": inputs, "routes": []}
+                              "page_size": 128, "seed": seed, "inputs_sha256": inputs,
+                              "physical_owner_shape": list(owners[0].shape),
+                              "data_stride": list(key.stride()), "scale_stride": list(key_sf.stride()),
+                              "physical_owner_page_bytes": owners[0].stride(0), "routes": []}
     geometry_results.append(result)
     modes = ["full", "fast"] if fast_plan and qlen == 1 else ["full"]
     for mode in modes:
@@ -198,9 +205,9 @@ def _case(batch: int, kv_len: int, qlen: int, *, fast_plan: bool,
                 ids[ptr[:-1].long()] = 0
             if step == 2:
                 target = physical_pages - 2
-                for tensor in (key, value, key_sf, value_sf):
-                    tensor[target].copy_(tensor[0])
-                    assert torch.equal(tensor[target], tensor[0])
+                for owner in owners:
+                    owner[target].copy_(owner[0])
+                    assert torch.equal(owner[target], owner[0])
                 ids[ptr[:-1].long()] = target
                 copy_verified = True
             device_ids = ids.to(device)
@@ -218,8 +225,7 @@ def _case(batch: int, kv_len: int, qlen: int, *, fast_plan: bool,
                     fast.plan(ptr, device_ids, last)
 
             def run() -> Any:
-                return graph_wrapper.run(q, (key, value), key_block_scales=key_sf,
-                                         value_block_scales=value_sf, out=output)
+                return graph_wrapper.run(q, (key, value), kv_cache_sf=(key_sf, value_sf), out=output)
 
             # Poison both actual scheduler workspaces before each native plan.
             torch.cuda.synchronize()
@@ -229,7 +235,7 @@ def _case(batch: int, kv_len: int, qlen: int, *, fast_plan: bool,
             mask = _mask(graph_wrapper, query)
             result["last_plan_mask"] = mask
             full_plan(eager)
-            eager_output = eager.run(q, (key, value), key_block_scales=key_sf, value_block_scales=value_sf)
+            eager_output = eager.run(q, (key, value), kv_cache_sf=(key_sf, value_sf))
             run()
             torch.cuda.synchronize()
             if graph is None:
@@ -316,7 +322,8 @@ def _run(args: argparse.Namespace, receipt: dict[str, Any]) -> None:
                           "gpu_uuid": str(properties.uuid),
                           "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()}
     receipt["source_manifest"] = mxfp4_jit_source_manifest()
-    geometries = [(1, 128, 1), (2, 129, 1), (4, 257, 1)] if args.phase == "pilot" else [(1, 8192, 8192), (32, 2048, 1), (32, 16384, 1)]
+    geometries = ([(1, 128, 128), (1, 128, 1), (2, 129, 1), (4, 257, 1)]
+                  if args.phase == "pilot" else [(1, 8192, 8192), (32, 2048, 1), (32, 16384, 1)])
     receipt["geometries"] = []
     for batch, length, qlen in geometries:
         _case(batch, length, qlen, fast_plan=args.fast_plan,
