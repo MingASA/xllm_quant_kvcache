@@ -151,6 +151,25 @@ class NativeKVPrefillDispatchTest(unittest.TestCase):
                     )
                     self.assertIsNone(report(backend)["mixed_FP8_decode"])
 
+    def test_nvfp4_execute_uses_bound_prevalidated_writer(self) -> None:
+        execute = _load_method("execute", globals_={"torch": SimpleNamespace(float8_e4m3fn="FP8")})
+        q, k, v = Mock(), Mock(), Mock()
+        pages, scales = object(), object()
+        metadata = SimpleNamespace(is_prefill=True, is_chunked_prefill=False, slot_mapping=object())
+        backend = SimpleNamespace(
+            _metadata=metadata, _cache_format="nvfp4", _pages={1: pages}, _block_scales={1: scales},
+            _nvfp4_writer=Mock(), num_heads=24, num_kv_heads=4, head_dim=256,
+            _fixed_scales=(0.125, 0.0625), _prefill_query_dtype="BF16", _prefill_paged_wrapper=Mock(),
+        )
+        execute(backend, q, k, v, SimpleNamespace(layer_id=1))
+        backend._nvfp4_writer.append.assert_called_once_with(
+            k.view.return_value.contiguous.return_value, v.view.return_value.contiguous.return_value,
+            metadata.slot_mapping, 1,
+        )
+        backend._prefill_paged_wrapper.run.assert_called_once_with(
+            q.view.return_value, pages, k_scale=0.125, v_scale=0.0625, kv_cache_sf=scales,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

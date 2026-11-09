@@ -25,7 +25,6 @@ import json
 from typing import TYPE_CHECKING
 
 import flashinfer
-import flashinfer.page
 import torch
 from flashinfer.decode import fast_decode_plan
 from scripts.logger import logger
@@ -35,6 +34,7 @@ from xllm.python.attention.flashinfer import FlashInferBackend
 from xllm.python.attention.flashinfer_metadata import _prefill_query_indptr
 from xllm.python.attention.native_kv_writer import write_fp8_kv
 from xllm.python.attention.native_kv_layout import nvfp4_page_views
+from xllm.python.attention.nvfp4_writer import PrevalidatedNVFP4Writer
 
 if TYPE_CHECKING:
     from xllm.python.layers.attention import Attention
@@ -79,10 +79,8 @@ class FlashInferNativeKVBackend(FlashInferBackend):
         self._cache_format = cache_dtype
         self._cache_dtype = torch.float8_e4m3fn if cache_dtype == "fp8_e4m3" else torch.uint8
         self._fixed_scales = (key_scale, value_scale)
-        self._global_scales = (
-            tuple(torch.tensor([s], dtype=torch.float32, device=device) for s in self._fixed_scales)
-            if cache_dtype == "nvfp4" else ()
-        )
+        self._global_scales = ()
+        self._nvfp4_writer: PrevalidatedNVFP4Writer | None = None
         self._pages: dict[int, tuple[torch.Tensor, torch.Tensor]] = {}
         self._block_scales: dict[int, tuple[torch.Tensor, torch.Tensor]] = {}
         super().__init__(num_heads, num_kv_heads, head_dim, scale, sliding_window, device, dtype)
@@ -121,6 +119,9 @@ class FlashInferNativeKVBackend(FlashInferBackend):
                 block_scales[layer_id] = (key_scales, value_scales)
         if not pages:
             raise ValueError("Native KV requires full-attention resident pages")
+        if self._cache_format == "nvfp4":
+            self._nvfp4_writer = PrevalidatedNVFP4Writer(pages, block_scales, self._fixed_scales)
+            self._global_scales = self._nvfp4_writer.global_scales
         self._kv_caches = kv_caches
         self._pages = pages
         self._block_scales = block_scales
@@ -188,9 +189,8 @@ class FlashInferNativeKVBackend(FlashInferBackend):
             scale_options = {}
         else:
             scales = self._block_scales[layer.layer_id]
-            flashinfer.page.nvfp4_quantize_append_paged_kv_cache_with_slot_mapping(
-                key.contiguous(), value.contiguous(), metadata.slot_mapping, pages, scales,
-                *self._global_scales, kv_layout="NHD",
+            self._nvfp4_writer.append(
+                key.contiguous(), value.contiguous(), metadata.slot_mapping, layer.layer_id,
             )
             scale_options = {"kv_cache_sf": scales}
         prefill = metadata.is_prefill or metadata.is_chunked_prefill
@@ -213,7 +213,7 @@ class FlashInferNativeKVBackend(FlashInferBackend):
             "kv_cache_dtype": self._cache_format,
             "resident_layout": "NHD" if self._cache_format == "fp8_e4m3" else "NHD_page_packed_E2M1_then_E4M3_block16",
             "k_scale": self._fixed_scales[0], "v_scale": self._fixed_scales[1],
-            "writer": "fused_triton_quantize_scatter" if self._cache_format == "fp8_e4m3" else "flashinfer_native_nvfp4_slot_writer",
+            "writer": "fused_triton_quantize_scatter" if self._cache_format == "fp8_e4m3" else "flashinfer_prevalidated_native_nvfp4_slot_writer",
             "prefill_backend": self._prefill_backend, "decode_backend": self._decode_backend,
             "prefill_query_dtype": str(self._prefill_query_dtype),
             "decode_query_dtype": str(self.dtype), "max_context_tokens": self._max_context_tokens,
