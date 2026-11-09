@@ -30,7 +30,8 @@ from typing import Any, Callable
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 Q_HEADS, KV_HEADS, HEAD_DIM, PAGE_SIZE = 24, 4, 256, 128
-SCALES = (0.125, 0.0625)
+FP8_SCALES = (0.125, 0.5)
+NV_SCALES = (1.0, 1.0)
 WARMUP, REPEATS, INNER = 10, 40, 5
 PLAN_WARMUP, PLAN_REPEATS = 3, 20
 WORKSPACE_BYTES = 128 * 2**20
@@ -54,7 +55,7 @@ def describe(phase: str) -> dict[str, Any]:
                    {"batch": 32, "context": 2048, "query_length": 1},
                    {"batch": 32, "context": 16384, "query_length": 1}]),
         "geometry": {"q_heads": Q_HEADS, "kv_heads": KV_HEADS, "head_dim": HEAD_DIM, "page_size": PAGE_SIZE},
-        "scales": SCALES, "seed": 20261109,
+        "scales": {"fp8_e4m3": FP8_SCALES, "nvfp4": NV_SCALES}, "seed": 20261109,
         "timing": {"warmup": WARMUP, "repeats": REPEATS, "inner": INNER,
                    "plan_warmup": PLAN_WARMUP, "plan_repeats": PLAN_REPEATS},
         "route_tolerance": {"atol": ROUTE_ATOL, "rtol": ROUTE_RTOL},
@@ -122,8 +123,8 @@ def _writer_case(case: dict[str, int], measure: bool) -> dict[str, Any]:
     num_pages = (rows + PAGE_SIZE - 1) // PAGE_SIZE
     owners, pages, sf = _nv_pages(num_pages)
     control_owners, control_pages, control_sf = _nv_pages(num_pages)
-    writer = PrevalidatedNVFP4Writer({0: pages}, {0: sf}, SCALES)
-    public_scales = tuple(torch.tensor([s], dtype=torch.float32, device="cuda") for s in SCALES)
+    writer = PrevalidatedNVFP4Writer({0: pages}, {0: sf}, NV_SCALES)
+    public_scales = tuple(torch.tensor([s], dtype=torch.float32, device="cuda") for s in NV_SCALES)
     key, value = [torch.randn((rows + 2, KV_HEADS, HEAD_DIM * 2), device="cuda", dtype=torch.bfloat16)[..., ::2]
                   for _ in range(2)]
     # Include ignored slots and extra input rows. The negative slot remains in
@@ -178,7 +179,7 @@ def _writer_case(case: dict[str, int], measure: bool) -> dict[str, Any]:
                 invalid_scales.append(True)
             else:
                 invalid_scales.append(False)
-    result = {"case": case, "packed_equal": eager_packed_equal, "scale_equal": eager_scale_equal,
+    result = {"case": case, "scales": NV_SCALES, "packed_equal": eager_packed_equal, "scale_equal": eager_scale_equal,
               "noncontiguous_packed_equal": noncontiguous_packed_equal,
               "noncontiguous_scale_equal": noncontiguous_scale_equal, "padding_and_extra_rows": True,
               "graph_changed_values_and_slots_bytes_equal": graph_results,
@@ -213,17 +214,17 @@ def _attention_case(case: dict[str, int], route: str, measure: bool) -> dict[str
     kv_dtype, q_dtype, backend = torch.bfloat16, torch.bfloat16, "fa2"
     if route == "fp8_paged":
         pages = tuple((tensor.float() / scale).clamp(-448, 448).to(torch.float8_e4m3fn)
-                      for tensor, scale in zip((key, value), SCALES))
+                      for tensor, scale in zip((key, value), FP8_SCALES))
         query = query.to(torch.float8_e4m3fn)
         kv_dtype, q_dtype, backend = torch.float8_e4m3fn, torch.float8_e4m3fn, "fa3"
-        scale_options = {"q_scale": 1.0, "k_scale": SCALES[0], "v_scale": SCALES[1]}
+        scale_options = {"q_scale": 1.0, "k_scale": FP8_SCALES[0], "v_scale": FP8_SCALES[1]}
     elif route == "nvfp4_paged":
         owners, pages, sf = _nv_pages(num_pages)
         flashinfer.page.nvfp4_quantize_append_paged_kv_cache_with_slot_mapping(
             key.flatten(0, 1), value.flatten(0, 1), torch.arange(num_pages * PAGE_SIZE, device="cuda"),
-            pages, sf, *SCALES, kv_layout="NHD")
+            pages, sf, *NV_SCALES, kv_layout="NHD")
         kv_dtype = torch.uint8
-        scale_options = {"kv_cache_sf": sf, "k_scale": SCALES[0], "v_scale": SCALES[1]}
+        scale_options = {"kv_cache_sf": sf, "k_scale": NV_SCALES[0], "v_scale": NV_SCALES[1]}
     else:
         pages = (key, value)
     ragged = route == "bf16_ragged"
@@ -263,6 +264,7 @@ def _attention_case(case: dict[str, int], route: str, measure: bool) -> dict[str
     equal = bool(torch.isclose(outputs[0], outputs[1], atol=ROUTE_ATOL, rtol=ROUTE_RTOL).all().item())
     finite = bool(torch.isfinite(outputs[0]).all().item() and torch.isfinite(outputs[1]).all().item())
     result = {"case": case, "route": route, "passed": equal and finite,
+              "scales": FP8_SCALES if route == "fp8_paged" else NV_SCALES if route == "nvfp4_paged" else None,
               "all_outputs_finite": finite, "max_abs_error": error.max().item() if finite else None,
               "original_non_blocking": True, "candidate_non_blocking": False,
               "query_host_reused": _prefill_query_indptr(metadata, query_device) is query_host,
@@ -284,7 +286,7 @@ def _profile_scale_d2h(directory: Path) -> dict[str, Any]:
 
     directory.mkdir(exist_ok=False)
     owners, pages, sf = _nv_pages(1)
-    writer = PrevalidatedNVFP4Writer({0: pages}, {0: sf}, SCALES)
+    writer = PrevalidatedNVFP4Writer({0: pages}, {0: sf}, NV_SCALES)
     key, value = [torch.randn((32, KV_HEADS, HEAD_DIM), dtype=torch.bfloat16, device="cuda") for _ in range(2)]
     slots = torch.arange(32, dtype=torch.int64, device="cuda")
 
@@ -316,7 +318,7 @@ def _profile_scale_d2h(directory: Path) -> dict[str, Any]:
                              "d2h_copies": d2h, "all_memcpy_events": copies})
     passed = all(r["gpu_kernel_events"] > 0 and ((r["d2h_copy_events"] > 0) if r["writer"] == "public"
                                                 else (r["d2h_copy_events"] == 0)) for r in receipts)
-    return {"passed": passed, "invocations": receipts,
+    return {"passed": passed, "scales": NV_SCALES, "invocations": receipts,
             "scope": "isolated_fixed_scale_eager_writer_calls; not end-to-end attribution"}
 
 
