@@ -82,6 +82,7 @@ class FlashInferNativeKVBackend(FlashInferBackend):
         self._active_xqa_plan = None
         self._virtual_memory = virtual_memory
         self._mxfp4_graph_wrappers = {}
+        self._mxfp4_decode_planners = {}
         self._cache_format = cache_dtype
         self._cache_dtype = torch.float8_e4m3fn if cache_dtype == "fp8_e4m3" else torch.uint8
         self._fixed_scales = (key_scale, value_scale)
@@ -196,18 +197,19 @@ class FlashInferNativeKVBackend(FlashInferBackend):
                              global_override_indptr_cpu=indptr_host, **options)
 
     def _prepare_mxfp4_decode(self, metadata: AttentionMetadata, *, graph_mode: bool) -> None:
+        from xllm.python.attention.mxfp4_decode_plan import Mxfp4DecodePlanner
         from xllm.python.attention.mxfp4_flashinfer import make_mxfp4_wrapper
 
         indptr, last = metadata.paged_kv_indptr_host, metadata.paged_kv_last_page_len_host
         if indptr is None or last is None:
             raise ValueError("MXFP4 decode requires official host planner metadata")
         batch = last.numel()
-        query_indptr = torch.arange(batch + 1, dtype=torch.int32)
         if graph_mode:
             addresses = tuple(t.data_ptr() for t in (
                 metadata.paged_kv_indptr, metadata.paged_kv_indices, metadata.paged_kv_last_page_len))
             entry = self._mxfp4_graph_wrappers.get(batch)
             if entry is None:
+                query_indptr = torch.arange(batch + 1, dtype=torch.int32)
                 wrapper = make_mxfp4_wrapper(
                     self._decode_workspace, use_cuda_graph=True,
                     qo_indptr_buf=query_indptr.to(self._decode_workspace.device),
@@ -222,10 +224,14 @@ class FlashInferNativeKVBackend(FlashInferBackend):
                     raise RuntimeError("MXFP4 graph paging input addresses changed")
         else:
             wrapper = self._mxfp4_eager_decode_wrapper
-        wrapper.plan(query_indptr, indptr, metadata.paged_kv_indices, last,
-                     self.num_heads, self.num_kv_heads, self.head_dim, self.page_size,
-                     causal=True, sm_scale=self.scale, q_data_type=self.dtype,
-                     kv_data_type=torch.uint8, o_data_type=self.dtype)
+        planner = self._mxfp4_decode_planners.get(wrapper)
+        if planner is None:
+            planner = Mxfp4DecodePlanner(
+                wrapper, num_qo_heads=self.num_heads, num_kv_heads=self.num_kv_heads,
+                head_dim=self.head_dim, page_size=self.page_size, sm_scale=self.scale,
+            )
+            self._mxfp4_decode_planners[wrapper] = planner
+        planner.plan(indptr, metadata.paged_kv_indices, last)
         self._active_decode_wrapper = wrapper
 
     def execute(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, layer: Attention) -> torch.Tensor:
@@ -281,6 +287,7 @@ class FlashInferNativeKVBackend(FlashInferBackend):
             "prefill_backend": self._prefill_backend, "decode_backend": self._decode_backend,
             "prefill_query_dtype": str(self._prefill_query_dtype),
             "decode_query_dtype": str(self.dtype), "max_context_tokens": self._max_context_tokens,
+            "MXFP4_decode_planning": "native_replan_cached_query" if self._cache_format == "mxfp4" else None,
             "query_dtype": str(self.dtype), "SM90_FP4_tensor_core_compute": False,
             "full_BF16_KV_shadow": False,
             "KV_tensor_address_bytes": sum(c.key.numel() + c.value.numel() for c in self._kv_caches if c.key is not None),
