@@ -152,7 +152,11 @@ def make_mxfp4_wrapper(workspace: Any, **graph_options: Any) -> Any:
     """Construct a private JIT wrapper without changing the installed package."""
     import flashinfer
     import torch
+    from xllm.python.attention.mxfp4_decode_plan import MXFP4_DECODE_PLAN_CONTRACT
 
+    plan_source = Path(flashinfer.prefill.__file__).read_bytes()
+    if hashlib.sha256(plan_source).hexdigest() != "2ad12a8387b3f6bff192e5945769b68d90cfcab00b9eb2a8a524af8dd71a29de":
+        raise ValueError("MXFP4 wrapper requires the pinned FlashInfer Python planning contract")
     if torch.cuda.get_device_capability(workspace.device) != (9, 0):
         raise ValueError("MXFP4 FlashInfer adapter currently targets SM90 only")
     module, tensors, scalars = _load_mxfp4_module()
@@ -160,4 +164,5 @@ def make_mxfp4_wrapper(workspace: Any, **graph_options: Any) -> Any:
     wrapper._jit_module = module
     wrapper._jit_additional_tensor_names = tensors
     wrapper._jit_additional_scalar_names = scalars
+    wrapper._xllm_mxfp4_plan_contract = MXFP4_DECODE_PLAN_CONTRACT
     return wrapper
