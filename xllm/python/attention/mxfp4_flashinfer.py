@@ -77,10 +77,32 @@ def mxfp4_jit_spec() -> tuple[Any, list[str], list[str]]:
     from flashinfer.jit import env
     from flashinfer.jit.attention.modules import gen_customize_batch_prefill_module
 
-    original = Path(flashinfer.__file__).parent / "data/include/flashinfer/attention/prefill.cuh"
+    from xllm.python.attention.mxfp4_graph_sources import (
+        configure_graph_sources, graph_source_fingerprint, read_graph_sources,
+    )
+
+    package = Path(flashinfer.__file__).parent
+    original = package / "data/include/flashinfer/attention/prefill.cuh"
     adapted = _adapt_header(original.read_bytes())
-    fingerprint = hashlib.sha256(adapted.encode()).hexdigest()[:16]
-    name = "xllm_mxfp4_bf16_d256_" + fingerprint
+    scheduler, binding = read_graph_sources(package, env.FLASHINFER_CSRC_DIR)
+    tensors = ["maybe_custom_mask", "maybe_mask_indptr", "maybe_alibi_slopes",
+               "maybe_prefix_len_ptr", "maybe_token_pos_in_items_ptr", "maybe_max_item_len_ptr",
+               "maybe_k_cache_sf", "maybe_v_cache_sf"]
+    tensor_types = ["uint8_t", "int32_t", "float", "uint32_t", "uint16_t", "uint16_t", "uint8_t", "uint8_t"]
+    scalars = ["logits_soft_cap", "sm_scale", "rope_rcp_scale", "rope_rcp_theta", "token_pos_in_items_len"]
+    parameters = dict(
+        backend="fa2", dtype_q=torch.bfloat16, dtype_kv=torch.uint8,
+        dtype_o=torch.bfloat16, idtype=torch.int32, head_dim_qk=256, head_dim_vo=256,
+        additional_tensor_names=tensors, additional_tensor_dtypes=tensor_types,
+        additional_scalar_names=scalars,
+        additional_scalar_dtypes=["double", "double", "double", "double", "int64_t"],
+        variant_name="DefaultAttention<use_custom_mask, false, false, false>",
+        variant_decl="#include<flashinfer/attention/variants.cuh>",
+        pos_encoding_mode=0, use_sliding_window=False, use_logits_soft_cap=False,
+        use_fp16_qk_reduction=False, fp8_enabled=False,
+    )
+    fingerprint = graph_source_fingerprint(adapted, scheduler, binding, parameters)
+    name = "xllm_mxfp4_bf16_d256_graph_" + fingerprint
     directory = env.FLASHINFER_GEN_SRC_DIR / name
     directory.mkdir(parents=True, exist_ok=True)
     header = directory / "mxfp4_prefill.cuh"
@@ -88,17 +110,8 @@ def mxfp4_jit_spec() -> tuple[Any, list[str], list[str]]:
         header.write_text(adapted)
     elif header.read_text() != adapted:
         raise ValueError("MXFP4 private JIT header changed")
-    tensors = ["maybe_custom_mask", "maybe_mask_indptr", "maybe_alibi_slopes",
-               "maybe_prefix_len_ptr", "maybe_token_pos_in_items_ptr", "maybe_max_item_len_ptr",
-               "maybe_k_cache_sf", "maybe_v_cache_sf"]
-    tensor_types = ["uint8_t", "int32_t", "float", "uint32_t", "uint16_t", "uint16_t", "uint8_t", "uint8_t"]
-    scalars = ["logits_soft_cap", "sm_scale", "rope_rcp_scale", "rope_rcp_theta", "token_pos_in_items_len"]
-    spec = gen_customize_batch_prefill_module(
-        "fa2", name, torch.bfloat16, torch.uint8, torch.bfloat16, torch.int32, 256, 256,
-        tensors, tensor_types, scalars, ["double", "double", "double", "double", "int64_t"],
-        "DefaultAttention<use_custom_mask, false, false, false>",
-        "#include<flashinfer/attention/variants.cuh>",
-    )
+    spec = gen_customize_batch_prefill_module(uri=name, **parameters)
+    configure_graph_sources(spec, directory, scheduler, binding)
     spec.extra_cuda_cflags = [*(spec.extra_cuda_cflags or []), "-include", str(header)]
     return spec, tensors, scalars
 
