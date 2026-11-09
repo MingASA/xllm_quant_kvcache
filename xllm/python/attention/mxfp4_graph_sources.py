@@ -29,6 +29,7 @@ PINNED_FLASHINFER_COMMIT = "8bc3b578027791336c6ae87db5c9d76f82cef8bc"
 UPSTREAM_GRAPH_FIX_COMMIT = "4c2b8a7ed4af902df94e83260c8c12e8d3f71872"
 
 _SOURCE_SHA256 = {
+    "include/flashinfer/attention/prefill.cuh": "f93cbea96e3a723254c15f5a52d6dd4c13e3892e88eb9b9fed1c0c0048c7d710",
     "include/flashinfer/attention/scheduler.cuh": "a11a39aea393cdb380ad9439aac9170cd96849d7426ebbb920c5c8cdadfcc575",
     "csrc/batch_prefill.cu": "6bed87bda87519440d2cc31ba7c349b6068f3458ad8a16d4187829930f83df82",
     "csrc/batch_prefill_jit_binding.cu": "dad0d81c55b92f71a634cb8240dcb0d150aa6ffd391ef3ef5d87b6207eeca4fc",
@@ -127,12 +128,30 @@ def graph_source_fingerprint(
     prefill: str, scheduler: str, binding: str, parameters: dict[str, Any]
 ) -> str:
     """Identify the complete pinned source/template and specialization contract."""
-    payload = json.dumps(
-        {"inputs": _SOURCE_SHA256, "parameters": parameters,
-         "prefill": prefill, "scheduler": scheduler, "binding": binding},
-        sort_keys=True, separators=(",", ":"), default=str,
-    )
-    return hashlib.sha256(payload.encode()).hexdigest()
+    return graph_source_manifest(prefill, scheduler, binding, parameters)["fingerprint"]
+
+
+def graph_source_manifest(
+    prefill: str, scheduler: str, binding: str, parameters: dict[str, Any]
+) -> dict[str, Any]:
+    """Return reproducible build identity without a source-commit hash cycle."""
+    manifest = {
+        "schema": "xllm_mxfp4_graph_sources_v1",
+        "pinned_flashinfer_commit": PINNED_FLASHINFER_COMMIT,
+        "upstream_graph_fix_commit": UPSTREAM_GRAPH_FIX_COMMIT,
+        "inputs": dict(_SOURCE_SHA256),
+        "parameters": json.loads(json.dumps(parameters, default=str)),
+        "patched_sources": {
+            name: hashlib.sha256(text.encode()).hexdigest()
+            for name, text in (("mxfp4_prefill.cuh", prefill),
+                               ("mxfp4_scheduler.cuh", scheduler),
+                               ("mxfp4_batch_prefill.cu", binding))
+        },
+    }
+    canonical = json.dumps(manifest, sort_keys=True, separators=(",", ":"))
+    fingerprint = hashlib.sha256(canonical.encode()).hexdigest()
+    return {**manifest, "fingerprint": fingerprint,
+            "module_name": "xllm_mxfp4_bf16_d256_graph_" + fingerprint}
 
 
 def _write_private_source(path: Path, source: str) -> None:

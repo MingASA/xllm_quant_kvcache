@@ -70,21 +70,23 @@ __device__ __forceinline__ float mxfp4_scale(uint8_t code) {
     return text
 
 
-def mxfp4_jit_spec() -> tuple[Any, list[str], list[str]]:
-    """Create the pinned SM90 spec; CPU-only offline precompilation is allowed."""
-    import flashinfer
+def _jit_inputs(
+    package: Path | None = None, csrc: Path | None = None,
+) -> tuple[str, str, str, dict[str, Any]]:
     import torch
-    from flashinfer.jit import env
-    from flashinfer.jit.attention.modules import gen_customize_batch_prefill_module
+    from xllm.python.attention.mxfp4_graph_sources import read_graph_sources
 
-    from xllm.python.attention.mxfp4_graph_sources import (
-        configure_graph_sources, graph_source_fingerprint, read_graph_sources,
-    )
+    if package is None:
+        import flashinfer
+        from flashinfer.jit import env
 
-    package = Path(flashinfer.__file__).parent
+        package = Path(flashinfer.__file__).parent
+        csrc = env.FLASHINFER_CSRC_DIR
+    elif csrc is None:
+        csrc = package / "data/csrc"
     original = package / "data/include/flashinfer/attention/prefill.cuh"
     adapted = _adapt_header(original.read_bytes())
-    scheduler, binding = read_graph_sources(package, env.FLASHINFER_CSRC_DIR)
+    scheduler, binding = read_graph_sources(package, csrc)
     tensors = ["maybe_custom_mask", "maybe_mask_indptr", "maybe_alibi_slopes",
                "maybe_prefix_len_ptr", "maybe_token_pos_in_items_ptr", "maybe_max_item_len_ptr",
                "maybe_k_cache_sf", "maybe_v_cache_sf"]
@@ -101,8 +103,28 @@ def mxfp4_jit_spec() -> tuple[Any, list[str], list[str]]:
         pos_encoding_mode=0, use_sliding_window=False, use_logits_soft_cap=False,
         use_fp16_qk_reduction=False, fp8_enabled=False,
     )
-    fingerprint = graph_source_fingerprint(adapted, scheduler, binding, parameters)
-    name = "xllm_mxfp4_bf16_d256_graph_" + fingerprint
+    return adapted, scheduler, binding, parameters
+
+
+def mxfp4_jit_source_manifest(
+    package: Path | None = None, csrc: Path | None = None,
+) -> dict[str, Any]:
+    """Identify validated pinned inputs without generating or compiling sources."""
+    from xllm.python.attention.mxfp4_graph_sources import graph_source_manifest
+
+    return graph_source_manifest(*_jit_inputs(package, csrc))
+
+
+def mxfp4_jit_spec() -> tuple[Any, list[str], list[str]]:
+    """Create the pinned SM90 spec; CPU-only offline precompilation is allowed."""
+    from flashinfer.jit import env
+    from flashinfer.jit.attention.modules import gen_customize_batch_prefill_module
+    from xllm.python.attention.mxfp4_graph_sources import (
+        configure_graph_sources, graph_source_manifest,
+    )
+
+    adapted, scheduler, binding, parameters = _jit_inputs()
+    name = graph_source_manifest(adapted, scheduler, binding, parameters)["module_name"]
     directory = env.FLASHINFER_GEN_SRC_DIR / name
     directory.mkdir(parents=True, exist_ok=True)
     header = directory / "mxfp4_prefill.cuh"
@@ -113,7 +135,7 @@ def mxfp4_jit_spec() -> tuple[Any, list[str], list[str]]:
     spec = gen_customize_batch_prefill_module(uri=name, **parameters)
     configure_graph_sources(spec, directory, scheduler, binding)
     spec.extra_cuda_cflags = [*(spec.extra_cuda_cflags or []), "-include", str(header)]
-    return spec, tensors, scalars
+    return spec, parameters["additional_tensor_names"], parameters["additional_scalar_names"]
 
 
 @functools.cache

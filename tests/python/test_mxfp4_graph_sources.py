@@ -10,6 +10,8 @@
 """Execute the emitted host mask/binding blocks without Torch or CUDA."""
 
 import importlib.util
+import hashlib
+import json
 import os
 from pathlib import Path
 import shutil
@@ -213,3 +215,12 @@ class GraphSourcesTest(unittest.TestCase):
                 changed = sources.graph_source_fingerprint(*patches, parameters)
                 sources._SOURCE_SHA256[name] = digest
                 self.assertNotEqual(baseline, changed)
+
+    def test_manifest_hash_is_independently_reconstructible(self) -> None:
+        manifest = sources.graph_source_manifest("prefill", "scheduler", "binding", {"dtype": "uint8"})
+        fingerprint = manifest.pop("fingerprint")
+        module_name = manifest.pop("module_name")
+        canonical = json.dumps(manifest, sort_keys=True, separators=(",", ":"))
+        self.assertEqual(hashlib.sha256(canonical.encode()).hexdigest(), fingerprint)
+        self.assertEqual(module_name, "xllm_mxfp4_bf16_d256_graph_" + fingerprint)
+        self.assertIn("include/flashinfer/attention/prefill.cuh", manifest["inputs"])
