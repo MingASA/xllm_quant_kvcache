@@ -32,6 +32,7 @@ limitations under the License.
 #include "core/kv_cache/layout/deepseek_v4_cache_policy.h"
 #include "core/kv_cache/layout/kpool_cache_policy.h"
 #include "core/kv_cache/layout/kv_cache_shape.h"
+#include "core/kv_cache/layout/native_kv_cache_format.h"
 #include "core/layers/common/dsa_topk_share_plan.h"
 #include "core/platform/platform.h"
 #include "core/runtime/options.h"
@@ -94,7 +95,8 @@ int64_t kv_slot_size(const ModelArgs& model_args,
 
 int64_t scale_slot_size(const ModelArgs& model_args,
                         const KVCacheEstimateOptions& options) {
-  if (options.kv_cache_dtype == "auto") {
+  if (options.kv_cache_dtype == "auto" ||
+      is_native_kv_cache_format(options.kv_cache_dtype)) {
     return 0;
   }
   if (model_args.enable_mla()) {
@@ -851,6 +853,15 @@ KVCacheCapacity estimate_kv_cache_capacity(
            "target";
   }
 
+  if (is_native_kv_cache_format(options.kv_cache_dtype)) {
+    CHECK(options.dtype == torch::kBFloat16 ||
+          options.dtype == torch::kFloat16);
+    CHECK(!model_args.enable_mla() && model_args.index_n_heads() == 0)
+        << "Native CUDA KV formats require standard full attention.";
+    CHECK(model_args.head_dim() == 128 || model_args.head_dim() == 256);
+    CHECK_EQ(get_kv_cache_storage_head_dim(model_args), model_args.head_dim())
+        << "Native quantized KV does not support padded head dimensions.";
+  }
   const int64_t dtype_size = static_cast<int64_t>(
       torch::scalarTypeToTypeMeta(options.dtype).itemsize());
   const int64_t cache_dtype_size =

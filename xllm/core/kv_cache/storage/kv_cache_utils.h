@@ -60,6 +60,7 @@ struct KVCacheCreateOptions {
   PROPERTY(torch::Device, device) = torch::Device(torch::kCPU);
   // kvcache dtype for key/value cache, index cache
   PROPERTY(torch::ScalarType, dtype) = torch::kBFloat16;
+  PROPERTY(std::string, native_kv_cache_dtype) = "auto";
   // ssm dtype for linear attention layers
   PROPERTY(torch::ScalarType, ssm_dtype) = torch::kBFloat16;
   PROPERTY(double, host_blocks_factor) = 0.0;

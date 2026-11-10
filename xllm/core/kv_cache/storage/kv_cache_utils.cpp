@@ -28,6 +28,7 @@ limitations under the License.
 
 #include "core/framework/config/kv_cache_config.h"
 #include "core/kv_cache/layout/kv_cache_shape.h"
+#include "core/kv_cache/layout/native_kv_cache_format.h"
 #include "util/utils.h"
 #if defined(USE_MLU)
 #include "platform/mlu/mlu_host_memory.h"
@@ -254,16 +255,20 @@ KVCacheTensors create_kv_cache_tensors(
                                    create_options.dtype());
   }
 #else
+  const torch::ScalarType cache_dtype =
+      is_native_kv_cache_format(create_options.native_kv_cache_dtype())
+          ? torch::kByte
+          : create_options.dtype();
   tensors.key_cache = alloc_cache_tensor(KVCacheTensorRole::KEY,
                                          kv_cache_shape.key_cache_shape(),
-                                         create_options.dtype(),
+                                         cache_dtype,
                                          create_options);
 
   // deepseek_v3 model has no value cache on mlu device
   if (!kv_cache_shape.value_cache_shape().empty()) {
     tensors.value_cache = alloc_cache_tensor(KVCacheTensorRole::VALUE,
                                              kv_cache_shape.value_cache_shape(),
-                                             create_options.dtype(),
+                                             cache_dtype,
                                              create_options);
   }
 #endif
