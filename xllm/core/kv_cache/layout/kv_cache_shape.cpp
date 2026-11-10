@@ -21,6 +21,7 @@ limitations under the License.
 #include <cstddef>
 #include <utility>
 
+#include "core/kv_cache/layout/native_kv_cache_format.h"
 #include "core/kv_cache/storage/kv_cache_utils.h"
 #include "core/platform/platform.h"
 #include "util/utils.h"
@@ -380,7 +381,9 @@ void KVCacheShape::init_key_cache_shape(const KVCacheCapacity& kv_cache_cap,
       std::vector<int64_t>{kv_cache_cap.n_blocks(),
                            kv_cache_cap.block_size(),
                            local_kv_head_count,
-                           get_kv_cache_storage_head_dim(model_args)};
+                           native_kv_cache_storage_head_dim(
+                               kv_cache_cap.native_kv_cache_dtype(),
+                               get_kv_cache_storage_head_dim(model_args))};
 }
 
 void KVCacheShape::init_value_cache_shape(const KVCacheCapacity& kv_cache_cap,
@@ -416,7 +419,9 @@ void KVCacheShape::init_value_cache_shape(const KVCacheCapacity& kv_cache_cap,
       std::vector<int64_t>{kv_cache_cap.n_blocks(),
                            kv_cache_cap.block_size(),
                            local_kv_head_count,
-                           get_kv_cache_storage_head_dim(model_args)};
+                           native_kv_cache_storage_head_dim(
+                               kv_cache_cap.native_kv_cache_dtype(),
+                               get_kv_cache_storage_head_dim(model_args))};
 }
 
 void KVCacheShape::init_mla_packed_c8_shape(const KVCacheCapacity& kv_cache_cap,

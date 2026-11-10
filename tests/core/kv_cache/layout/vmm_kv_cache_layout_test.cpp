@@ -28,6 +28,25 @@ namespace {
 
 constexpr size_t kPageSize = 2 * 1024 * 1024;
 
+TEST(VmmKVCacheLayoutTest, NativeBytesAndScalesFitThePhysicalBudget) {
+  ModelArgs args;
+  args.n_layers(16).head_dim(256).n_heads(24).n_kv_heads(4);
+  KVCacheCapacity capacity;
+  capacity.n_blocks(512).block_size(128).n_layers(16);
+  capacity.native_kv_cache_dtype("auto");
+  VmmKVCacheLayout bf16(capacity, args, 1, torch::kBFloat16);
+  EXPECT_EQ(bf16.block_capacity(576, kPageSize), 144U);
+  capacity.native_kv_cache_dtype("fp8_e4m3");
+  VmmKVCacheLayout fp8(capacity, args, 1, torch::kBFloat16);
+  EXPECT_EQ(fp8.block_capacity(576, kPageSize), 288U);
+  capacity.native_kv_cache_dtype("nvfp4");
+  VmmKVCacheLayout nvfp4(capacity, args, 1, torch::kBFloat16);
+  EXPECT_EQ(nvfp4.physical_pages(kPageSize), 288U);
+  EXPECT_EQ(nvfp4.block_capacity(287, kPageSize), 0U);
+  EXPECT_EQ(nvfp4.block_capacity(575, kPageSize), 256U);
+  EXPECT_EQ(nvfp4.block_capacity(576, kPageSize), 512U);
+}
+
 TEST(VmmKVCacheLayoutTest, CombinesDifferentTargetAndDraftTensorWidths) {
   ModelArgs target_args;
   target_args.n_layers(8).head_dim(128).n_heads(4).n_kv_heads(4);

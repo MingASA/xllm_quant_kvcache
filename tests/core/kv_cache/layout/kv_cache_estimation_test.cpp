@@ -69,18 +69,20 @@ KVCacheEstimateOptions make_estimate_options() {
 
 }  // namespace
 
-TEST(KVCacheEstimationTest, NativeFP8BudgetsOnlyResidentBytes) {
+TEST(KVCacheEstimationTest, NativeFormatsBudgetOnlyResidentBytes) {
   ModelArgs args;
   args.n_layers(4).head_dim(256).n_heads(24).n_kv_heads(4);
   KVCacheEstimateOptions options = make_estimate_options();
   options.dtype = torch::kBFloat16;
   options.cache_size_in_bytes = 64 * 1024 * 1024;
   options.n_local_kv_heads = 4;
-  for (const std::string format : {"auto", "fp8_e4m3"}) {
+  for (const std::string format : {"auto", "fp8_e4m3", "nvfp4"}) {
     SCOPED_TRACE(format);
     options.kv_cache_dtype = format;
     const KVCacheCapacity capacity = estimate_kv_cache_capacity(args, options);
-    const int64_t bytes_per_token = format == "auto" ? 4096 : 2048;
+    const int64_t bytes_per_token = format == "auto"       ? 4096
+                                    : format == "fp8_e4m3" ? 2048
+                                                           : 1152;
     EXPECT_EQ(capacity.slot_size(), bytes_per_token);
     EXPECT_EQ(capacity.scale_slot_size(), 0);
     EXPECT_LE(capacity.n_blocks() * options.block_size * 4 * bytes_per_token,

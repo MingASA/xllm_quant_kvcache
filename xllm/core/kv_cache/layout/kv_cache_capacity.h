@@ -16,6 +16,7 @@ limitations under the License.
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 #include "common/macros.h"
 #include "core/kv_cache/layout/cache_layout_types.h"
@@ -28,6 +29,7 @@ class KVCacheCapacity final {
   PROPERTY(int64_t, cache_size_in_bytes) = 0;
   PROPERTY(int64_t, block_size) = 0;
   PROPERTY(int64_t, slot_size) = 0;
+  PROPERTY(std::string, native_kv_cache_dtype) = "auto";
 
   PROPERTY(KPoolCacheLayout, kpool_layout) = default_kpool_layout();
   PROPERTY(int64_t, kpool_tail_len) = 0;

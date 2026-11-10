@@ -66,6 +66,22 @@ TEST(VirtualKVCachePageLayoutTest, SymmetricCacheKeepsOnePagePerTensor) {
   EXPECT_EQ(layout.pages_per_tensor(1), 1);
 }
 
+TEST(VirtualKVCachePageLayoutTest, OddByteFactorsMapWholeHardwarePages) {
+  constexpr size_t kBlockBytes = 128 * 4 * 144;
+  const VirtualKVCachePageLayout layout({kBlockBytes, kBlockBytes}, kPageSize);
+  EXPECT_EQ(layout.block_bytes(), 8192U);
+  EXPECT_EQ(layout.blocks_per_page(), 256U);
+  EXPECT_EQ(layout.pages_per_tensor(0), 9U);
+  EXPECT_EQ(layout.physical_pages({16, 16}), 288U);
+  EXPECT_EQ(layout.block_capacity(287, {16, 16}), 0U);
+  EXPECT_EQ(layout.block_capacity(288, {16, 16}), 256U);
+  for (size_t block : {size_t{0}, size_t{255}, size_t{256}, size_t{511}}) {
+    const size_t group = block / layout.blocks_per_page();
+    EXPECT_GE(block * kBlockBytes, group * 9 * kPageSize);
+    EXPECT_LE((block + 1) * kBlockBytes, (group + 1) * 9 * kPageSize);
+  }
+}
+
 TEST(VirtualKVCachePageLayoutTest, TargetAndDraftShareOneLogicalPageGeometry) {
   // The target alone covers 16 blocks per page and the draft covers 64.
   // Their shared group must cover the same 64 block IDs in every tensor.
@@ -152,11 +168,6 @@ TEST(VirtualKVCachePageLayoutTest, NzAndNdLayoutsHaveIdenticalBlockBytes) {
                                                          /*element_size=*/2),
             VirtualKVCachePageLayout::tensor_block_bytes({129, 32, 128, 16},
                                                          /*element_size=*/2));
-}
-
-TEST(VirtualKVCachePageLayoutTest, RejectsBlocksThatCannotTileHardwarePages) {
-  EXPECT_DEATH((VirtualKVCachePageLayout({72 * 1024, 72 * 1024}, kPageSize)),
-               "common block size");
 }
 
 }  // namespace

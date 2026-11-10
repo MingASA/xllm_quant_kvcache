@@ -27,7 +27,7 @@ def test_fp8_aliases_preserve_owner_and_whole_page_copy() -> None:
     owner_v = torch.zeros_like(owner_k)
     linear = SimpleNamespace(key=None, value=None)
     caches = [linear, SimpleNamespace(key=owner_k, value=owner_v)]
-    backend = SimpleNamespace(head_dim=256, num_kv_heads=4, _decode_workspace=torch.empty(1),
+    backend = SimpleNamespace(head_dim=256, num_kv_heads=4, _cache_format="fp8_e4m3", _decode_workspace=torch.empty(1),
                               native_kv_runtime_info=lambda: {})
     bind(backend, caches)
     key, value = backend._pages[1]
@@ -56,12 +56,12 @@ def test_fp8_binding_rejects_wrong_physical_storage(kind: str) -> None:
     elif kind == "strides":
         key = key.transpose(0, 1)
     value = None if kind == "missing_value" else key.clone()
-    backend = SimpleNamespace(head_dim=256, num_kv_heads=4, _decode_workspace=torch.empty(1))
+    backend = SimpleNamespace(head_dim=256, num_kv_heads=4, _cache_format="fp8_e4m3", _decode_workspace=torch.empty(1))
     with pytest.raises(ValueError, match="contiguous resident byte pages"):
         bind(backend, [SimpleNamespace(key=key, value=value)])
 
 
-@pytest.mark.parametrize("cache_dtype", ["nvfp4", "mxfp4", "fp8_e5m2"])
+@pytest.mark.parametrize("cache_dtype", ["mxfp4", "fp8_e5m2"])
 def test_pr_backend_rejects_other_formats(cache_dtype: str) -> None:
     constructor = _load_method("__init__")
     with pytest.raises(ValueError, match="fp8_e4m3"):

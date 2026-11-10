@@ -571,16 +571,16 @@ bool WorkerImpl::allocate_kv_cache_storage(
 #if defined(USE_CUDA)
     CHECK(ModelConfig::is_python_model_impl(
         ModelConfig::get_instance().model_impl()))
-        << "Native FP8 KV requires the CUDA Python Executor.";
+        << "Native quantized KV requires the CUDA Python Executor.";
     CHECK_LE(options_.host_blocks_factor(), 1.0)
-        << "Native FP8 KV host offload is not qualified.";
+        << "Native quantized KV host offload is not qualified.";
     CHECK(!options_.enable_kvcache_store())
-        << "Native FP8 KV external stores are not qualified.";
+        << "Native quantized KV external stores are not qualified.";
     CHECK(!options_.enable_disagg_pd())
         << "Native compressed KV transfer is not qualified for PD "
            "disaggregation.";
 #else
-    LOG(FATAL) << "Native FP8 KV is supported only on CUDA.";
+    LOG(FATAL) << "Native quantized KV is supported only on CUDA.";
 #endif
   }
 
