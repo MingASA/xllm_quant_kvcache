@@ -12,7 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Resident FP8 KV pages on the official FlashInfer execution contract."""
+"""Native compressed KV pages on the official FlashInfer execution contract.
+
+OCP MXFP4 stores E2M1 payload and E8M0 block-32 scales per byte page. Strided aliases
+are consumed by FlashInfer directly; prefix copies and VMM retain one K/V ABI.
+"""
 
 from __future__ import annotations
 
@@ -41,8 +45,8 @@ class FlashInferNativeKVBackend(FlashInferBackend):
         prefill_backend: str = "auto", decode_backend: str = "auto",
         max_context_tokens: int = 32768, virtual_memory: bool = False,
     ) -> None:
-        if cache_dtype != "fp8_e4m3":
-            raise ValueError("Native FP8 KV requires fp8_e4m3")
+        if cache_dtype not in ("fp8_e4m3", "mxfp4"):
+            raise ValueError("Native KV requires fp8_e4m3 or mxfp4")
         if device.type != "cuda" or torch.cuda.get_device_capability(device) != (9, 0):
             raise ValueError("This native compressed KV implementation targets SM90")
         if dtype not in (torch.bfloat16, torch.float16) or head_dim not in (128, 256):
@@ -53,13 +57,19 @@ class FlashInferNativeKVBackend(FlashInferBackend):
         if not all(math.isfinite(s) and limits.tiny <= s <= limits.max for s in (key_scale, value_scale)):
             raise ValueError("Native KV decode scales must be finite positive normal FP32 values")
         if prefill_backend == "auto":
-            prefill_backend = "fa3"
+            prefill_backend = "fa3" if cache_dtype == "fp8_e4m3" else "fa2"
         if decode_backend == "auto":
-            decode_backend = "xqa"
+            decode_backend = "xqa" if cache_dtype == "fp8_e4m3" and not virtual_memory else "flashinfer"
         if prefill_backend not in ("fa2", "fa3") or decode_backend not in ("flashinfer", "xqa"):
             raise ValueError("Unsupported explicit native KV prefill/decode backend")
         if virtual_memory:
             raise ValueError("Native FP8 KV requires initialized resident pages; VMM is not qualified")
+        if cache_dtype == "mxfp4" and (
+            dtype != torch.bfloat16 or head_dim != 256 or num_heads != 24 or num_kv_heads != 4
+            or sliding_window > 0 or virtual_memory or key_scale != 1.0 or value_scale != 1.0
+            or prefill_backend != "fa2" or decode_backend != "flashinfer"
+        ):
+            raise ValueError("MXFP4 requires non-VMM SM90 BF16 Q24/KV4/D256 full attention and unit global scales")
         if decode_backend == "xqa" and (virtual_memory or sliding_window > 0):
             raise ValueError("This XQA integration requires non-VMM full attention with zero-initialized resident pages")
         self._prefill_backend = prefill_backend
@@ -69,15 +79,15 @@ class FlashInferNativeKVBackend(FlashInferBackend):
         self._xqa_plans = {}
         self._active_xqa_plan = None
         self._virtual_memory = virtual_memory
+        self._mxfp4_graph_wrappers = {}
+        self._mxfp4_eager_query_indptr = {}
         self._cache_format = cache_dtype
-        self._cache_dtype = torch.float8_e4m3fn
+        self._cache_dtype = torch.float8_e4m3fn if cache_dtype == "fp8_e4m3" else torch.uint8
         self._fixed_scales = (key_scale, value_scale)
         self._pages: dict[int, tuple[torch.Tensor, torch.Tensor]] = {}
+        self._block_scales: dict[int, tuple[torch.Tensor, torch.Tensor]] = {}
         super().__init__(num_heads, num_kv_heads, head_dim, scale, sliding_window, device, dtype)
         if decode_backend == "xqa":
-            # FlashInfer requires a zeroed workspace on first use. In
-            # particular, its first 8MiB hold atomic CTA completion counters.
-            # Initialize once, before capture, without per-step clearing.
             self._decode_workspace.zero_()
         # Reuse the official workspace allocation; only the quantized planner
         # selection changes. FlashInfer's FP8 FA3 path consumes FP8 Q explicitly.
@@ -85,10 +95,17 @@ class FlashInferNativeKVBackend(FlashInferBackend):
         self._prefill_paged_wrapper = flashinfer.BatchPrefillWithPagedKVCacheWrapper(
             workspace, "NHD", backend=prefill_backend,
         )
+        if cache_dtype == "mxfp4":
+            from xllm.python.attention.mxfp4_flashinfer import make_mxfp4_wrapper
+
+            self._prefill_paged_wrapper = make_mxfp4_wrapper(workspace)
+            self._mxfp4_eager_decode_wrapper = make_mxfp4_wrapper(self._decode_workspace)
 
     def bind_kv_caches(self, kv_caches: list[LayerCache]) -> None:
-        storage_dim = self.head_dim
+        storage_dim = (self.head_dim if self._cache_format == "fp8_e4m3" else
+                       self.head_dim // 2 + self.head_dim // 32)
         pages = {}
+        block_scales = {}
         for layer_id, cache in enumerate(kv_caches):
             if cache.key is None:
                 if cache.value is not None:
@@ -99,11 +116,22 @@ class FlashInferNativeKVBackend(FlashInferBackend):
                 if (tensor is None or tensor.dtype != torch.uint8 or tensor.device != self._decode_workspace.device
                         or tensor.ndim != 4 or tuple(tensor.shape) != expected_shape or not tensor.is_contiguous()):
                     raise ValueError("Native KV requires contiguous resident byte pages with the format's physical head dimension")
-            pages[layer_id] = (cache.key.view(torch.float8_e4m3fn), cache.value.view(torch.float8_e4m3fn))
+            if self._cache_format == "fp8_e4m3":
+                pages[layer_id] = (cache.key.view(torch.float8_e4m3fn), cache.value.view(torch.float8_e4m3fn))
+            elif self._cache_format == "mxfp4":
+                from xllm.python.attention.mxfp4_writer import mxfp4_page_views
+
+                if cache.key.shape[1] != 128:
+                    raise ValueError("MXFP4 currently qualifies page size 128 only")
+                key, key_scales = mxfp4_page_views(cache.key, self.head_dim)
+                value, value_scales = mxfp4_page_views(cache.value, self.head_dim)
+                pages[layer_id] = (key, value)
+                block_scales[layer_id] = (key_scales, value_scales)
         if not pages:
             raise ValueError("Native KV requires full-attention resident pages")
         self._kv_caches = kv_caches
         self._pages = pages
+        self._block_scales = block_scales
         logger.info("Native KV backend bound: %s", json.dumps(self.native_kv_runtime_info(), sort_keys=True))
 
     def prepare(self, metadata: AttentionMetadata, *, graph_mode: bool = False) -> None:
@@ -119,6 +147,9 @@ class FlashInferNativeKVBackend(FlashInferBackend):
                 metadata.paged_kv_last_page_len, self.num_heads, self.num_kv_heads,
                 self.head_dim, self.page_size, causal=True, **prefill_options,
             )
+            return
+        if self._cache_format == "mxfp4":
+            self._prepare_mxfp4_decode(metadata, graph_mode=graph_mode)
             return
         if self._decode_backend == "xqa":
             from xllm.python.attention.xqa_decode import XQADecodePlan
@@ -156,6 +187,55 @@ class FlashInferNativeKVBackend(FlashInferBackend):
                              self.num_heads, self.num_kv_heads, self.head_dim, self.page_size,
                              global_override_indptr_cpu=indptr_host, **options)
 
+    def _prepare_mxfp4_decode(self, metadata: AttentionMetadata, *, graph_mode: bool) -> None:
+        from xllm.python.attention.mxfp4_flashinfer import make_mxfp4_wrapper
+
+        if not graph_mode:
+            # General PyAttentionMetadataView exposes device page CSR only.
+            # The full planner reads that authoritative metadata; logical KV
+            # lengths cannot reconstruct potentially overallocated page rows.
+            batch = metadata.paged_kv_last_page_len.numel()
+            query = self._mxfp4_eager_query_indptr.get(batch)
+            if query is None:
+                query = torch.arange(batch + 1, dtype=torch.int32)
+                self._mxfp4_eager_query_indptr[batch] = query
+            wrapper = self._mxfp4_eager_decode_wrapper
+            wrapper.plan(query, metadata.paged_kv_indptr, metadata.paged_kv_indices,
+                         metadata.paged_kv_last_page_len, self.num_heads, self.num_kv_heads,
+                         self.head_dim, self.page_size, causal=True, sm_scale=self.scale,
+                         q_data_type=self.dtype, kv_data_type=torch.uint8, o_data_type=self.dtype)
+            self._active_decode_wrapper = wrapper
+            return
+        indptr, last = metadata.paged_kv_indptr_host, metadata.paged_kv_last_page_len_host
+        if indptr is None or last is None:
+            raise ValueError("MXFP4 decode requires official host planner metadata")
+        batch = last.numel()
+        addresses = tuple(t.data_ptr() for t in (
+            metadata.paged_kv_indptr, metadata.paged_kv_indices, metadata.paged_kv_last_page_len))
+        entry = self._mxfp4_graph_wrappers.get(batch)
+        if entry is None:
+            query_indptr = torch.arange(batch + 1, dtype=torch.int32)
+            wrapper = make_mxfp4_wrapper(
+                self._decode_workspace, use_cuda_graph=True,
+                qo_indptr_buf=query_indptr.to(self._decode_workspace.device),
+                paged_kv_indptr_buf=metadata.paged_kv_indptr,
+                paged_kv_indices_buf=metadata.paged_kv_indices,
+                paged_kv_last_page_len_buf=metadata.paged_kv_last_page_len,
+            )
+            self._mxfp4_graph_wrappers[batch] = (addresses, wrapper, query_indptr)
+        else:
+            prior, wrapper, query_indptr = entry
+            if prior != addresses:
+                raise RuntimeError("MXFP4 graph paging input addresses changed")
+        # Retain the upstream full planner: the experimental direct replan did
+        # not pass the frozen performance gate. Refresh all physical page
+        # metadata and the repaired valid-task mask on every preparation.
+        wrapper.plan(query_indptr, indptr, metadata.paged_kv_indices, last,
+                     self.num_heads, self.num_kv_heads, self.head_dim, self.page_size,
+                     causal=True, sm_scale=self.scale, q_data_type=self.dtype,
+                     kv_data_type=torch.uint8, o_data_type=self.dtype)
+        self._active_decode_wrapper = wrapper
+
     def execute(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, layer: Attention) -> torch.Tensor:
         metadata = self._metadata
         if metadata is None:
@@ -163,8 +243,15 @@ class FlashInferNativeKVBackend(FlashInferBackend):
         key = k.view(-1, self.num_kv_heads, self.head_dim)
         value = v.view(-1, self.num_kv_heads, self.head_dim)
         pages = self._pages[layer.layer_id]
-        write_fp8_kv(key, value, metadata.slot_mapping, pages, self._fixed_scales)
-        scale_options = {}
+        if self._cache_format == "fp8_e4m3":
+            write_fp8_kv(key, value, metadata.slot_mapping, pages, self._fixed_scales)
+            scale_options = {}
+        elif self._cache_format == "mxfp4":
+            from xllm.python.attention.mxfp4_writer import write_mxfp4_kv
+
+            scales = self._block_scales[layer.layer_id]
+            write_mxfp4_kv(key, value, metadata.slot_mapping, pages, scales)
+            scale_options = {"kv_cache_sf": scales}
         prefill = metadata.is_prefill or metadata.is_chunked_prefill
         query = q.view(-1, self.num_heads, self.head_dim)
         if not prefill and self._decode_backend == "xqa":
@@ -183,15 +270,20 @@ class FlashInferNativeKVBackend(FlashInferBackend):
     def native_kv_runtime_info(self) -> dict:
         return {
             "kv_cache_dtype": self._cache_format,
-            "resident_layout": "NHD",
+            "resident_layout": ("NHD" if self._cache_format == "fp8_e4m3" else
+                                "NHD_page_packed_E2M1_then_E8M0_block32"),
             "k_scale": self._fixed_scales[0], "v_scale": self._fixed_scales[1],
-            "writer": "fused_triton_quantize_scatter",
+            "writer": ("fused_triton_quantize_scatter" if self._cache_format == "fp8_e4m3" else
+                       "triton_OCP_MXFP4_block32_E8M0_slot_writer"),
+            "mxfp4_attention_adapter": self._cache_format == "mxfp4",
+            "global_BF16_history_workspace_bytes": 0,
             "prefill_backend": self._prefill_backend, "decode_backend": self._decode_backend,
             "prefill_query_dtype": str(self._prefill_query_dtype),
             "decode_query_dtype": str(self.dtype), "max_context_tokens": self._max_context_tokens,
+            "MXFP4_decode_planning": "Graph_full_plan_eager_full_plan_cached_query" if self._cache_format == "mxfp4" else None,
             "xqa_workspace_initialized": self._decode_backend == "xqa",
-            "query_dtype": str(self.dtype),
             "mixed_FP8_decode": None,
+            "query_dtype": str(self.dtype), "SM90_FP4_tensor_core_compute": False,
             "full_BF16_KV_shadow": False,
             "KV_tensor_address_bytes": sum(c.key.numel() + c.value.numel() for c in self._kv_caches if c.key is not None),
             "VMM_virtual_address_capacity_not_residency": self._virtual_memory,

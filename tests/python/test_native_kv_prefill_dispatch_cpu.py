@@ -87,7 +87,7 @@ class NativeKVPrefillDispatchTest(unittest.TestCase):
                     paged_kv_last_page_len=SimpleNamespace(numel=lambda: 2),
                 )
                 backend = SimpleNamespace(
-                    sliding_window=0, scale=256**-0.5, dtype="BF16", _cache_dtype="FP8",
+                    sliding_window=0, scale=256**-0.5, dtype="BF16", _cache_dtype="FP8", _cache_format="fp8_e4m3",
                     _decode_backend="xqa", _xqa_plans={(graph_mode, 2): plan},
                 )
                 prepare(backend, metadata, graph_mode=graph_mode)

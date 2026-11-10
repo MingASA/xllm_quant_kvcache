@@ -59,7 +59,8 @@ int64_t kv_cache_dtype_size(const std::string& kv_cache_dtype,
   if (kv_cache_dtype == "int8") {
     return 1;
   }
-  if (kv_cache_dtype == "fp8_e4m3" || kv_cache_dtype == "fp8_e5m2") {
+  if (kv_cache_dtype == "fp8_e4m3" || kv_cache_dtype == "fp8_e5m2" ||
+      kv_cache_dtype == "mxfp4") {
     return 1;
   }
   return model_dtype_size;
@@ -89,7 +90,10 @@ int64_t kv_slot_size(const ModelArgs& model_args,
            (model_args.kv_lora_rank() + model_args.qk_rope_head_dim());
   }
 
-  return 2 * cache_dtype_size * get_kv_cache_storage_head_dim(model_args) *
+  return 2 * cache_dtype_size *
+         native_kv_cache_storage_head_dim(
+             options.kv_cache_dtype,
+             get_kv_cache_storage_head_dim(model_args)) *
          options.n_local_kv_heads;
 }
 
@@ -861,6 +865,7 @@ KVCacheCapacity estimate_kv_cache_capacity(
     CHECK(model_args.head_dim() == 128 || model_args.head_dim() == 256);
     CHECK_EQ(get_kv_cache_storage_head_dim(model_args), model_args.head_dim())
         << "Native quantized KV does not support padded head dimensions.";
+    kv_cache_cap.native_kv_cache_dtype(options.kv_cache_dtype);
   }
   const int64_t dtype_size = static_cast<int64_t>(
       torch::scalarTypeToTypeMeta(options.dtype).itemsize());

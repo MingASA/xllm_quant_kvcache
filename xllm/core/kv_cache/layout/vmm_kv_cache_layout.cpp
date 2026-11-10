@@ -20,6 +20,7 @@ limitations under the License.
 #include "core/kv_cache/layout/kv_cache_capacity.h"
 #include "core/kv_cache/layout/kv_cache_estimation.h"
 #include "core/kv_cache/layout/kv_cache_shape.h"
+#include "core/kv_cache/layout/native_kv_cache_format.h"
 #include "core/kv_cache/storage/kv_cache_utils.h"
 
 namespace xllm {
@@ -57,7 +58,10 @@ VmmKVCacheLayout::VmmKVCacheLayout(const KVCacheCapacity& capacity,
   }
   CHECK_GT(full_attention_layers, 0)
       << "Virtual memory requires at least one full-attention layer";
-  const size_t element_size = torch::elementSize(dtype);
+  const size_t element_size =
+      is_native_kv_cache_format(capacity.native_kv_cache_dtype())
+          ? 1
+          : torch::elementSize(dtype);
   tensor_block_bytes_.reserve(3);
   tensor_counts_.reserve(3);
   tensor_block_bytes_.emplace_back(VirtualKVCachePageLayout::tensor_block_bytes(

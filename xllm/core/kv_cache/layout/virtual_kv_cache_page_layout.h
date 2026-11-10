@@ -40,8 +40,10 @@ class VirtualKVCachePageLayout final {
       CHECK_GT(bytes, 0);
       block_bytes_ = std::gcd(block_bytes_, bytes);
     }
-    CHECK_EQ(page_size_ % block_bytes_, 0)
-        << "Virtual KV page size must be divisible by the common block size";
+    // Compressed rows can contain odd byte factors (e.g. 144-byte heads).
+    // Include hardware-page alignment in the common unit so a logical group
+    // still maps complete physical pages for every tensor.
+    block_bytes_ = std::gcd(block_bytes_, page_size_);
   }
 
   size_t block_bytes() const { return block_bytes_; }

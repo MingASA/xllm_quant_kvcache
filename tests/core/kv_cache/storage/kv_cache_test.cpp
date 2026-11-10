@@ -254,49 +254,66 @@ void ExpectMluCompressedStateLayout(const std::vector<KVCache>& caches,
 }  // namespace
 
 #if !defined(USE_MLU) && !defined(USE_NPU)
-TEST(NativeKVCacheTest, FP8BytePagesCopyAndKeepLinearStateDtypes) {
-  KVCacheCapacity capacity;
-  capacity.n_blocks(4).block_size(16).num_linear_state_blocks(3);
-  ModelArgs args;
-  args.n_layers(4)
-      .n_heads(24)
-      .n_kv_heads(4)
-      .head_dim(256)
-      .full_attention_interval(2)
-      .linear_num_key_heads(2)
-      .linear_num_value_heads(2)
-      .linear_key_head_dim(4)
-      .linear_value_head_dim(8)
-      .linear_conv_kernel_dim(3);
-  const KVCacheShape shape(capacity, args, 1);
-  KVCacheCreateOptions options;
-  options.device(torch::Device(torch::kCPU))
-      .dtype(torch::kBFloat16)
-      .ssm_dtype(torch::kFloat32)
-      .num_layers(4)
-      .full_attention_interval(2)
-      .enable_linear_attention(true)
-      .native_kv_cache_dtype("fp8_e4m3");
-  std::vector<KVCache> caches;
-  allocate_kv_caches(caches, shape, options);
-  ASSERT_EQ(caches.size(), 4U);
-  EXPECT_EQ(caches[0].get_conv_cache().scalar_type(), torch::kBFloat16);
-  EXPECT_EQ(caches[0].get_ssm_cache().scalar_type(), torch::kFloat32);
-  for (int64_t layer : {1, 3}) {
-    const torch::Tensor key = caches[layer].get_k_cache();
-    const torch::Tensor value = caches[layer].get_v_cache();
-    EXPECT_EQ(key.scalar_type(), torch::kByte);
-    EXPECT_EQ(key.size(3), 256);
-    EXPECT_FALSE(caches[layer].get_k_cache_scale().has_value());
-    key[0].fill_(17);
-    value[0].fill_(29);
-    const torch::Tensor expected_key = key[0].clone();
-    const torch::Tensor expected_value = value[0].clone();
-    torch::Tensor src = torch::tensor({0}, torch::kLong);
-    torch::Tensor dst = torch::tensor({2}, torch::kLong);
-    caches[layer].swap_blocks(src, dst);
-    EXPECT_TRUE(torch::equal(key[2], expected_key));
-    EXPECT_TRUE(torch::equal(value[2], expected_value));
+TEST(NativeKVCacheTest, BytePagesCopyInlineScalesAndKeepLinearStateDtypes) {
+  for (const std::string format : {"fp8_e4m3", "mxfp4"}) {
+    SCOPED_TRACE(format);
+    KVCacheCapacity capacity;
+    capacity.n_blocks(4)
+        .block_size(16)
+        .num_linear_state_blocks(3)
+        .native_kv_cache_dtype(format);
+    ModelArgs args;
+    args.n_layers(4)
+        .n_heads(24)
+        .n_kv_heads(4)
+        .head_dim(256)
+        .full_attention_interval(2)
+        .linear_num_key_heads(2)
+        .linear_num_value_heads(2)
+        .linear_key_head_dim(4)
+        .linear_value_head_dim(8)
+        .linear_conv_kernel_dim(3);
+    const KVCacheShape shape(capacity, args, 1);
+    auto allocator = std::make_shared<RecordingKVCacheTensorAllocator>();
+    KVCacheCreateOptions options;
+    options.device(torch::Device(torch::kCPU))
+        .dtype(torch::kBFloat16)
+        .ssm_dtype(torch::kFloat32)
+        .num_layers(4)
+        .full_attention_interval(2)
+        .enable_linear_attention(true)
+        .native_kv_cache_dtype(format)
+        .enable_vmm_kvcache(true)
+        .model_id("native-test")
+        .tensor_allocator(allocator);
+    std::vector<KVCache> caches;
+    allocate_kv_caches(caches, shape, options);
+    ASSERT_EQ(caches.size(), 4U);
+    ASSERT_EQ(allocator->requests.size(), 4U);
+    EXPECT_EQ(caches[0].get_conv_cache().scalar_type(), torch::kBFloat16);
+    EXPECT_EQ(caches[0].get_ssm_cache().scalar_type(), torch::kFloat32);
+    for (int64_t layer : {1, 3}) {
+      const torch::Tensor key = caches[layer].get_k_cache();
+      const torch::Tensor value = caches[layer].get_v_cache();
+      EXPECT_EQ(key.scalar_type(), torch::kByte);
+      const int64_t physical_head_dim = format == "mxfp4" ? 136 : 256;
+      EXPECT_EQ(key.size(3), physical_head_dim);
+      EXPECT_FALSE(caches[layer].get_k_cache_scale().has_value());
+      key[0].fill_(17);
+      value[0].fill_(29);
+      if (format != "fp8_e4m3") {
+        const int64_t scale_bytes = 16 * 4 * (physical_head_dim - 128);
+        key[0].reshape({-1}).narrow(0, 16 * 4 * 128, scale_bytes).fill_(83);
+        value[0].reshape({-1}).narrow(0, 16 * 4 * 128, scale_bytes).fill_(91);
+      }
+      const torch::Tensor expected_key = key[0].clone();
+      const torch::Tensor expected_value = value[0].clone();
+      torch::Tensor src = torch::tensor({0}, torch::kLong);
+      torch::Tensor dst = torch::tensor({2}, torch::kLong);
+      caches[layer].swap_blocks(src, dst);
+      EXPECT_TRUE(torch::equal(key[2], expected_key));
+      EXPECT_TRUE(torch::equal(value[2], expected_value));
+    }
   }
 }
 #endif

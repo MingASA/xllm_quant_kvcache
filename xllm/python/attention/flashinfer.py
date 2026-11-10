@@ -22,7 +22,6 @@ import flashinfer
 import torch
 from flashinfer.decode import fast_decode_plan
 
-from xllm.python import kernels
 from xllm.python.attention.backend import (
     AttentionBackend,
     AttentionMetadata,
@@ -283,6 +282,10 @@ class FlashInferBackend(AttentionBackend):
         v: torch.Tensor,
         layer: Attention,
     ) -> torch.Tensor:
+        # Compressed subclasses use native FlashInfer writers and can be
+        # qualified independently of the embedded C++ operator bootstrap.
+        from xllm.python import kernels
+
         metadata = self._metadata
         if metadata is None:
             raise RuntimeError("FlashInferBackend.prepare() was not called")

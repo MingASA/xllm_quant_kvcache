@@ -60,7 +60,7 @@ DEFINE_string(kv_cache_dtype,
               "cache dtype aligns with model dtype (no quantization). "
               "\"int8\": Enables INT8 quantization on MLU, and on NPU for "
               "GLM-5.2 SFA packed KV cache. CUDA Python Executor additionally "
-              "supports native fp8_e4m3 compressed pages.");
+              "supports native fp8_e4m3 and mxfp4 compressed pages.");
 
 DEFINE_double(kv_cache_k_scale,
               1.0,
@@ -232,7 +232,7 @@ void KVCacheConfig::initialize() {
 
 void KVCacheConfig::validate() const {
   CHECK(kv_cache_dtype_ == "auto" || kv_cache_dtype_ == "int8" ||
-        kv_cache_dtype_ == "fp8_e4m3")
+        kv_cache_dtype_ == "fp8_e4m3" || kv_cache_dtype_ == "mxfp4")
       << "Unsupported kv_cache_dtype=" << kv_cache_dtype_;
   CHECK(std::isfinite(kv_cache_k_scale_) &&
         kv_cache_k_scale_ >= std::numeric_limits<float>::min() &&
@@ -246,7 +246,13 @@ void KVCacheConfig::validate() const {
   CHECK(kv_cache_decode_backend_ == "auto" ||
         kv_cache_decode_backend_ == "flashinfer" ||
         kv_cache_decode_backend_ == "xqa");
-  CHECK(!enable_vmm_kvcache_ || kv_cache_dtype_ != "fp8_e4m3")
+  if (kv_cache_dtype_ == "mxfp4") {
+    CHECK(kv_cache_prefill_backend_ != "fa3" &&
+          kv_cache_decode_backend_ != "xqa")
+        << "This SM90 packed format requires FA2/FlashInfer.";
+  }
+  CHECK(!enable_vmm_kvcache_ ||
+        (kv_cache_dtype_ != "fp8_e4m3" && kv_cache_dtype_ != "mxfp4"))
       << "Native FP8 requires finite initialized pages; this VMM path is not "
          "qualified.";
   CHECK_GE(vmm_memory_reserve_bytes_, 0);

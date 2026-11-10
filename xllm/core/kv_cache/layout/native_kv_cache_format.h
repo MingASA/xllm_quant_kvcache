@@ -15,12 +15,26 @@ limitations under the License.
 
 #pragma once
 
+#include <glog/logging.h>
+
+#include <cstdint>
 #include <string_view>
 
 namespace xllm {
 
 inline bool is_native_kv_cache_format(std::string_view dtype) {
-  return dtype == "fp8_e4m3";
+  return dtype == "fp8_e4m3" || dtype == "mxfp4";
+}
+
+inline int64_t native_kv_cache_storage_head_dim(std::string_view dtype,
+                                                int64_t head_dim) {
+  if (dtype == "mxfp4") {
+    CHECK_GT(head_dim, 0);
+    CHECK_EQ(head_dim % 32, 0);
+    // OCP E2M1 payload plus one E8M0 byte per 32 elements, in one page.
+    return head_dim / 2 + head_dim / 32;
+  }
+  return head_dim;
 }
 
 }  // namespace xllm
