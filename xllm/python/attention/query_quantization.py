@@ -22,11 +22,18 @@ import triton.language as tl
 
 
 @triton.jit
-def _quantize_query_kernel(source: tl.tensor, destination: tl.tensor, count: tl.constexpr,
-                           heads: tl.constexpr, dimension: tl.constexpr,
-                           token_stride: tl.constexpr, head_stride: tl.constexpr,
-                           channel_stride: tl.constexpr, scale: tl.constexpr,
-                           block: tl.constexpr) -> None:
+def _quantize_query_kernel(
+    source: tl.tensor,
+    destination: tl.tensor,
+    count: tl.constexpr,
+    heads: tl.constexpr,
+    dimension: tl.constexpr,
+    token_stride: tl.constexpr,
+    head_stride: tl.constexpr,
+    channel_stride: tl.constexpr,
+    scale: tl.constexpr,
+    block: tl.constexpr,
+) -> None:
     offsets = tl.program_id(0) * block + tl.arange(0, block)
     channel = offsets % dimension
     head = offsets // dimension % heads
@@ -46,7 +53,13 @@ def quantize_query_fp8(query: torch.Tensor, scale: float) -> torch.Tensor:
     output = torch.empty(query.shape, dtype=torch.float8_e4m3fn, device=query.device)
     if query.numel():
         _quantize_query_kernel[(triton.cdiv(query.numel(), 256),)](
-            query, output, query.numel(), query.shape[1], query.shape[2],
-            *query.stride(), scale, 256,
+            query,
+            output,
+            query.numel(),
+            query.shape[1],
+            query.shape[2],
+            *query.stride(),
+            scale,
+            256,
         )
     return output

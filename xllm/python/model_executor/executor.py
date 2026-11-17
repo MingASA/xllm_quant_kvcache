@@ -209,10 +209,15 @@ def _create_attention_backend(
             from xllm.python.attention.flashinfer_native_kv import FlashInferNativeKVBackend
 
             return FlashInferNativeKVBackend(
-                num_heads=first_attention.num_heads, num_kv_heads=first_attention.num_kv_heads,
-                head_dim=first_attention.head_dim, scale=first_attention.scale,
-                sliding_window=first_attention.sliding_window, device=device, dtype=dtype,
-                cache_dtype=cache_dtype, key_scale=float(config.get("kv_cache_k_scale", 1.0)),
+                num_heads=first_attention.num_heads,
+                num_kv_heads=first_attention.num_kv_heads,
+                head_dim=first_attention.head_dim,
+                scale=first_attention.scale,
+                sliding_window=first_attention.sliding_window,
+                device=device,
+                dtype=dtype,
+                cache_dtype=cache_dtype,
+                key_scale=float(config.get("kv_cache_k_scale", 1.0)),
                 value_scale=float(config.get("kv_cache_v_scale", 1.0)),
                 prefill_backend=config.get("kv_cache_prefill_backend", "auto"),
                 decode_backend=config.get("kv_cache_decode_backend", "auto"),
