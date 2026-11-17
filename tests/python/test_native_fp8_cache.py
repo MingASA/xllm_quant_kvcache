@@ -18,6 +18,8 @@ from unittest.mock import Mock, patch
 import pytest
 import torch
 
+pytest.importorskip("triton")
+
 from xllm.python.attention.xqa_decode import _XQA_PAGE_SIZES
 
 from .test_native_kv_prefill_dispatch_cpu import _load_method

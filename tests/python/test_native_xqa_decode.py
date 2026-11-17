@@ -17,6 +17,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 
+pytest.importorskip("triton")
+
 from xllm.python.attention import xqa_decode
 
 
