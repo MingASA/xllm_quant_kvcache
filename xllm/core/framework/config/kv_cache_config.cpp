@@ -246,6 +246,12 @@ void KVCacheConfig::validate() const {
   CHECK(kv_cache_decode_backend_ == "auto" ||
         kv_cache_decode_backend_ == "flashinfer" ||
         kv_cache_decode_backend_ == "xqa");
+  if (kv_cache_dtype_ == "fp8_e4m3" &&
+      kv_cache_decode_backend_ != "flashinfer") {
+    CHECK(block_size_ == 16 || block_size_ == 32 || block_size_ == 64 ||
+          block_size_ == 128)
+        << "FP8 XQA requires block_size 16, 32, 64 or 128; got " << block_size_;
+  }
   CHECK(!enable_vmm_kvcache_ || kv_cache_dtype_ != "fp8_e4m3")
       << "Native FP8 requires finite initialized pages; this VMM path is not "
          "qualified.";

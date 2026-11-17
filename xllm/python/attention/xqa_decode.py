@@ -22,11 +22,11 @@ import triton.language as tl
 
 from xllm.python.attention.backend import AttentionMetadata
 
+_XQA_PAGE_SIZES = (16, 32, 64, 128)
 
-def validate_xqa_lengths(indptr: list[int], last: list[int], page_size: int, maximum: int) -> None:
+
+def _validate_xqa_lengths(indptr: list[int], last: list[int], page_size: int, maximum: int) -> None:
     """Reject unsupported lengths before changing the device plan."""
-    if page_size not in (16, 32, 64, 128) or maximum < page_size or maximum % page_size:
-        raise ValueError("XQA requires an explicit page-aligned maximum context")
     if len(indptr) != len(last) + 1 or not last or indptr[0] != 0:
         raise ValueError("XQA host paging shape/origin differs")
     for begin, end, tail in zip(indptr, indptr[1:], last):
@@ -39,9 +39,16 @@ def validate_xqa_lengths(indptr: list[int], last: list[int], page_size: int, max
 
 
 @triton.jit
-def _convert_pages(indptr: tl.tensor, indices: tl.tensor, last: tl.tensor,
-                   table: tl.tensor, lengths: tl.tensor, width: tl.constexpr,
-                   page_size: tl.constexpr, block: tl.constexpr) -> None:
+def _convert_pages(
+    indptr: tl.tensor,
+    indices: tl.tensor,
+    last: tl.tensor,
+    table: tl.tensor,
+    lengths: tl.tensor,
+    width: tl.constexpr,
+    page_size: tl.constexpr,
+    block: tl.constexpr,
+) -> None:
     row = tl.program_id(0)
     column = tl.arange(0, block)
     begin, end = tl.load(indptr + row), tl.load(indptr + row + 1)
@@ -57,7 +64,11 @@ class XQADecodePlan:
     """One prepared bucket; no BF16 KV copy, host sync, or planner inside replay."""
 
     def __init__(self, batch_size: int, page_size: int, maximum: int, device: torch.device) -> None:
-        if torch.cuda.get_device_capability(device) != (9, 0):
+        if batch_size <= 0:
+            raise ValueError("XQA requires a positive batch size")
+        if page_size not in _XQA_PAGE_SIZES or maximum < page_size or maximum % page_size:
+            raise ValueError("XQA requires a supported page size and a page-aligned maximum context")
+        if device.type != "cuda" or torch.cuda.get_device_capability(device) != (9, 0):
             raise ValueError("This explicit production XQA profile is validated only for SM90")
         self._page_size, self._maximum = page_size, maximum
         self._batch_size = batch_size
@@ -67,26 +78,48 @@ class XQADecodePlan:
 
     def prepare(self, metadata: AttentionMetadata, *, graph_mode: bool) -> None:
         indptr, last = metadata.paged_kv_indptr_host, metadata.paged_kv_last_page_len_host
-        if indptr is None or last is None or indptr.device.type != "cpu" or last.device.type != "cpu":
-            raise ValueError("XQA requires the existing CPU planner metadata without a device sync")
-        validate_xqa_lengths(indptr.tolist(), last.tolist(), self._page_size, self._maximum)
+        if (
+            indptr is None
+            or last is None
+            or indptr.device.type != "cpu"
+            or last.device.type != "cpu"
+            or indptr.ndim != 1
+            or last.ndim != 1
+        ):
+            raise ValueError("XQA requires one-dimensional CPU planner metadata without a device sync")
+        indptr_values = indptr.tolist()
+        _validate_xqa_lengths(indptr_values, last.tolist(), self._page_size, self._maximum)
         if len(last) != self._batch_size:
             raise ValueError("XQA planned batch differs from its stable bucket")
         inputs = (metadata.paged_kv_indptr, metadata.paged_kv_indices, metadata.paged_kv_last_page_len)
-        if inputs[0].numel() != len(indptr) or inputs[2].numel() != len(last) or indptr[-1].item() > inputs[1].numel():
+        if inputs[0].numel() != len(indptr) or inputs[2].numel() != len(last) or indptr_values[-1] > inputs[1].numel():
             raise ValueError("XQA paging buffers do not cover the host plan")
-        if any(tensor.device != self._table.device or tensor.dtype != torch.int32 for tensor in inputs):
-            raise ValueError("XQA paged input must be int32 on the planned CUDA device")
+        if any(
+            tensor.device != self._table.device
+            or tensor.dtype != torch.int32
+            or tensor.ndim != 1
+            or not tensor.is_contiguous()
+            for tensor in inputs
+        ):
+            raise ValueError("XQA paged input must be a contiguous 1D int32 vector on the planned CUDA device")
         addresses = tuple(tensor.data_ptr() for tensor in inputs)
         if graph_mode and self._metadata_addresses is not None and addresses != self._metadata_addresses:
             raise RuntimeError("XQA graph paging input addresses changed")
         self._metadata_addresses = addresses
         width = self._table.shape[1]
-        _convert_pages[(self._batch_size,)](*inputs, self._table, self._lengths,
-                                          width, self._page_size, triton.next_power_of_2(width))
+        _convert_pages[(self._batch_size,)](
+            *inputs, self._table, self._lengths, width, self._page_size, triton.next_power_of_2(width)
+        )
 
-    def run(self, query: torch.Tensor, cache: tuple[torch.Tensor, torch.Tensor],
-            workspace: torch.Tensor, softmax_scale: float, key_scale: float, value_scale: float) -> torch.Tensor:
+    def run(
+        self,
+        query: torch.Tensor,
+        cache: tuple[torch.Tensor, torch.Tensor],
+        workspace: torch.Tensor,
+        softmax_scale: float,
+        key_scale: float,
+        value_scale: float,
+    ) -> torch.Tensor:
         from flashinfer.decode import xqa_batch_decode_with_kv_cache
 
         if self._metadata_addresses is None:
@@ -98,7 +131,14 @@ class XQADecodePlan:
         # capture rather than allowing reads into the adjacent K/V projections.
         query = query.contiguous()
         return xqa_batch_decode_with_kv_cache(
-            query, cache, workspace, self._table, self._lengths, self._maximum,
-            bmm1_scale=softmax_scale * key_scale, bmm2_scale=value_scale,
-            kv_layout="NHD", enable_pdl=True,
+            query,
+            cache,
+            workspace,
+            self._table,
+            self._lengths,
+            self._maximum,
+            bmm1_scale=softmax_scale * key_scale,
+            bmm2_scale=value_scale,
+            kv_layout="NHD",
+            enable_pdl=True,
         )

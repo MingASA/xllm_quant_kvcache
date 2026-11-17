@@ -18,17 +18,26 @@ from unittest.mock import Mock, patch
 import pytest
 import torch
 
+from xllm.python.attention.xqa_decode import _XQA_PAGE_SIZES
+
 from .test_native_kv_prefill_dispatch_cpu import _load_method
 
 
 def test_fp8_aliases_preserve_owner_and_whole_page_copy() -> None:
-    bind = _load_method("bind_kv_caches", globals_={"torch": torch, "logger": Mock(), "json": json})
+    bind = _load_method(
+        "bind_kv_caches", globals_={"_XQA_PAGE_SIZES": _XQA_PAGE_SIZES, "torch": torch, "logger": Mock(), "json": json}
+    )
     owner_k = torch.zeros((3, 128, 4, 256), dtype=torch.uint8)
     owner_v = torch.zeros_like(owner_k)
     linear = SimpleNamespace(key=None, value=None)
     caches = [linear, SimpleNamespace(key=owner_k, value=owner_v)]
-    backend = SimpleNamespace(head_dim=256, num_kv_heads=4, _decode_workspace=torch.empty(1),
-                              native_kv_runtime_info=lambda: {})
+    backend = SimpleNamespace(
+        head_dim=256,
+        num_kv_heads=4,
+        _decode_backend="xqa",
+        _decode_workspace=torch.empty(1),
+        native_kv_runtime_info=lambda: {},
+    )
     bind(backend, caches)
     key, value = backend._pages[1]
     assert key.dtype == value.dtype == torch.float8_e4m3fn
@@ -45,9 +54,30 @@ def test_fp8_aliases_preserve_owner_and_whole_page_copy() -> None:
     assert not owner_k[1].any()
 
 
+def test_runtime_byte_count_uses_full_attention_storage() -> None:
+    report = _load_method("native_kv_runtime_info")
+    owners = (torch.empty((2, 128, 4, 256), dtype=torch.uint8), torch.empty((2, 128, 4, 256), dtype=torch.uint8))
+    pages = tuple(tensor.view(torch.float8_e4m3fn) for tensor in owners)
+    backend = SimpleNamespace(
+        _cache_format="fp8_e4m3",
+        _fixed_scales=(0.125, 0.5),
+        _pages={1: pages},
+        _prefill_backend="fa3",
+        _decode_backend="xqa",
+        _prefill_query_dtype=torch.float8_e4m3fn,
+        dtype=torch.bfloat16,
+        _max_context_tokens=32768,
+    )
+    info = report(backend)
+    actual_storage = sum(tensor.untyped_storage().nbytes() for tensor in owners)
+    assert info["resident_KV_bytes"] == actual_storage
+    assert info["KV_tensor_address_bytes"] == actual_storage
+    assert info["resident_global_scale_bytes"] == 0
+
+
 @pytest.mark.parametrize("kind", ["dtype", "shape", "strides", "missing_value"])
 def test_fp8_binding_rejects_wrong_physical_storage(kind: str) -> None:
-    bind = _load_method("bind_kv_caches", globals_={"torch": torch})
+    bind = _load_method("bind_kv_caches", globals_={"_XQA_PAGE_SIZES": _XQA_PAGE_SIZES, "torch": torch})
     key = torch.zeros((2, 128, 4, 256), dtype=torch.uint8)
     if kind == "dtype":
         key = key.to(torch.bfloat16)
@@ -56,28 +86,82 @@ def test_fp8_binding_rejects_wrong_physical_storage(kind: str) -> None:
     elif kind == "strides":
         key = key.transpose(0, 1)
     value = None if kind == "missing_value" else key.clone()
-    backend = SimpleNamespace(head_dim=256, num_kv_heads=4, _decode_workspace=torch.empty(1))
+    backend = SimpleNamespace(head_dim=256, num_kv_heads=4, _decode_backend="xqa", _decode_workspace=torch.empty(1))
     with pytest.raises(ValueError, match="contiguous resident byte pages"):
         bind(backend, [SimpleNamespace(key=key, value=value)])
+
+
+@pytest.mark.parametrize("shape", [(2, 64, 4, 256), (3, 128, 4, 256)])
+def test_fp8_layers_must_share_page_geometry(shape: tuple[int, ...]) -> None:
+    bind = _load_method(
+        "bind_kv_caches", globals_={"_XQA_PAGE_SIZES": _XQA_PAGE_SIZES, "torch": torch, "logger": Mock(), "json": json}
+    )
+    first = torch.zeros((2, 128, 4, 256), dtype=torch.uint8)
+    other = torch.zeros(shape, dtype=torch.uint8)
+    backend = SimpleNamespace(
+        head_dim=256,
+        num_kv_heads=4,
+        _decode_backend="xqa",
+        _decode_workspace=torch.empty(1),
+        native_kv_runtime_info=lambda: {},
+    )
+    with pytest.raises(ValueError, match="same page geometry"):
+        bind(
+            backend, [SimpleNamespace(key=first, value=first.clone()), SimpleNamespace(key=other, value=other.clone())]
+        )
+
+
+@pytest.mark.parametrize("shape", [(0, 128, 4, 256), (2, 0, 4, 256)])
+def test_fp8_requires_nonempty_resident_pages(shape: tuple[int, ...]) -> None:
+    bind = _load_method(
+        "bind_kv_caches", globals_={"_XQA_PAGE_SIZES": _XQA_PAGE_SIZES, "torch": torch, "logger": Mock(), "json": json}
+    )
+    key = torch.empty(shape, dtype=torch.uint8)
+    backend = SimpleNamespace(
+        head_dim=256,
+        num_kv_heads=4,
+        _decode_backend="xqa",
+        _decode_workspace=torch.empty(1),
+        native_kv_runtime_info=lambda: {},
+    )
+    with pytest.raises(ValueError, match="nonempty resident pages"):
+        bind(backend, [SimpleNamespace(key=key, value=key.clone())])
+
+
+def test_fp8_xqa_rejects_unsupported_page_size_when_binding() -> None:
+    bind = _load_method(
+        "bind_kv_caches", globals_={"_XQA_PAGE_SIZES": _XQA_PAGE_SIZES, "torch": torch, "logger": Mock(), "json": json}
+    )
+    key = torch.empty((2, 256, 4, 256), dtype=torch.uint8)
+    backend = SimpleNamespace(
+        head_dim=256,
+        num_kv_heads=4,
+        _decode_backend="xqa",
+        _decode_workspace=torch.empty(1),
+        native_kv_runtime_info=lambda: {},
+    )
+    with pytest.raises(ValueError, match="XQA page size"):
+        bind(backend, [SimpleNamespace(key=key, value=key.clone())])
 
 
 @pytest.mark.parametrize("cache_dtype", ["nvfp4", "mxfp4", "fp8_e5m2"])
 def test_pr_backend_rejects_other_formats(cache_dtype: str) -> None:
     constructor = _load_method("__init__")
     with pytest.raises(ValueError, match="fp8_e4m3"):
-        constructor(object(), 24, 4, 256, 0.0625, 0, torch.device("cuda"),
-                    torch.bfloat16, cache_dtype)
+        constructor(object(), 24, 4, 256, 0.0625, 0, torch.device("cuda"), torch.bfloat16, cache_dtype)
 
 
 def test_fp8_rejects_unqualified_virtual_pages() -> None:
     import math
 
-    constructor = _load_method("__init__", globals_={"torch": torch, "math": math})
-    with patch.object(torch.cuda, "get_device_capability", return_value=(9, 0)), pytest.raises(
-        ValueError, match="VMM is not qualified"
+    constructor = _load_method("__init__", globals_={"_XQA_PAGE_SIZES": _XQA_PAGE_SIZES, "torch": torch, "math": math})
+    with (
+        patch.object(torch.cuda, "get_device_capability", return_value=(9, 0)),
+        pytest.raises(ValueError, match="VMM is not qualified"),
     ):
-        constructor(object(), 24, 4, 256, 0.0625, 0, torch.device("cuda"),
-                    torch.bfloat16, "fp8_e4m3", virtual_memory=True)
+        constructor(
+            object(), 24, 4, 256, 0.0625, 0, torch.device("cuda"), torch.bfloat16, "fp8_e4m3", virtual_memory=True
+        )
 
 
 _SM90 = torch.cuda.is_available() and torch.cuda.get_device_capability() == (9, 0)

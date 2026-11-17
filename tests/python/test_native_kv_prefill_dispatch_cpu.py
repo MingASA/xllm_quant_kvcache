@@ -29,11 +29,15 @@ _SOURCE = Path(__file__).resolve().parents[2] / "xllm/python/attention/flashinfe
 
 
 def _load_method(
-    name: str, *, imports: dict[str, Any] | None = None, globals_: dict[str, Any] | None = None,
+    name: str,
+    *,
+    imports: dict[str, Any] | None = None,
+    globals_: dict[str, Any] | None = None,
 ) -> Callable[..., Any]:
     tree = ast.parse(_SOURCE.read_text())
-    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef)
-               and node.name == "FlashInferNativeKVBackend")
+    cls = next(
+        node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "FlashInferNativeKVBackend"
+    )
     method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == name)
 
     def _resolve_import(module: str, *args: Any, **kwargs: Any) -> Any:
@@ -56,39 +60,66 @@ class NativeKVPrefillDispatchTest(unittest.TestCase):
                     with self.subTest(dtype=dtype, prefill=prefill, phase=phase):
                         pointers = [object() for _ in range(4)]
                         metadata = SimpleNamespace(
-                            is_prefill=phase == "prefill", is_chunked_prefill=phase == "chunked",
-                            qo_indptr=pointers[0], paged_kv_indptr=pointers[1],
-                            paged_kv_indices=pointers[2], paged_kv_last_page_len=pointers[3],
+                            is_prefill=phase == "prefill",
+                            is_chunked_prefill=phase == "chunked",
+                            qo_indptr=pointers[0],
+                            paged_kv_indptr=pointers[1],
+                            paged_kv_indices=pointers[2],
+                            paged_kv_last_page_len=pointers[3],
                         )
                         query_dtype = "FP8" if prefill == "fa3" else dtype
                         backend = SimpleNamespace(
-                            _cache_format="fp8_e4m3", _prefill_backend=prefill, _decode_backend="xqa",
-                            sliding_window=0, scale=256**-0.5, dtype=dtype,
-                            _cache_dtype="FP8", _prefill_query_dtype=query_dtype,
+                            _cache_format="fp8_e4m3",
+                            _prefill_backend=prefill,
+                            _decode_backend="xqa",
+                            sliding_window=0,
+                            scale=256**-0.5,
+                            dtype=dtype,
+                            _cache_dtype="FP8",
+                            _prefill_query_dtype=query_dtype,
                             _prefill_paged_wrapper=Mock(),
-                            num_heads=24, num_kv_heads=4, head_dim=256, page_size=128,
+                            num_heads=24,
+                            num_kv_heads=4,
+                            head_dim=256,
+                            page_size=128,
                         )
                         prepare(backend, metadata)
                         backend._prefill_paged_wrapper.plan.assert_called_once_with(
-                            *pointers, 24, 4, 256, 128, causal=True, sm_scale=256**-0.5,
-                            window_left=-1, q_data_type=query_dtype, kv_data_type="FP8", o_data_type=dtype,
+                            *pointers,
+                            24,
+                            4,
+                            256,
+                            128,
+                            causal=True,
+                            sm_scale=256**-0.5,
+                            window_left=-1,
+                            q_data_type=query_dtype,
+                            kv_data_type="FP8",
+                            o_data_type=dtype,
                         )
 
     def test_pure_decode_preserves_eager_and_graph_xqa_plan(self) -> None:
         constructor = Mock()
         prepare = _load_method(
-            "prepare", imports={"xllm.python.attention.xqa_decode": SimpleNamespace(XQADecodePlan=constructor)},
+            "prepare",
+            imports={"xllm.python.attention.xqa_decode": SimpleNamespace(XQADecodePlan=constructor)},
         )
         for graph_mode in (False, True):
             with self.subTest(graph_mode=graph_mode):
                 plan = Mock()
                 metadata = SimpleNamespace(
-                    is_prefill=False, is_chunked_prefill=False,
+                    is_prefill=False,
+                    is_chunked_prefill=False,
                     paged_kv_last_page_len=SimpleNamespace(numel=lambda: 2),
                 )
                 backend = SimpleNamespace(
-                    sliding_window=0, scale=256**-0.5, dtype="BF16", _cache_dtype="FP8",
-                    _decode_backend="xqa", _xqa_plans={(graph_mode, 2): plan},
+                    sliding_window=0,
+                    scale=256**-0.5,
+                    dtype="BF16",
+                    _cache_dtype="FP8",
+                    _decode_backend="xqa",
+                    _xqa_plans={(graph_mode, 2): plan},
+                    page_size=128,
                 )
                 prepare(backend, metadata, graph_mode=graph_mode)
                 plan.prepare.assert_called_once_with(metadata, graph_mode=graph_mode)
@@ -101,37 +132,71 @@ class NativeKVPrefillDispatchTest(unittest.TestCase):
                 with self.subTest(prefill=prefill, value_scale=value_scale):
                     writer, quantize = Mock(), Mock()
                     execute = _load_method(
-                        "execute", globals_={"torch": SimpleNamespace(float8_e4m3fn="FP8"),
-                                             "write_fp8_kv": writer},
-                        imports={"xllm.python.attention.query_quantization":
-                                 SimpleNamespace(quantize_query_fp8=quantize)},
+                        "execute",
+                        globals_={"torch": SimpleNamespace(float8_e4m3fn="FP8"), "write_fp8_kv": writer},
+                        imports={
+                            "xllm.python.attention.query_quantization": SimpleNamespace(quantize_query_fp8=quantize)
+                        },
                     )
                     q, k, v = Mock(), Mock(), Mock()
                     pages, workspace = object(), object()
                     metadata = SimpleNamespace(is_prefill=False, is_chunked_prefill=prefill, slot_mapping=object())
                     backend = SimpleNamespace(
-                        _metadata=metadata, _cache_format="fp8_e4m3", _pages={1: pages},
-                        num_heads=24, num_kv_heads=4, head_dim=256, _fixed_scales=(0.125, value_scale),
-                        _prefill_query_dtype="FP8", _decode_backend="xqa", _prefill_paged_wrapper=Mock(),
-                        _active_xqa_plan=Mock(), _decode_workspace=workspace, scale=256**-0.5,
+                        _metadata=metadata,
+                        _cache_format="fp8_e4m3",
+                        _pages={1: pages},
+                        num_heads=24,
+                        num_kv_heads=4,
+                        head_dim=256,
+                        _fixed_scales=(0.125, value_scale),
+                        _prefill_query_dtype="FP8",
+                        _decode_backend="xqa",
+                        _prefill_paged_wrapper=Mock(),
+                        _active_xqa_plan=Mock(),
+                        _decode_workspace=workspace,
+                        scale=256**-0.5,
                     )
                     execute(backend, q, k, v, SimpleNamespace(layer_id=1))
                     writer.assert_called_once_with(
-                        k.view.return_value, v.view.return_value, metadata.slot_mapping,
-                        pages, (0.125, value_scale),
+                        k.view.return_value,
+                        v.view.return_value,
+                        metadata.slot_mapping,
+                        pages,
+                        (0.125, value_scale),
                     )
                     if prefill:
                         quantize.assert_called_once_with(q.view.return_value, 1.0)
                         backend._prefill_paged_wrapper.run.assert_called_once_with(
-                            quantize.return_value, pages, k_scale=0.125, v_scale=value_scale, q_scale=1.0,
+                            quantize.return_value,
+                            pages,
+                            k_scale=0.125,
+                            v_scale=value_scale,
+                            q_scale=1.0,
                         )
                         backend._active_xqa_plan.run.assert_not_called()
                     else:
                         quantize.assert_not_called()
                         backend._active_xqa_plan.run.assert_called_once_with(
-                            q.view.return_value, pages, workspace, 256**-0.5, 0.125, value_scale,
+                            q.view.return_value,
+                            pages,
+                            workspace,
+                            256**-0.5,
+                            0.125,
+                            value_scale,
                         )
                         backend._prefill_paged_wrapper.run.assert_not_called()
+
+    def test_missing_decode_plan_does_not_modify_kv(self) -> None:
+        writer = Mock()
+        execute = _load_method("execute", globals_={"write_fp8_kv": writer})
+        backend = SimpleNamespace(
+            _metadata=SimpleNamespace(is_prefill=False, is_chunked_prefill=False),
+            _decode_backend="xqa",
+            _active_xqa_plan=None,
+        )
+        with self.assertRaisesRegex(RuntimeError, "before writing KV"):
+            execute(backend, object(), object(), object(), object())
+        writer.assert_not_called()
 
     def test_runtime_report_does_not_advertise_mixed_split(self) -> None:
         report = _load_method("native_kv_runtime_info")
@@ -139,11 +204,14 @@ class NativeKVPrefillDispatchTest(unittest.TestCase):
             for decode in ("flashinfer", "xqa"):
                 with self.subTest(prefill=prefill, decode=decode):
                     backend = SimpleNamespace(
-                        _cache_format="fp8_e4m3", _fixed_scales=(0.125, 0.0625),
-                        _prefill_backend=prefill, _decode_backend=decode,
+                        _cache_format="fp8_e4m3",
+                        _fixed_scales=(0.125, 0.0625),
+                        _prefill_backend=prefill,
+                        _decode_backend=decode,
                         _prefill_query_dtype="FP8" if prefill == "fa3" else "BF16",
-                        dtype="BF16", _max_context_tokens=262144,
-                        _kv_caches=[], _virtual_memory=False, _global_scales=[],
+                        dtype="BF16",
+                        _max_context_tokens=262144,
+                        _pages={},
                     )
                     self.assertIsNone(report(backend)["mixed_FP8_decode"])
 
